@@ -163,7 +163,7 @@ const BASE_TRADING_SEGMENTS: Segment[] = [
     ]
   },
   {
-    name: 'Equity',
+    name: 'Stocks',
     icon: 'fa-landmark',
     count: 4,
     instruments: [
@@ -214,9 +214,9 @@ const DISPLAY_NAME_MAP: Record<string, { name: string; icon: string }> = {
   'MCX-OPT': { name: 'Mcx-opt', icon: 'fa-circle-dot' },
   'STOCK-FUT': { name: 'Stock-fut', icon: 'fa-building' },
   'STOCK-OPT': { name: 'Stock-opt', icon: 'fa-layer-group' },
-  'NSE-EQ': { name: 'Equity', icon: 'fa-landmark' },
-  'EQUITY': { name: 'Equity', icon: 'fa-landmark' },
-  'Equity': { name: 'Equity', icon: 'fa-landmark' },
+  'NSE-EQ': { name: 'Stocks', icon: 'fa-landmark' },
+  'EQUITY': { name: 'Stocks', icon: 'fa-landmark' },
+  'Equity': { name: 'Stocks', icon: 'fa-landmark' },
   'CRYPTO': { name: 'CRYPTO', icon: 'fa-bitcoin-sign' },
   'COMEX': { name: 'Comex', icon: 'fa-gem' },
   'FOREX': { name: 'Forex', icon: 'fa-globe' },
@@ -389,7 +389,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
     'Mcx-opt': 'MCX-OPT',
     'Stock-fut': 'STOCK-FUT',
     'Stock-opt': 'STOCK-OPT',
-    'Equity': 'NSE-EQ',
+    'Stocks': 'NSE-EQ',
     'Nse-eq': 'NSE-EQ',
     'NSE-EQ': 'NSE-EQ',
     'Crypto': 'CRYPTO',
@@ -400,7 +400,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
   const visibleSegments = tradingSegments.filter(seg => {
     if (allowedSegments.length === 0) return true;
     const dbKey = SEGMENT_NAME_TO_DB_KEY[seg.name] ?? seg.name.toUpperCase();
-    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || (seg.name.toUpperCase() === 'EQUITY' && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity')));
+    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || (seg.name.toUpperCase() === 'STOCKS' && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks')));
   });
 
   return (
