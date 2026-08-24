@@ -130,15 +130,14 @@ export async function GET(request: Request) {
 
     const redis = getRedisClient();
     const cacheKey = 'market:library:segments:v7';
-    // NOTE: Cache disabled to ensure strike ranges always reflect live ATM price.
-    // try {
-    //   const cached = await redis.get(cacheKey);
-    //   if (cached) {
-    //     return NextResponse.json(JSON.parse(cached));
-    //   }
-    // } catch (e) {
-    //   console.error('[library] Redis get cache error:', e);
-    // }
+    try {
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return NextResponse.json(JSON.parse(cached));
+      }
+    } catch (e) {
+      console.error('[library] Redis get cache error:', e);
+    }
 
     const today = new Date().toISOString().split('T')[0];
     const segments: any[] = [];
@@ -263,23 +262,7 @@ export async function GET(request: Request) {
             }
           } catch (_) { /* Redis unavailable */ }
 
-          // 2. Try internal quotes API (works even when Redis is down)
-          if (!atmPrice) {
-            try {
-              const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-              const res = await fetch(`${baseUrl}/api/market/quotes?symbols=${encodeURIComponent(kiteId)}`, {
-                headers: { 'x-internal': '1' },
-                signal: AbortSignal.timeout(2000),
-              });
-              if (res.ok) {
-                const qdata = await res.json();
-                const q = qdata?.data?.[kiteId] || qdata?.[kiteId];
-                if (q) atmPrice = q.lastPrice || q.last_price || 0;
-              }
-            } catch (_) { /* internal API unavailable */ }
-          }
-
-          // 3. Use spot price passed from frontend via query string
+          // 2. Use spot price passed from frontend via query string
           if (!atmPrice && qsAtm[idx]) {
             atmPrice = qsAtm[idx];
           }
