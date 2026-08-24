@@ -569,22 +569,29 @@ export async function GET(request: Request) {
       }
 
       addedStockNames.add(stk);
+      let mappedInstruments = selectedOpts.map((i: any) => ({
+        name: safeOptName(i),
+        symbol: i.tradingsymbol,
+        kiteSymbol: `${i.exchange}:${i.tradingsymbol}`,
+        price: 0,
+        change: '0%',
+        segment: `${i.exchange === 'NFO' ? 'NSE' : i.exchange === 'BFO' ? 'BSE' : i.exchange} - Stock Options`,
+        contractDate: i.expiry,
+        open: 0,
+        high: 0,
+        low: 0,
+        close: 0,
+        lotSize: i.lot_size,
+      }));
+
+      // If database query PostgREST cap truncated results leaving < 10 option contracts, fall back to synthetic strike generation
+      if (mappedInstruments.length < 10) {
+        mappedInstruments = generateSyntheticStockOptions(stk, today);
+      }
+
       stockOptCats.push({
         name: stk,
-        instruments: selectedOpts.map((i: any) => ({
-          name: safeOptName(i),
-          symbol: i.tradingsymbol,
-          kiteSymbol: `${i.exchange}:${i.tradingsymbol}`,
-          price: 0,
-          change: '0%',
-          segment: `${i.exchange === 'NFO' ? 'NSE' : i.exchange === 'BFO' ? 'BSE' : i.exchange} - Stock Options`,
-          contractDate: i.expiry,
-          open: 0,
-          high: 0,
-          low: 0,
-          close: 0,
-          lotSize: i.lot_size,
-        })).slice(0, 22),
+        instruments: mappedInstruments.slice(0, 22),
       });
     });
 
