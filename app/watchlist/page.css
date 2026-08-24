@@ -11,7 +11,6 @@
     max-width: 100%;
     margin: 0 auto;
     background: var(--bg-body, #f3f6fb);
-    box-shadow: 0 0 1.25rem rgba(0, 0, 0, 0.05);
     position: relative;
     overflow: hidden;
 }
