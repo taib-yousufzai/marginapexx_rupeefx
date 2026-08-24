@@ -390,9 +390,11 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
     'Stock-fut': 'STOCK-FUT',
     'Stock-opt': 'STOCK-OPT',
     'Stocks': 'NSE-EQ',
+    'Equity': 'NSE-EQ',
     'Nse-eq': 'NSE-EQ',
     'NSE-EQ': 'NSE-EQ',
     'Crypto': 'CRYPTO',
+    'CRYPTO': 'CRYPTO',
     'Comex': 'COMEX',
     'Forex': 'FOREX',
   };
@@ -400,7 +402,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
   const visibleSegments = tradingSegments.filter(seg => {
     if (allowedSegments.length === 0) return true;
     const dbKey = SEGMENT_NAME_TO_DB_KEY[seg.name] ?? seg.name.toUpperCase();
-    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || (seg.name.toUpperCase() === 'STOCKS' && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks')));
+    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || ((seg.name === 'Stocks' || seg.name === 'Equity' || seg.name.toUpperCase() === 'EQUITY') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks')));
   });
 
   return (

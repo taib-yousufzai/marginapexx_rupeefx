@@ -429,7 +429,7 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
             <span className="exchange-badge" style={
               isCrypto ? { background: '#F0A500', color: '#fff' } :
                 isForex ? { background: '#2563EB', color: '#fff' } :
-                showComex ? { background: '#4A148C', color: '#fff' } : {}
+                  showComex ? { background: '#4A148C', color: '#fff' } : {}
             }>
               {isCrypto ? 'CRYPTO' : isForex ? 'FOREX' : showComex ? 'COMEX' : getExchangeBadge(item.segment)}
             </span>
@@ -1852,12 +1852,12 @@ function WatchlistContent() {
                 const isDetailComex = dbSeg === 'COMEX' || !!selectedItem.comexSymbol;
                 const isDetailIndian = !isDetailCrypto && !isDetailComex;
 
-                const buySegSetting = segmentSettings.find((s: any) => 
-                  ((s.segment || '').toUpperCase() === (dbSeg || '').toUpperCase() || (s.segment || '').toUpperCase() === (selectedItem.segment || '').toUpperCase()) && 
+                const buySegSetting = segmentSettings.find((s: any) =>
+                  ((s.segment || '').toUpperCase() === (dbSeg || '').toUpperCase() || (s.segment || '').toUpperCase() === (selectedItem.segment || '').toUpperCase()) &&
                   (s.side || '').toUpperCase() === 'BUY'
                 );
-                const sellSegSetting = segmentSettings.find((s: any) => 
-                  ((s.segment || '').toUpperCase() === (dbSeg || '').toUpperCase() || (s.segment || '').toUpperCase() === (selectedItem.segment || '').toUpperCase()) && 
+                const sellSegSetting = segmentSettings.find((s: any) =>
+                  ((s.segment || '').toUpperCase() === (dbSeg || '').toUpperCase() || (s.segment || '').toUpperCase() === (selectedItem.segment || '').toUpperCase()) &&
                   (s.side || '').toUpperCase() === 'SELL'
                 );
 
@@ -2382,6 +2382,7 @@ function WatchlistContent() {
                     'NSE-EQ': 'NSE-EQ',
                     'Equity': 'NSE-EQ',
                     'EQUITY': 'NSE-EQ',
+                    'Stocks': 'NSE-EQ',
                     'CRYPTO': 'CRYPTO',
                     'COMEX': 'COMEX',
                     'FOREX': 'FOREX',
@@ -2400,7 +2401,7 @@ function WatchlistContent() {
                     if (allowedSegments === null) return true; // still loading — show all initially
                     if (allowedSegments.length === 0) return true;
                     const dbKey = DRAWER_SEG_TO_DB_KEY[seg.name] ?? seg.name.toUpperCase();
-                    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || (seg.name.toUpperCase() === 'EQUITY' && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity')));
+                    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || ((seg.name.toUpperCase() === 'EQUITY' || seg.name.toUpperCase() === 'STOCKS') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks')));
                   });
                   return visibleSegments.map((seg) => {
                     // Filter out blocked symbols from this segment's instruments
@@ -2708,7 +2709,7 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           ]
         },
         {
-          name: 'Equity',
+          name: 'Stocks',
           icon: 'fa-landmark',
           instruments: [
             { name: 'RELIANCE', symbol: 'RELIANCE_EQ', kiteSymbol: 'NSE:RELIANCE', price: 0, change: '0%', segment: 'NSE - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
@@ -2727,7 +2728,7 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
         if (n === 'STOCK-OPT') return 'STOCK-OPT';
         if (n === 'MCX-FUT') return 'MCX-FUT';
         if (n === 'MCX-OPT') return 'MCX-OPT';
-        if (n === 'NSE-EQ' || n === 'EQUITY') return 'NSE-EQ';
+        if (n === 'NSE-EQ' || n === 'EQUITY' || n === 'STOCKS') return 'NSE-EQ';
         if (n === 'CRYPTO') return 'CRYPTO';
         if (n === 'FOREX') return 'FOREX';
         if (n === 'COMEX') return 'COMEX';

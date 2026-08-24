@@ -766,13 +766,6 @@ export default function UnifiedSettingsPage() {
               </div>
               <p style={{ marginBottom: '12px', fontSize: '0.9rem', lineHeight: '1.5' }}><strong>The Platform reserves the right to investigate and act against any activity that, in its sole judgment, violates the spirit of fair participation, even if such activity is not specifically listed in these rules.</strong></p>
             </div>
-            <div style={{ marginTop: '16px', display: 'flex', alignItems: 'flex-start', gap: '8px', fontSize: '0.85rem', color: '#475569', fontWeight: 500 }}>
-              <input type="checkbox" id="rules-agree" style={{ marginTop: '3px' }} defaultChecked />
-              <label htmlFor="rules-agree">I have read, understood, and agree to the Trading Rules, Fair Usage Policy, and Code of Conduct.</label>
-            </div>
-          </div>
-          <div className="modal-footer">
-            <button className="modal-btn confirm" style={{ width: '100%', textTransform: 'uppercase' }} onClick={() => setIsRulesModalOpen(false)}>[ I AGREE & CONTINUE ]</button>
           </div>
         </div>
       </div>

@@ -600,7 +600,7 @@ export async function GET(request: Request) {
 
     if (stockFutInstruments.length > 0) segments.push({ name: 'STOCK-FUT', icon: 'fa-building', instruments: stockFutInstruments });
     if (stockOptCats.length > 0) segments.push({ name: 'STOCK-OPT', icon: 'fa-building', subCategories: stockOptCats });
-    if (nseEqInstruments.length > 0) segments.push({ name: 'Equity', icon: 'fa-landmark', instruments: nseEqInstruments });
+    if (nseEqInstruments.length > 0) segments.push({ name: 'Stocks', icon: 'fa-landmark', instruments: nseEqInstruments });
 
     // 5. Crypto — apply applyCryptoWhitelist
     const { data: cryptos } = await getSupabase().from('instruments').select('*').eq('segment', 'CRYPTO').order('name', { ascending: true });
