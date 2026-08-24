@@ -21,7 +21,7 @@ import { RiskValidation } from '@/lib/trading/RiskValidation';
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
 import WatchlistSearch from '@/components/WatchlistSearch';
-import PullToRefresh from '@/components/PullToRefresh';
+
 import { ErrorModal } from '@/components/ErrorModal';
 import './page.css';
 
@@ -1679,12 +1679,7 @@ function WatchlistContent() {
           </div>
 
           <div className="watchlist-layout">
-            <PullToRefresh className="main-content" onRefresh={async () => {
-              if (typeof (window as any).__syncWatchlistSymbols === 'function') {
-                (window as any).__syncWatchlistSymbols(watchlistItems.map(i => i.symbol));
-              }
-              await new Promise(r => setTimeout(r, 400));
-            }}>
+            <div className="main-content">
 
               <div className="watchlist-section">
                 <div className="watchlist-header" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '4px', marginTop: '4px', marginBottom: '8px' }}>
@@ -1795,7 +1790,7 @@ function WatchlistContent() {
                   <div id="watchlistMobileContainer"></div>
                 </div>
               </div>
-            </PullToRefresh>
+            </div>
 
             {/* Basket bottom bar */}
             {basketMode && (
