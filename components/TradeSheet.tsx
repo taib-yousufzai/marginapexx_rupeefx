@@ -649,11 +649,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       // Validate Limit price constraints relative to LTP
       if (resolvedOrderType === 'LIMIT' || (resolvedOrderType === 'GTT' && !exitMode)) {
         if (placeSide === 'BUY' && resolvedClientPrice >= currentLtp) {
-          showToast('Buy at limit price must be below the current market price.');
+          window.dispatchEvent(new CustomEvent('order_error', { detail: 'Buy at limit price must be below the current market price.' }));
           return;
         }
         if (placeSide === 'SELL' && resolvedClientPrice <= currentLtp) {
-          showToast('Sell at limit price must be above the current market price.');
+          window.dispatchEvent(new CustomEvent('order_error', { detail: 'Sell at limit price must be above the current market price.' }));
           return;
         }
       }
