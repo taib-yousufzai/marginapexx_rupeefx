@@ -69,6 +69,11 @@ export async function GET(request: Request) {
     // Resolve MCX underlying → the future with a live Redis price
     async function resolveMcxUnderlyingId(): Promise<string> {
       const baseSymbol = MCX_BASE_MAP[symbol] ?? symbol;
+      const cacheKeyMcx = `mcxUnderlyingCache:${baseSymbol}`;
+      try {
+        const cached = await redis.get(cacheKeyMcx);
+        if (cached) return cached;
+      } catch { /* ignore */ }
       try {
         const { data: futs } = await supabase
           .from('instruments')
@@ -86,8 +91,12 @@ export async function GET(request: Request) {
             try { return !!(prices[i] && JSON.parse(prices[i] as string).last_price > 0); }
             catch { return false; }
           });
-          if (live) return live;
+          if (live) {
+            redis.setex(cacheKeyMcx, 3600, live).catch(() => {});
+            return live;
+          }
         } catch { /* fall through to first candidate */ }
+        redis.setex(cacheKeyMcx, 3600, candidates[0]).catch(() => {});
         return candidates[0];
       } catch { return `MCX:${symbol}`; }
     }
@@ -136,12 +145,23 @@ export async function GET(request: Request) {
       return data ?? [];
     }
 
+    async function getStrikeConfig() {
+      const k = 'strikeConfigCache';
+      try {
+        const cached = await redis.get(k);
+        if (cached) return JSON.parse(cached);
+      } catch { /* ignore */ }
+      const cfg = await loadStrikeConfig(supabase);
+      redis.setex(k, 300, JSON.stringify(cfg)).catch(() => {}); // 5 minutes cache
+      return cfg;
+    }
+
     // ── 3. Parallel fetch: expiries + strike config + MCX future resolver ─────
     let underlyingKiteId = INDEX_KITE_MAP[symbol] ?? `MCX:${symbol}`;
 
     const [allExpiries, strikeConfig, resolvedMcxId] = await Promise.all([
       getExpiries(),
-      loadStrikeConfig(supabase),
+      getStrikeConfig(),
       isMcx ? resolveMcxUnderlyingId() : Promise.resolve(''),
     ]);
 

@@ -2426,7 +2426,7 @@ function WatchlistContent() {
                           onClick={() => setExpandedSegments(prev => ({ ...prev, [seg.name]: !prev[seg.name] }))}
                         >
                           <i className="fas fa-chevron-right chevron-icon" style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}></i>
-                          <span style={{ flex: 1, fontWeight: 700, fontSize: '0.88rem' }}>{seg.name}</span>
+                          <span style={{ flex: 1, fontWeight: 700, fontSize: '0.88rem', textTransform: 'uppercase' }}>{seg.name}</span>
                           <span className="segment-count">{count}</span>
                         </div>
                         {isOpen && (

@@ -79,7 +79,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   // Derived convenience aliases kept for JSX readability
   const isSubmitting = orderState === 'processing';
-  const orderError   = orderState === 'error' ? orderErrorMsg : null;
+  const orderError = orderState === 'error' ? orderErrorMsg : null;
   // isBusy gates the BUY/SELL footer buttons â€” also checks the hook's own loading flag
   const isBusy = placingOrder || isSubmitting;
   const isExpired = useMemo(() => {
@@ -94,14 +94,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const isSpotIndex = useMemo(() => {
     if (!item) return false;
     const spotKiteSymbols = [
-      'NSE:NIFTY 50', 'NSE:NIFTY BANK', 'BSE:SENSEX', 'BSE:BANKEX', 
+      'NSE:NIFTY 50', 'NSE:NIFTY BANK', 'BSE:SENSEX', 'BSE:BANKEX',
       'NSE:NIFTY FIN SERVICE', 'NSE:NIFTY MID SELECT', 'NSE:INDIA VIX'
     ];
     if (item.kiteSymbol && spotKiteSymbols.includes(item.kiteSymbol.toUpperCase())) return true;
-    
+
     const nameUpper = (item.name || '').toUpperCase();
     if (nameUpper.includes('INDEX') && !nameUpper.includes('FUT') && !nameUpper.includes('CE') && !nameUpper.includes('PE')) return true;
-    
+
     return false;
   }, [item]);
 
@@ -119,10 +119,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     : (item ? getLotSize(item.symbol || item.name || '') : 1);
 
   const dbSeg = item ? mapSegmentWithSymbol(item.segment, item.symbol) : '';
-  const isCrypto = !!item?.binanceSymbol || 
-                   (item?.segment || '').toUpperCase() === 'CRYPTO' || 
-                   (item?.segment || '').toUpperCase() === 'CRYPTO-FUT' || 
-                   ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].includes(item?.symbol || '');
+  const isCrypto = !!item?.binanceSymbol ||
+    (item?.segment || '').toUpperCase() === 'CRYPTO' ||
+    (item?.segment || '').toUpperCase() === 'CRYPTO-FUT' ||
+    ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].includes(item?.symbol || '');
   const isComex = item && (item as any).preferredView
     ? (item as any).preferredView === 'comex'
     : (dbSeg.toUpperCase().includes('COMEX') || !!item?.comexSymbol);
@@ -454,7 +454,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     if (isOpen && item && !initialOrder) {
       const targetPT = propProductType || productType;
       const oppositeSide = side === 'SELL' ? 'BUY' : 'SELL';
-      
+
       let initialExitQty = propInitialExitQty || 0;
       if (!initialExitQty) {
         if (linkedPosId) {
@@ -494,7 +494,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const topLimit = segSetting?.top_limit ?? 0;
   const minLimit = segSetting?.min_limit ?? 0;
-  
+
   let maxAllowedPrice = topLimit > 0 ? currentLtp * (1 + topLimit / 100) : Infinity;
   let minAllowedPrice = minLimit > 0 ? currentLtp * (1 - minLimit / 100) : 0;
 
@@ -990,7 +990,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         // Buy/Sell flow: show the global loader overlay.
         handedOffToOrderFlow = true;
         window.dispatchEvent(new CustomEvent('global-loader-start', { detail: 'Processing Order...' }));
-        
+
         // Modify flow: cancel the original order first, then re-place with new params
         if (isModify && modifyingOrderId && !modifyingOrderId.startsWith('pos-')) {
           try {
@@ -1768,11 +1768,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 </div>
               ) : isSpotIndex ? (
                 <div style={{ padding: '12px', background: 'rgba(239,68,68,0.1)', color: '#ef4444', borderRadius: '8px', fontSize: '13.5px', fontWeight: '600', textAlign: 'center', width: '100%', lineHeight: '1.4' }}>
-                  Indices cannot be traded directly.<br/>
+                  Indices cannot be traded directly.<br />
                   <span style={{ fontSize: '12px', fontWeight: '500', opacity: 0.9 }}>Please trade their Futures or Options.</span>
                 </div>
               ) : null}
-              
+
               {!isSpotIndex && (() => {
                 // Button label: show lots when in LOT mode, qty when in QTY mode
                 let actionText: string;
@@ -1785,7 +1785,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
                 const buyPriceLabel = askPrice > 0 ? ` @ ${fmt(askPrice)}` : '';
                 const sellPriceLabel = bidPrice > 0 ? ` @ ${fmt(bidPrice)}` : '';
-                
+
                 return (
                   <div className="ts2-btn-row">
                     {(side === 'SELL' || side === 'BOTH') && (

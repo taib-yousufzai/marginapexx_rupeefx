@@ -163,7 +163,7 @@ const BASE_TRADING_SEGMENTS: Segment[] = [
     ]
   },
   {
-    name: 'Stocks',
+    name: 'STOCKS',
     icon: 'fa-landmark',
     count: 4,
     instruments: [
@@ -390,6 +390,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
     'Stock-fut': 'STOCK-FUT',
     'Stock-opt': 'STOCK-OPT',
     'Stocks': 'NSE-EQ',
+    'STOCKS': 'NSE-EQ',
     'Equity': 'NSE-EQ',
     'Nse-eq': 'NSE-EQ',
     'NSE-EQ': 'NSE-EQ',
@@ -402,7 +403,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
   const visibleSegments = tradingSegments.filter(seg => {
     if (allowedSegments.length === 0) return true;
     const dbKey = SEGMENT_NAME_TO_DB_KEY[seg.name] ?? seg.name.toUpperCase();
-    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || ((seg.name === 'Stocks' || seg.name === 'Equity' || seg.name.toUpperCase() === 'EQUITY') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks')));
+    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || ((seg.name === 'Stocks' || seg.name === 'STOCKS' || seg.name === 'Equity' || seg.name.toUpperCase() === 'EQUITY') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks')));
   });
 
   return (
@@ -587,7 +588,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
           gap: 14px;
         }
         .lib-seg-icon { font-size: 1.05rem; color: #C62E2E; width: 24px; text-align: center; }
-        .lib-seg-name { font-size: 0.85rem; font-weight: 700; color: #1f2937; }
+        .lib-seg-name { font-size: 0.85rem; font-weight: 700; color: #1f2937; text-transform: uppercase; }
 
         .lib-seg-count {
           background: #f3f4f6;
