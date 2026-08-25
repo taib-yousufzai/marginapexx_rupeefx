@@ -197,16 +197,28 @@ export const TAB_LABELS: TabLabel[] = [
 export const SEGMENT_TAB_MAP: Record<string, TabLabel> = {
   'NSE - Futures': 'INDEX-FUT',
   'BSE - Futures': 'INDEX-FUT',
+  'NFO - Futures': 'INDEX-FUT',
+  'BFO - Futures': 'INDEX-FUT',
   'NSE - Options': 'INDEX-OPT',
   'BSE - Options': 'INDEX-OPT',
+  'NFO - Options': 'INDEX-OPT',
+  'BFO - Options': 'INDEX-OPT',
   'NSE - Stock Futures': 'STOCK-FUT',
   'BSE - Stock Futures': 'STOCK-FUT',
+  'NFO - Stock Futures': 'STOCK-FUT',
+  'BFO - Stock Futures': 'STOCK-FUT',
   'NSE - Stock Options': 'STOCK-OPT',
   'BSE - Stock Options': 'STOCK-OPT',
+  'NFO - Stock Options': 'STOCK-OPT',
+  'BFO - Stock Options': 'STOCK-OPT',
   'MCX - Futures': 'MCX-FUT',
   'MCX - Options': 'MCX-OPT',
+  'MCX-FUT': 'MCX-FUT',
+  'MCX-OPT': 'MCX-OPT',
   'NSE - Equity': 'NSE-EQ',
   'BSE - Equity': 'NSE-EQ',
+  'NSE-EQ': 'NSE-EQ',
+  'BSE-EQ': 'NSE-EQ',
   'Crypto': 'CRYPTO',
   'CRYPTO': 'CRYPTO',
   'Forex': 'FOREX',
@@ -217,6 +229,10 @@ export const SEGMENT_TAB_MAP: Record<string, TabLabel> = {
   'COMEX - Options': 'COMEX',
   'COMEX': 'COMEX',
   'COI': 'COMEX',
+  'INDEX-FUT': 'INDEX-FUT',
+  'INDEX-OPT': 'INDEX-OPT',
+  'STOCK-FUT': 'STOCK-FUT',
+  'STOCK-OPT': 'STOCK-OPT',
 };
 
 // ── Pure Helper Functions ────────────────────────────────────────────────────
@@ -247,14 +263,22 @@ export function getTabForItem(item: WatchlistItem): TabLabel {
     if (n.includes('CE') || n.includes('PE') || n.includes('OPT')) return 'MCX-OPT';
     return 'MCX-FUT';
   }
-  if (n.includes('BTC') || n.includes('ETH') || n.includes('DOGE') || n.includes('USDT') || n.includes('CRYPTO')) return 'CRYPTO';
+
+  const CRYPTO_BASES = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'];
+  if (n.endsWith('USDT') || n.includes('CRYPTO') || CRYPTO_BASES.some(c => n === c || n.startsWith(`${c}USDT`) || n.startsWith(`${c}/`))) return 'CRYPTO';
   if (n.includes('USDINR') || n.includes('EURINR') || n.includes('GBPINR') || n.includes('JPYINR') || n.includes('GBPUSD') || n.includes('EURUSD') || n.includes('USDJPY') || n.includes('USDCHF') || n.includes('USDCAD') || n.includes('AUDUSD') || n.includes('NZDUSD') || n.includes('CDS') || n.includes('FOREX')) return 'FOREX';
-  if (n.includes('RELIANCE') || n.includes('HDFC') || n.includes('TCS') || n.includes('INFY') || n.includes('STK')) {
-    if (n.includes('CE') || n.includes('PE') || n.includes('OPT')) return 'STOCK-OPT';
+
+  const isIndexName = n.includes('NIFTY') || n.includes('SENSEX') || n.includes('BANKEX') || n.includes('FINNIFTY') || n.includes('MIDCP') || n.includes('MIDCAP');
+  if (n.includes('CE') || n.includes('PE') || n.includes('OPT')) {
+    if (isIndexName) return 'INDEX-OPT';
+    return 'STOCK-OPT';
+  }
+  if (n.includes('FUT') || n.includes('FUTURES')) {
+    if (isIndexName) return 'INDEX-FUT';
     return 'STOCK-FUT';
   }
 
-  return 'INDEX-FUT'; // Ultimate Fallback
+  return 'NSE-EQ';
 }
 
 /** Filters items to those belonging to the active tab. */
@@ -280,17 +304,43 @@ export function filterBySearch(items: WatchlistItem[], query: string): Watchlist
   );
 }
 
-/** Derives the exchange badge string from a segment string. */
-export function getExchangeBadge(segment: string): string {
-  if (!segment) return 'NSE';
-  if (segment.includes('MCX') || segment.includes('NCO')) return 'MCX';
-  if (segment.includes('CRYPTO') || segment === 'Crypto') return 'CRYPTO';
-  if (segment.includes('FOREX') || segment === 'Forex') return 'FOREX';
-  if (segment.includes('CDS')) return 'CDS';
-  if (segment === 'NSE - Equity' || segment === 'NSE' || segment.includes('Index')) return 'NSE';
-  if (segment === 'BSE - Equity' || segment === 'BSE') return 'BSE';
-  if (segment.startsWith('NSE')) return 'NFO';
-  if (segment.startsWith('BSE')) return 'BFO';
+/** Derives the exchange badge string from segment, name, and symbol. */
+export function getExchangeBadge(segment: string, name?: string, symbol?: string): string {
+  const segUpper = (segment || '').toUpperCase();
+  const comb = `${name || ''} ${symbol || ''} ${segment || ''}`.toUpperCase();
+
+  if (segUpper === 'STOCK-OPT' || segUpper.includes('STOCK OPTIONS') || segUpper.includes('STOCK OPT')) return 'STOCK-OPT';
+  if (segUpper === 'STOCK-FUT' || segUpper.includes('STOCK FUTURES') || segUpper.includes('STOCK FUT')) return 'STOCK-FUT';
+  if (segUpper === 'INDEX-OPT' || segUpper.includes('INDEX OPTIONS') || segUpper.includes('INDEX OPT')) return 'INDEX-OPT';
+  if (segUpper === 'INDEX-FUT' || segUpper.includes('INDEX FUTURES') || segUpper.includes('INDEX FUT')) return 'INDEX-FUT';
+  if (segUpper === 'MCX-OPT' || segUpper.includes('MCX OPTIONS')) return 'MCX-OPT';
+  if (segUpper === 'MCX-FUT' || segUpper.includes('MCX FUTURES')) return 'MCX-FUT';
+
+  // Symbol / Name based resolution if segment is generic (e.g. "NSE", "NFO", "BFO")
+  const isIndex = comb.includes('NIFTY') || comb.includes('BANKNIFTY') || comb.includes('FINNIFTY') || comb.includes('SENSEX') || comb.includes('BANKEX') || comb.includes('MIDCP') || comb.includes('MIDCAP');
+  const isOption = comb.includes(' CE') || comb.includes(' PE') || comb.endsWith('CE') || comb.endsWith('PE') || comb.includes('OPT');
+  const isFuture = comb.includes(' FUT') || comb.endsWith('FUT') || comb.includes('FUTURES');
+
+  if (isOption) {
+    if (isIndex) return segUpper.startsWith('BSE') || segUpper.startsWith('BFO') ? 'BFO' : 'NFO';
+    if (segUpper.includes('MCX')) return 'MCX-OPT';
+    return 'STOCK-OPT';
+  }
+
+  if (isFuture) {
+    if (isIndex) return segUpper.startsWith('BSE') || segUpper.startsWith('BFO') ? 'BFO' : 'NFO';
+    if (segUpper.includes('MCX')) return 'MCX-FUT';
+    return 'STOCK-FUT';
+  }
+
+  if (segUpper.includes('MCX') || segUpper.includes('NCO')) return 'MCX';
+  if (segUpper.includes('CRYPTO')) return 'CRYPTO';
+  if (segUpper.includes('FOREX')) return 'FOREX';
+  if (segUpper.includes('CDS')) return 'CDS';
+  if (segUpper === 'NSE - EQUITY' || segUpper === 'NSE-EQ' || segUpper === 'EQUITY' || segUpper === 'NSE') return 'NSE';
+  if (segUpper === 'BSE - EQUITY' || segUpper === 'BSE-EQ' || segUpper === 'BSE') return 'BSE';
+  if (segUpper.startsWith('NSE') || segUpper.startsWith('NFO')) return 'NFO';
+  if (segUpper.startsWith('BSE') || segUpper.startsWith('BFO')) return 'BFO';
   return 'NSE';
 }
 
@@ -344,7 +394,18 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
   const symCheck = ((item.symbol || '') + ' ' + (item.name || '') + ' ' + (item.kiteSymbol || '')).toUpperCase();
   const isForex = item.category === 'FOREX' || item.segment === 'Forex' || ['USDJPY', 'USDCHF', 'USDCAD', 'EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD', 'USDINR', 'EURINR', 'GBPINR', 'JPYINR'].some(f => symCheck.replace(/[\/\=X\s]/g, '').includes(f));
 
-  const isCrypto = !isForex && (item.segment === 'CRYPTO' || item.category === 'CRYPTO' || item.symbol.endsWith('USDT') || (!!item.binanceSymbol && ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].some(c => item.symbol.toUpperCase().startsWith(c))) || ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].some(c => item.symbol.toUpperCase().startsWith(c)));
+  const CRYPTO_BASES = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'];
+  const symUp = (item.symbol || '').toUpperCase().trim();
+  const segUpper = (item.segment || '').toUpperCase();
+  const catUpper = (item.category || '').toUpperCase();
+
+  const isCrypto = !isForex && (
+    segUpper === 'CRYPTO' ||
+    segUpper === 'CRYPTO-FUT' ||
+    catUpper === 'CRYPTO' ||
+    symUp.endsWith('USDT') ||
+    CRYPTO_BASES.some(c => symUp === c || symUp.startsWith(`${c}USDT`) || symUp.startsWith(`${c}/`))
+  );
   const isPureComex = !!item.comexSymbol && !item.kiteSymbol;
   const hasDualView = false;
   const showComex = isPureComex || (isForex && !!item.comexSymbol);
@@ -431,7 +492,7 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
                 isForex ? { background: '#2563EB', color: '#fff' } :
                   showComex ? { background: '#4A148C', color: '#fff' } : {}
             }>
-              {isCrypto ? 'CRYPTO' : isForex ? 'FOREX' : showComex ? 'COMEX' : getExchangeBadge(item.segment)}
+              {isCrypto ? 'CRYPTO' : isForex ? 'FOREX' : showComex ? 'COMEX' : getExchangeBadge(item.segment, item.name, item.symbol)}
             </span>
             {!basketMode && onChart && (
               <button
@@ -599,7 +660,7 @@ function WatchlistContent() {
     const segUpper = (item.segment || '').toUpperCase();
     if (segUpper.includes('CRYPTO')) return true;
 
-    const symName = item.tradingsymbol || item.symbol || item.name || '';
+    const symName = (item as any).tradingsymbol || item.symbol || item.name || '';
     const segmentId = RiskValidation.resolveTradingHoursSegmentId(symName, item.segment || '');
 
 

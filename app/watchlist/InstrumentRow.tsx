@@ -36,26 +36,43 @@ interface InstrumentRowProps {
 
 const CRYPTO_BASES = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'];
 
-function getExchangeBadge(segment: string, name?: string, symbol?: string) {
-  if (name || symbol) {
-    const combined = `${name || ''} ${symbol || ''}`.toUpperCase();
-    if (combined.includes('INDEX') || combined.startsWith('NIFTY') || combined.startsWith('BANKNIFTY') || combined.startsWith('FINNIFTY') || combined.startsWith('SENSEX')) {
-      if (!combined.includes(' CE') && !combined.includes(' PE') && !combined.includes(' FUT')) {
-        return combined.includes('SENSEX') || combined.includes('BSE') ? 'BSE' : 'NSE';
-      }
-    }
+function getExchangeBadge(segment: string, name?: string, symbol?: string): string {
+  const segUpper = (segment || '').toUpperCase();
+  const comb = `${name || ''} ${symbol || ''} ${segment || ''}`.toUpperCase();
+
+  if (segUpper === 'STOCK-OPT' || segUpper.includes('STOCK OPTIONS') || segUpper.includes('STOCK OPT')) return 'STOCK-OPT';
+  if (segUpper === 'STOCK-FUT' || segUpper.includes('STOCK FUTURES') || segUpper.includes('STOCK FUT')) return 'STOCK-FUT';
+  if (segUpper === 'INDEX-OPT' || segUpper.includes('INDEX OPTIONS') || segUpper.includes('INDEX OPT')) return 'INDEX-OPT';
+  if (segUpper === 'INDEX-FUT' || segUpper.includes('INDEX FUTURES') || segUpper.includes('INDEX FUT')) return 'INDEX-FUT';
+  if (segUpper === 'MCX-OPT' || segUpper.includes('MCX OPTIONS')) return 'MCX-OPT';
+  if (segUpper === 'MCX-FUT' || segUpper.includes('MCX FUTURES')) return 'MCX-FUT';
+
+  // Symbol / Name based resolution if segment is generic (e.g. "NSE", "NFO", "BFO")
+  const isIndex = comb.includes('NIFTY') || comb.includes('BANKNIFTY') || comb.includes('FINNIFTY') || comb.includes('SENSEX') || comb.includes('BANKEX') || comb.includes('MIDCP') || comb.includes('MIDCAP');
+  const isOption = comb.includes(' CE') || comb.includes(' PE') || comb.endsWith('CE') || comb.endsWith('PE') || comb.includes('OPT');
+  const isFuture = comb.includes(' FUT') || comb.endsWith('FUT') || comb.includes('FUTURES');
+
+  if (isOption) {
+    if (isIndex) return segUpper.startsWith('BSE') || segUpper.startsWith('BFO') ? 'BFO' : 'NFO';
+    if (segUpper.includes('MCX')) return 'MCX-OPT';
+    return 'STOCK-OPT';
   }
-  if (!segment) return 'OTH';
-  if (segment === 'STOCK-FUT' || segment.includes('Stock Futures')) return 'Stock - Stock Fut';
-  if (segment === 'STOCK-OPT' || segment.includes('Stock Options')) return 'Stock - Stock Opt';
-  if (segment.startsWith('NSE') && segment !== 'NSE - Equity') return 'NFO';
-  if (segment.startsWith('BSE') && segment !== 'BSE - Equity') return 'BFO';
-  if (segment.startsWith('MCX') || segment.includes('MCX')) return 'MCX';
-  if (segment.startsWith('CDS') || segment.includes('FOREX')) return 'CDS';
-  if (segment.includes('CRYPTO') || segment === 'Crypto') return 'CRYPTO';
-  if (segment === 'NSE - Equity') return 'NSE';
-  if (segment === 'BSE - Equity') return 'BSE';
-  return 'OTH';
+
+  if (isFuture) {
+    if (isIndex) return segUpper.startsWith('BSE') || segUpper.startsWith('BFO') ? 'BFO' : 'NFO';
+    if (segUpper.includes('MCX')) return 'MCX-FUT';
+    return 'STOCK-FUT';
+  }
+
+  if (segUpper.includes('MCX') || segUpper.includes('NCO')) return 'MCX';
+  if (segUpper.includes('CRYPTO')) return 'CRYPTO';
+  if (segUpper.includes('FOREX')) return 'FOREX';
+  if (segUpper.includes('CDS')) return 'CDS';
+  if (segUpper === 'NSE - EQUITY' || segUpper === 'NSE-EQ' || segUpper === 'EQUITY' || segUpper === 'NSE') return 'NSE';
+  if (segUpper === 'BSE - EQUITY' || segUpper === 'BSE-EQ' || segUpper === 'BSE') return 'BSE';
+  if (segUpper.startsWith('NSE') || segUpper.startsWith('NFO')) return 'NFO';
+  if (segUpper.startsWith('BSE') || segUpper.startsWith('BFO')) return 'BFO';
+  return 'NSE';
 }
 
 function getPctClass(pct: number) {
