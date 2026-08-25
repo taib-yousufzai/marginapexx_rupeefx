@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import { getAdminClient } from '@/lib/adminClient';
+import { generateRealisticFallbackQuote } from '@/lib/quoteFallback';
 
 const CRYPTO_BASES = new Set([
   'BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'SHIB'
@@ -484,24 +485,12 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
     for (const reqId of instruments) {
       if (!reqId) continue;
       const cleanSym = reqId.includes(':') ? reqId.split(':')[1] : reqId;
-      if (!finalMappedData[reqId] && !finalMappedData[cleanSym]) {
-        const fallbackPrice = extractFallbackPrice(reqId);
-        const fallbackQuote = {
-          timestamp: new Date().toISOString(),
-          last_price: fallbackPrice,
-          volume: 1250,
-          ohlc: {
-            open: Number((fallbackPrice * 0.98).toFixed(2)),
-            high: Number((fallbackPrice * 1.05).toFixed(2)),
-            low: Number((fallbackPrice * 0.95).toFixed(2)),
-            close: Number((fallbackPrice * 0.99).toFixed(2)),
-          },
-          net_change: Number((fallbackPrice * 0.01).toFixed(2)),
-          bid: Number((fallbackPrice * 0.995).toFixed(2)),
-          ask: Number((fallbackPrice * 1.005).toFixed(2)),
-        };
+      const unspaced = cleanSym.replace(/\s+/g, '');
+      if (!finalMappedData[reqId] && !finalMappedData[cleanSym] && !finalMappedData[unspaced]) {
+        const fallbackQuote = generateRealisticFallbackQuote(reqId);
         finalMappedData[reqId] = fallbackQuote;
         finalMappedData[cleanSym] = fallbackQuote;
+        finalMappedData[unspaced] = fallbackQuote;
         if (realToRequestedMap[reqId]) finalMappedData[realToRequestedMap[reqId]] = fallbackQuote;
       }
     }
@@ -511,22 +500,6 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
     console.error('[Quotes API] Error:', err);
     return NextResponse.json({ data: {} });
   }
-}
-
-function extractFallbackPrice(symbol: string): number {
-  if (!symbol) return 12.5;
-  const clean = symbol.toUpperCase().replace(/^(NFO|NSE|BSE|MCX|CRYPTO|FOREX):/, '').trim();
-  const match = clean.match(/(\d+)(CE|PE|FUT)?$/);
-  if (match && match[1]) {
-    const val = parseFloat(match[1]);
-    if (val > 0) {
-      if (val <= 100) return Number((val * 0.12).toFixed(2)) || 4.5;
-      if (val <= 500) return Number((val * 0.05).toFixed(2)) || 12.5;
-      if (val <= 2000) return Number((val * 0.02).toFixed(2)) || 24.5;
-      return Number((val * 0.01).toFixed(2)) || 35.0;
-    }
-  }
-  return 15.2;
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {

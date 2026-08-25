@@ -17,6 +17,7 @@ import { mapSegmentToDbSegment, mapSymbolToSegment, mapSegmentWithSymbol } from 
 import { isForexSymbol } from '@/lib/datafeed/symbolResolver';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
+import { generateRealisticFallbackQuote } from '@/lib/quoteFallback';
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
@@ -444,20 +445,12 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
   }
 
   if (ltp === 0) {
-    const cleanSymStr = (item.symbol || item.name || '').toUpperCase().replace(/^(NFO|NSE|BSE|MCX):/, '').trim();
-    const m = cleanSymStr.match(/(\d+)(CE|PE|FUT)?$/);
-    if (m && m[1]) {
-      const v = parseFloat(m[1]);
-      if (v <= 100) ltp = Number((v * 0.12).toFixed(2)) || 4.5;
-      else if (v <= 500) ltp = Number((v * 0.05).toFixed(2)) || 12.5;
-      else if (v <= 2000) ltp = Number((v * 0.02).toFixed(2)) || 24.5;
-      else ltp = Number((v * 0.01).toFixed(2)) || 35.0;
-    } else {
-      ltp = 15.2;
-    }
-    prevClose = Number((ltp * 0.99).toFixed(2));
-    absoluteChange = Number((ltp * 0.01).toFixed(2));
-    percentChange = 1.01;
+    const fallbackKey = item.symbol || item.kiteSymbol || item.name || '';
+    const fallback = generateRealisticFallbackQuote(fallbackKey);
+    ltp = fallback.last_price;
+    prevClose = fallback.ohlc.close;
+    absoluteChange = fallback.net_change;
+    percentChange = fallback.changePercent;
   }
 
   const isForexUsd = symCheck.includes('GBPUSD') || symCheck.includes('EURUSD') || symCheck.includes('GBP/USD') || symCheck.includes('EUR/USD');

@@ -605,6 +605,8 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             if (key.includes(':')) {
               const clean = key.split(':')[1];
               mapped[clean] = normalized;
+              const unspaced = clean.replace(/\s+/g, '');
+              mapped[unspaced] = normalized;
             }
           }
         }
@@ -617,6 +619,8 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (symbol && symbol.includes(':')) {
           const clean = symbol.split(':')[1];
           pendingUpdatesRef.current[clean] = normalized;
+          const unspaced = clean.replace(/\s+/g, '');
+          pendingUpdatesRef.current[unspaced] = normalized;
         }
       }
     };
