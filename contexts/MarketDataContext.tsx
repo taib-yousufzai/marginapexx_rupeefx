@@ -568,6 +568,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const wsManager = useMemo(() => MarketWSManager.getInstance(), []);
   const pendingUpdatesRef = useRef<Record<string, QuoteData>>({});
   const fetchInitialQuotesRef = useRef<() => void>(() => {});
+  const isFetchingRef = useRef<boolean>(false);
 
   // Flush pending updates every 250ms to reduce render count
   useEffect(() => {
@@ -613,6 +614,9 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     wsManager.addListener(onMessage);
 
     const fetchInitialQuotes = async () => {
+      // Prevent concurrent overlapping requests from saturating browser connection pool
+      if (isFetchingRef.current) return;
+
       // More aggressive HTTP fallback for page refresh scenarios
       // Always try HTTP fallback if WebSocket isn't actively sending ticks
       const shouldUseHttpFallback = 
@@ -624,11 +628,12 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const symbols = Array.from(wsManager.symbolRefCount.keys());
       if (symbols.length === 0) return;
       
-      // Mobile-optimized: Try local API route first (works better on mobile networks)
+      isFetchingRef.current = true;
+
       try {
-        // Fallback 1: Local Next.js API route with longer timeout for mobile
+        // Fallback 1: Local Next.js API route
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout for mobile
+        const timeoutId = setTimeout(() => controller.abort(), 6000);
         
         const res = await fetch('/api/kite/quotes', {
           method: 'POST',
@@ -637,7 +642,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           },
           body: JSON.stringify({ instruments: symbols }),
           signal: controller.signal,
-          cache: 'no-store' // Prevent caching issues on mobile
+          cache: 'no-store'
         });
         
         clearTimeout(timeoutId);
@@ -645,7 +650,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (res.ok) {
           const json = await res.json();
           if (json.data && Object.keys(json.data).length > 0) {
-            console.log('[MarketDataProvider] ✓ Quotes fetched via local API (mobile-friendly)');
+            console.log('[MarketDataProvider] ✓ Quotes fetched via local API');
             onMessage('quotes', json.data);
             return;
           }
@@ -658,11 +663,10 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
       }
 
-      // Fallback 2: Direct query to Railway ticker daemon with mobile-optimized settings
+      // Fallback 2: Direct query to Railway ticker daemon
       try {
         let baseUrl = process.env.NEXT_PUBLIC_TICKER_URL;
         
-        // Smart production URL detection
         if (!baseUrl) {
           if (typeof window !== 'undefined') {
             const hostname = window.location.hostname;
@@ -679,7 +683,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
         
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000); // 8s timeout
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
         
         const res = await fetch(`${baseUrl}/quotes?symbols=${symbols.map(s => encodeURIComponent(String(s))).join(',')}`, {
           signal: controller.signal,
@@ -704,14 +708,15 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         } else {
           console.error('[MarketDataProvider] Direct HTTP fallback error:', err);
         }
+      } finally {
+        isFetchingRef.current = false;
       }
     };
 
     fetchInitialQuotesRef.current = fetchInitialQuotes;
     fetchInitialQuotes();
 
-    // Mobile-optimized: More frequent polling for better UX on unstable connections
-    const pollInterval = setInterval(fetchInitialQuotes, 2000); // 2s instead of 3s
+    const pollInterval = setInterval(fetchInitialQuotes, 4000);
 
     return () => {
       clearInterval(pollInterval);

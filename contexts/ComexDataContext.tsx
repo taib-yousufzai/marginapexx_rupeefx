@@ -36,11 +36,14 @@ export const ComexDataProvider = ({ children }: { children: React.ReactNode }) =
   const activeSymbolsRef = useRef<Set<string>>(new Set());
   const errorRef = useRef<string | null>(null);
   const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isFetchingRef = useRef<boolean>(false);
 
   const fetchQuotes = useCallback(async () => {
+    if (isFetchingRef.current) return;
     const symbols = Array.from(activeSymbolsRef.current);
     if (symbols.length === 0) return;
 
+    isFetchingRef.current = true;
     try {
       const res = await fetch(
         `/api/market/comex?symbols=${symbols.map(s => encodeURIComponent(s)).join(',')}`,
@@ -66,14 +69,16 @@ export const ComexDataProvider = ({ children }: { children: React.ReactNode }) =
       errorRef.current = null;
     } catch {
       errorRef.current = 'Network error';
+    } finally {
+      isFetchingRef.current = false;
     }
   }, []);
 
   useEffect(() => {
     // Fetch initially
     fetchQuotes();
-    // Poll every 1000ms for commodity prices (slowed down to match Zerodha's pace)
-    const interval = setInterval(fetchQuotes, 1000);
+    // Poll every 3000ms for commodity prices
+    const interval = setInterval(fetchQuotes, 3000);
     return () => clearInterval(interval);
   }, [fetchQuotes]);
 
