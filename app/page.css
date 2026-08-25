@@ -1567,26 +1567,32 @@ body.blue .notif-item {
   max-height: 100svh !important;
 }
 
-/* Force normal document flow (flex items) instead of out-of-flow positioning */
+/* Header stays fixed at top — does not scroll with content */
 .home-isolated-container .nav-bar-full {
-  position: relative !important;
-  top: auto !important;
-  left: auto !important;
-  right: auto !important;
+  position: sticky !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
   width: 100% !important;
-  z-index: 100 !important;
+  z-index: 200 !important;
   flex-shrink: 0 !important;
+  backdrop-filter: blur(8px) !important;
+  -webkit-backdrop-filter: blur(8px) !important;
 }
 
 .home-isolated-scroll {
   flex: 1 !important;
-  min-height: 0 !important; /* CRITICAL: Allows flex item to shrink below content height */
+  min-height: 0 !important;
   overflow-y: auto !important;
   overflow-x: hidden !important;
   -webkit-overflow-scrolling: touch !important;
-  scroll-behavior: smooth !important;
-  overscroll-behavior-y: auto !important;
+  overscroll-behavior-y: contain !important;
   padding-top: 0 !important;
+  padding-bottom: 6.25rem !important;
+}
+
+.market-hour-pill {
+  display: flex;
   align-items: center;
   gap: 0.375rem;
   padding: 0.25rem 0.625rem;
@@ -1680,17 +1686,7 @@ body.black .notif-item {
   border-bottom-color: var(--border-light, #111);
 }
 
-
-
-
-
 /* ===== BLUE MODE OVERRIDES ===== */
-
-
-
-/* ========================================= */
-/* AMOLED SUPER BLACK OVERRIDES */
-/* ========================================= */
 
 body.blue {
   --bg-body: #0B141E;
@@ -1735,55 +1731,8 @@ body.blue {
   --expiry-drawer-bg: #0B141E;
 }
 
-
 body.blue .notif-item {
   border-bottom-color: var(--border-light, #131C27);
-}
-
-/* ========================================= */
-/* HOME PAGE CSS LEAKAGE ISOLATION */
-/* ========================================= */
-.home-isolated-layout {
-  overflow: visible !important;
-}
-
-.home-isolated-viewport {
-  flex: 1 !important;
-  display: flex !important;
-  flex-direction: column !important;
-  overflow: hidden !important;
-}
-
-.home-isolated-container {
-  overflow: hidden !important;
-  display: flex !important;
-  flex-direction: column !important;
-  height: 100svh !important; /* CRITICAL: 100svh prevents iOS from pushing the footer below the screen when URL bar expands */
-  max-height: 100svh !important;
-}
-
-/* Header stays fixed at top — does not scroll with content */
-.home-isolated-container .nav-bar-full {
-  position: sticky !important;
-  top: 0 !important;
-  left: 0 !important;
-  right: 0 !important;
-  width: 100% !important;
-  z-index: 200 !important;
-  flex-shrink: 0 !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
-}
-
-.home-isolated-scroll {
-  flex: 1 !important;
-  min-height: 0 !important;
-  overflow-y: auto !important;
-  overflow-x: hidden !important;
-  -webkit-overflow-scrolling: touch !important;
-  overscroll-behavior-y: contain !important;
-  padding-top: 0 !important;
-  padding-bottom: 6.25rem !important;
 }
 
 .home-isolated-container .toast-msg {

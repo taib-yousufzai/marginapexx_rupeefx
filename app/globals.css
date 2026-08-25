@@ -40,7 +40,7 @@ body {
   overflow-x: hidden;
 }
 
-@media (max-width: 500px) {
+@media (max-width: 1023px) {
   body {
     align-items: flex-start;
     justify-content: flex-start;
@@ -53,7 +53,7 @@ body {
   .sec-root,
   .notif-root {
     max-width: 100% !important;
-    width: 100vw !important;
+    width: 100% !important;
     min-height: 100dvh !important;
     margin: 0 !important;
     box-shadow: none !important;
@@ -61,7 +61,7 @@ body {
 
   .history-root {
     max-width: 100% !important;
-    width: 100vw !important;
+    width: 100% !important;
     height: 100% !important;
     margin: 0 !important;
     box-shadow: none !important;
@@ -154,9 +154,9 @@ html.dark,
 body.dark,
 :root.dark {
   --bg-body: #121212;
-  --container-bg: #1E1E1E;
-  --card-bg: #252525;
-  --card-alt-bg: #2A2A2A;
+  --container-bg: #121212;
+  --card-bg: #1E1E1E;
+  --card-alt-bg: #252525;
   --border-light: #333333;
   --border-card: #3A3A3A;
   --text-primary: #F5F5F5;
