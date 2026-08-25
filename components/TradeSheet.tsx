@@ -245,25 +245,20 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => (item?.symbol || item?.name || item?.kiteSymbol || '').toUpperCase().includes(c));
     const isIndianNonCommodity = (!isCrypto && !isComex) && !isCommodity;
 
-    const activeAskBuffer = isIndianNonCommodity ? 0 : (buyEntryBuffer || buySetting?.bid_buffer || 0.3);
-    const activeBidBuffer = isIndianNonCommodity ? 0 : (sellEntryBuffer || sellSetting?.bid_buffer || 0.3);
+    const activeAskBuffer = 0;
+    const activeBidBuffer = 0;
 
     const effective = resolveEffectivePrices({
       ltp: currentLtp,
       rawBid,
       rawAsk,
       hasRealBidAsk: isCommodity ? false : Boolean(rawBid && rawAsk && rawBid < rawAsk),
-      askBuffer: activeAskBuffer,
-      bidBuffer: activeBidBuffer,
+      askBuffer: 0,
+      bidBuffer: 0,
     });
 
-    if (exitMode) {
-      bidPrice = effective.effectiveBid * (1 - buyExitBuffer / 100);
-      askPrice = effective.effectiveAsk * (1 + sellExitBuffer / 100);
-    } else {
-      bidPrice = effective.effectiveBid;
-      askPrice = effective.effectiveAsk;
-    }
+    bidPrice = effective.effectiveBid;
+    askPrice = effective.effectiveAsk;
   }
 
   const priceOfScript = activeSide === 'SELL' ? rawBid : rawAsk;
