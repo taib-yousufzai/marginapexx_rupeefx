@@ -110,8 +110,9 @@ export default function OrderPage() {
   const handleTradeAgain = (order: any) => {
     setIsSheetOpen(false);
     setSelectedOrder(null);
+    const symToUse = order.kite_instrument || order.symbol;
     setTimeout(() => {
-      router.push(`/watchlist?symbol=${encodeURIComponent(order.symbol)}&action=detail`);
+      router.push(`/watchlist?symbol=${encodeURIComponent(symToUse)}&action=detail`);
     }, 80);
   };
 

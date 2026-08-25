@@ -1083,26 +1083,34 @@ function WatchlistContent() {
       'BANK NIFTY': 'BANKNIFTY',
     };
 
-    let query = deepLinkSymbol.toUpperCase();
+    const rawQuery = deepLinkSymbol.toUpperCase();
+    let query = rawQuery;
     if (aliasMap[query]) {
       query = aliasMap[query];
     }
+    const cleanQuery = query.includes(':') ? query.split(':')[1] : query;
 
     const tryOpen = (items: WatchlistItem[]) => {
-      let item = items.find(i =>
-        i.symbol.toUpperCase().replace(/\s/g, '') === query.replace(/\s/g, '') ||
-        i.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === query.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') ||
-        (i.kiteSymbol && i.kiteSymbol.toUpperCase().includes(query))
-      );
+      let item = items.find(i => {
+        const itemSym = i.symbol.toUpperCase().replace(/\s/g, '');
+        const itemKite = (i.kiteSymbol || '').toUpperCase().replace(/\s/g, '');
+        const itemKiteClean = itemKite.includes(':') ? itemKite.split(':')[1] : itemKite;
+        return (
+          itemSym === cleanQuery.replace(/\s/g, '') ||
+          itemKiteClean === cleanQuery.replace(/\s/g, '') ||
+          itemKite === rawQuery.replace(/\s/g, '') ||
+          i.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === cleanQuery.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '')
+        );
+      });
 
       // Fallback: Try to find in master segments lists first
       if (!item) {
         // Try searching defaults first (e.g. for crypto/forex/comex)
         const allDefaults = [...DEFAULT_CRYPTO_ITEMS, ...DEFAULT_FOREX_ITEMS, ...DEFAULT_COMEX_ITEMS];
         const defaultMatch = allDefaults.find(d =>
-          d.symbol.toUpperCase() === query ||
-          d.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === query.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') ||
-          (d.kiteSymbol && d.kiteSymbol.toUpperCase() === query)
+          d.symbol.toUpperCase() === cleanQuery ||
+          d.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === cleanQuery.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') ||
+          (d.kiteSymbol && d.kiteSymbol.toUpperCase() === rawQuery)
         );
 
         let masterFound: any = defaultMatch ? { ...defaultMatch } : null;
@@ -1111,20 +1119,20 @@ function WatchlistContent() {
           for (const seg of tradingSegmentsRef.current) {
             if (seg.instruments) {
               const found = seg.instruments.find(i =>
-                i.symbol.toUpperCase().replace(/\s/g, '') === query.replace(/\s/g, '') ||
-                i.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === query.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') ||
-                (i.kiteSymbol && i.kiteSymbol.toUpperCase() === query) ||
-                (i.kiteSymbol && i.kiteSymbol.toUpperCase().split(':').pop() === query)
+                i.symbol.toUpperCase().replace(/\s/g, '') === cleanQuery.replace(/\s/g, '') ||
+                i.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === cleanQuery.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') ||
+                (i.kiteSymbol && i.kiteSymbol.toUpperCase() === rawQuery) ||
+                (i.kiteSymbol && i.kiteSymbol.toUpperCase().split(':').pop() === cleanQuery)
               );
               if (found) { masterFound = found; break; }
             }
             if (seg.subCategories) {
               for (const sub of seg.subCategories) {
                 const found = sub.instruments.find(i =>
-                  i.symbol.toUpperCase().replace(/\s/g, '') === query.replace(/\s/g, '') ||
-                  i.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === query.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') ||
-                  (i.kiteSymbol && i.kiteSymbol.toUpperCase() === query) ||
-                  (i.kiteSymbol && i.kiteSymbol.toUpperCase().split(':').pop() === query)
+                  i.symbol.toUpperCase().replace(/\s/g, '') === cleanQuery.replace(/\s/g, '') ||
+                  i.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === cleanQuery.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') ||
+                  (i.kiteSymbol && i.kiteSymbol.toUpperCase() === rawQuery) ||
+                  (i.kiteSymbol && i.kiteSymbol.toUpperCase().split(':').pop() === cleanQuery)
                 );
                 if (found) { masterFound = found; break; }
               }
@@ -1136,11 +1144,22 @@ function WatchlistContent() {
         if (masterFound) {
           item = { ...masterFound };
         } else {
+          let resolvedKiteSymbol = rawQuery;
+          if (!resolvedKiteSymbol.includes(':')) {
+            const isOption = (cleanQuery.endsWith('CE') || cleanQuery.endsWith('PE')) && /\d/.test(cleanQuery);
+            const isFut = cleanQuery.endsWith('FUT') || cleanQuery.includes('FUTURES');
+            let prefix = 'NSE';
+            if (cleanQuery.includes('SENSEX') || cleanQuery.includes('BANKEX')) prefix = 'BFO';
+            else if (['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'NATGAS', 'MCX', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(x => cleanQuery.includes(x))) prefix = 'MCX';
+            else if (isOption || isFut) prefix = 'NFO';
+            resolvedKiteSymbol = `${prefix}:${cleanQuery}`;
+          }
+
           item = {
-            name: deepLinkSymbol,
-            symbol: deepLinkSymbol,
-            kiteSymbol: deepLinkSymbol,
-            segment: mapSymbolToSegment(deepLinkSymbol),
+            name: cleanQuery,
+            symbol: cleanQuery,
+            kiteSymbol: resolvedKiteSymbol,
+            segment: mapSymbolToSegment(cleanQuery),
             price: 0,
           } as WatchlistItem;
         }

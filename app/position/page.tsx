@@ -326,8 +326,9 @@ export default function PositionPage() {
 
   const openTradeAgain = (pos: EnrichedPosition) => {
     closeSheet();
+    const symToUse = pos.kite_instrument || pos.symbol;
     setTimeout(() => {
-      router.push(`/watchlist?symbol=${encodeURIComponent(pos.symbol)}&action=detail`);
+      router.push(`/watchlist?symbol=${encodeURIComponent(symToUse)}&action=detail`);
     }, 80);
   };
 

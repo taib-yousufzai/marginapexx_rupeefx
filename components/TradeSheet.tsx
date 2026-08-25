@@ -132,15 +132,21 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     bSymbol = bSymbol + 'USDT';
   }
   const computedKiteSymbol = useMemo(() => {
-    let k = item?.kiteSymbol;
-    if (k && item?.symbol) {
-      const isOption = item.symbol.endsWith('CE') || item.symbol.endsWith('PE');
-      if (isOption && (!k.includes(':') || (!k.endsWith('CE') && !k.endsWith('PE')))) {
-        const underlying = item.symbol.replace(/_INDEX|NSE:|INDEX/g, '').trim();
-        let prefix = 'NFO';
-        if (underlying.includes('SENSEX') || underlying.includes('BANKEX')) prefix = 'BFO';
-        else if (['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS'].some(x => underlying.includes(x))) prefix = 'MCX';
-        k = `${prefix}:${item.symbol}`;
+    let k = item?.kiteSymbol || item?.symbol;
+    if (k) {
+      if (!k.includes(':')) {
+        const cleanSym = k.toUpperCase();
+        const isOption = (cleanSym.endsWith('CE') || cleanSym.endsWith('PE')) && /\d/.test(cleanSym);
+        const isFut = cleanSym.endsWith('FUT') || cleanSym.includes('FUTURES');
+        let prefix = 'NSE';
+        if (cleanSym.includes('SENSEX') || cleanSym.includes('BANKEX')) {
+          prefix = 'BFO';
+        } else if (['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'NATGAS', 'MCX', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(x => cleanSym.includes(x))) {
+          prefix = 'MCX';
+        } else if (isOption || isFut) {
+          prefix = 'NFO';
+        }
+        k = `${prefix}:${cleanSym}`;
       }
     }
     return k;
