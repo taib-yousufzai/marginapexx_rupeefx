@@ -492,7 +492,7 @@ export function normalizeQuote(q: any, symbolKey?: string): QuoteData {
 
   const rawSym = (q.symbol || q.tradingsymbol || symbolKey || '').toUpperCase();
   const exchange = (q.exchange || (rawSym.includes(':') ? rawSym.split(':')[0] : '')).toUpperCase();
-  const cleanSym = rawSym.replace(/^CRYPTO:/, '').replace(/^FOREX:/, '').replace(/^MCX:/, '').replace(/^COMEX:/, '').replace(/^NCO:/, '').replace('USDT', '');
+  const cleanSym = rawSym.replace(/^(CRYPTO|FOREX|MCX|COMEX|NCO|NFO|NSE|BSE):/, '');
 
   const isForexUsd = ['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'].includes(cleanSym);
   const usdInrRate = 83.85;
@@ -600,14 +600,24 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           // Do not allow HTTP fallback quotes to overwrite fresh WS ticks (within last 5s)
           const lastWsTime = lastWsTickTimeRef.current[key] || 0;
           if (now - lastWsTime > 5000) {
-            mapped[key] = normalizeQuote(quote as any, key);
+            const normalized = normalizeQuote(quote as any, key);
+            mapped[key] = normalized;
+            if (key.includes(':')) {
+              const clean = key.split(':')[1];
+              mapped[clean] = normalized;
+            }
           }
         }
         Object.assign(pendingUpdatesRef.current, mapped);
       } else if (type === 'update') {
         const { symbol, quote: q } = data;
         lastWsTickTimeRef.current[symbol] = Date.now();
-        pendingUpdatesRef.current[symbol] = normalizeQuote(q, symbol);
+        const normalized = normalizeQuote(q, symbol);
+        pendingUpdatesRef.current[symbol] = normalized;
+        if (symbol && symbol.includes(':')) {
+          const clean = symbol.split(':')[1];
+          pendingUpdatesRef.current[clean] = normalized;
+        }
       }
     };
 

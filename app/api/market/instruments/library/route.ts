@@ -82,8 +82,27 @@ function safeOptName(i: any) {
 }
 
 function generateSyntheticStockOptions(stkName: string, expiry: string): any[] {
-  const baseStrike = 1000;
-  const step = 20;
+  const now = new Date(expiry || Date.now());
+  const yearStr = String(now.getFullYear()).slice(-2);
+  const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+  const monthStr = months[now.getMonth()] || 'AUG';
+  const expTag = `${yearStr}${monthStr}`;
+
+  let baseStrike = 500;
+  let step = 10;
+
+  const lowValueStocks = new Set(['NHPC', 'IDEA', 'SUZLON', 'SJVN', 'IREDA', 'RVNL', 'HUDCO', 'YESBANK', 'PNB', 'IDFCFIRSTB', 'BHEL', 'NLCINDIA', 'NMDC', 'GMRINFRA', 'SOUTHBANK']);
+  const highValueStocks = new Set(['TCS', 'RELIANCE', 'BAJFINANCE', 'INFY', 'ULTRACEMCO', 'BAJAJ-AUTO', 'MARUTI', 'HEROMOTOCO', 'DIXON', 'LTIM', 'EICHERMOT', 'SHREECEM']);
+
+  const upperStk = stkName.toUpperCase();
+  if (lowValueStocks.has(upperStk)) {
+    baseStrike = 80;
+    step = 2.5;
+  } else if (highValueStocks.has(upperStk)) {
+    baseStrike = 2500;
+    step = 50;
+  }
+
   const strikes: number[] = [];
   for (let k = -5; k <= 5; k++) {
     strikes.push(baseStrike + k * step);
@@ -92,7 +111,7 @@ function generateSyntheticStockOptions(stkName: string, expiry: string): any[] {
   const contracts: any[] = [];
   strikes.forEach(sp => {
     ['CE', 'PE'].forEach(optType => {
-      const tsym = `${stkName}${sp}${optType}`;
+      const tsym = `${stkName}${expTag}${sp}${optType}`;
       contracts.push({
         name: `${stkName} ${sp} ${optType}`,
         symbol: tsym,
@@ -129,7 +148,7 @@ export async function GET(request: Request) {
     };
 
     const redis = getRedisClient();
-    const cacheKey = 'market:library:segments:v7';
+    const cacheKey = 'market:library:segments:v8';
     try {
       const cached = await redis.get(cacheKey);
       if (cached) {
@@ -512,15 +531,27 @@ export async function GET(request: Request) {
       }
     });
 
-    // c. Stock-OPT: batch fetch Stock Options (up to 500 underlyings)
-    const { data: stockOptData } = await getSupabase()
-      .from('instruments')
-      .select('tradingsymbol, name, exchange, instrument_type, strike_price, option_type, expiry, lot_size')
-      .in('segment', ['NFO-OPT', 'BFO-OPT', 'NFO', 'BFO'])
-      .in('option_type', ['CE', 'PE'])
-      .gte('expiry', today)
-      .not('name', 'in', '("NIFTY","BANKNIFTY","FINNIFTY","MIDCPNIFTY","SENSEX","BANKEX","SENSEX50","NIFTYNXT50")')
-      .limit(5000);
+    // c. Stock-OPT: batch fetch Stock Options for priority recognizable stock underlyings
+    const stockBatches: string[][] = [];
+    const targetStockNames = prioritySymbols.filter(s => isValidStockSymbol(s));
+    for (let i = 0; i < targetStockNames.length; i += 40) {
+      stockBatches.push(targetStockNames.slice(i, i + 40));
+    }
+
+    const stockOptResults = await Promise.all(
+      stockBatches.map(batch =>
+        getSupabase()
+          .from('instruments')
+          .select('tradingsymbol, name, exchange, instrument_type, strike_price, option_type, expiry, lot_size')
+          .in('name', batch)
+          .in('segment', ['NFO-OPT', 'BFO-OPT', 'NFO', 'BFO'])
+          .in('option_type', ['CE', 'PE'])
+          .gte('expiry', today)
+          .limit(1000)
+      )
+    );
+
+    const stockOptData = stockOptResults.flatMap(r => r.data || []);
 
     const stockOptGroup: Record<string, Record<string, Instrument[]>> = {};
     (stockOptData || []).forEach((i: any) => {
