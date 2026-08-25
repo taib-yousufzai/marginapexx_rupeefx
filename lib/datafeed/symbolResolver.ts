@@ -5,16 +5,28 @@ export function isForexSymbol(symbolName: string): boolean {
   if (!symbolName) return false;
   let upper = symbolName.toUpperCase().trim();
   
-  // Indian currency futures (USDINR, EURINR, GBPINR, JPYINR futures) are Kite CDS instruments, NOT Yahoo Forex
-  if (upper.includes('INR') || upper.endsWith('FUT') || upper.startsWith('CDS:')) {
+  // Indian currency futures, exchange prefixes, and Indian indices/stocks are NOT Yahoo Forex
+  if (
+    upper.includes('INR') || 
+    upper.endsWith('FUT') || 
+    upper.startsWith('CDS:') ||
+    upper.startsWith('BSE:') ||
+    upper.startsWith('NSE:') ||
+    upper.startsWith('NFO:') ||
+    upper.startsWith('BFO:') ||
+    upper.startsWith('MCX:') ||
+    upper.includes('SENSEX') ||
+    upper.includes('BANKEX') ||
+    upper.includes('NIFTY')
+  ) {
     return false;
   }
 
   if (upper.startsWith('FOREX:')) return true;
   if (upper.endsWith('=X')) upper = upper.slice(0, -2);
-  const clean = (upper.includes(':') ? upper.split(':')[1] : upper).replace(/\//g, '');
+  const clean = (upper.includes(':') ? upper.split(':')[1] : upper).replace(/[\/\=X]/g, '').trim();
   const FOREX_PAIRS = ['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD', 'EURGBP', 'EURJPY', 'GBPJPY', 'AUDJPY', 'CADJPY', 'CHFJPY', 'NZDJPY', 'EURAUD', 'EURCAD', 'EURNZD', 'GBPAUD', 'GBPCAD', 'GBPNZD'];
-  return FOREX_PAIRS.includes(clean) || (clean.length === 6 && !clean.includes('INR'));
+  return FOREX_PAIRS.includes(clean);
 }
 
 /**
@@ -58,6 +70,8 @@ export function deriveExchange(symbolName: string): string {
     if (upper.includes('SENSEX') || upper.includes('BANKEX')) return 'BFO';
     return 'NFO';
   }
+
+  if (upper.includes('SENSEX') || upper.includes('BANKEX')) return 'BSE';
 
   return 'NSE';
 }
