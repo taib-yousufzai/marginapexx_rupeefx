@@ -517,12 +517,16 @@ export function normalizeQuote(q: any, symbolKey?: string): QuoteData {
     if (low > 0 && low < 20) low *= usdInrRate;
   }
 
+  const isCommodity = exchange === 'MCX' || rawSym.startsWith('MCX:') || rawSym.startsWith('MCX-') ||
+    ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => cleanSym.includes(c));
+
   const isIndianMarket = exchange === 'NSE' || exchange === 'NFO' || exchange === 'MCX' || exchange === 'BSE' || exchange === 'BFO' || exchange === 'NCO' ||
     rawSym.startsWith('NSE:') || rawSym.startsWith('NFO:') || rawSym.startsWith('MCX:') || rawSym.startsWith('BSE:') || rawSym.startsWith('BFO:') || rawSym.startsWith('NCO:') || rawSym.startsWith('MCX-') ||
     ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL', 'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'].some(c => cleanSym.includes(c));
 
-  // For Indian market (NSE, NFO, MCX), ignore buffers and use Zerodha raw ask/bid 1:1
-  const forceSynthetic = !isIndianMarket;
+  // For Indian equities/indices (NSE, NFO, BSE, BFO), ignore buffers and use raw ask/bid 1:1.
+  // For Commodities (MCX), Crypto, and Forex, force synthetic buffer calculation (ignore Zerodha depth).
+  const forceSynthetic = !isIndianMarket || isCommodity;
 
   const { bid: finalBid, ask: finalAsk } = normalizeOptionQuoteDepth(
     lastPrice,

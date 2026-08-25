@@ -973,17 +973,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const symbolExchange = (symbol.includes(':') ? symbol.split(':')[0] : '').toUpperCase();
 
-    const isIndianMarket = ['NSE', 'NFO', 'MCX', 'BSE', 'BFO', 'NCO'].includes(symbolExchange) ||
-      symbol.startsWith('NSE:') || symbol.startsWith('NFO:') || symbol.startsWith('MCX:') || symbol.startsWith('MCX-');
+    const isCommodity = symbolExchange === 'MCX' || symbolExchange === 'NCO' ||
+      symbol.startsWith('MCX:') || symbol.startsWith('MCX-') ||
+      dbSegment.includes('MCX') ||
+      ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => symbol.toUpperCase().includes(c));
 
-    const askBuf = isIndianMarket ? 0 : (buySetting?.entry_buffer ?? buySetting?.bid_buffer ?? 0);
-    const bidBuf = isIndianMarket ? 0 : (sellSetting?.entry_buffer ?? sellSetting?.bid_buffer ?? 0);
+    const isIndianNonCommodity = (['NSE', 'NFO', 'BSE', 'BFO'].includes(symbolExchange) ||
+      symbol.startsWith('NSE:') || symbol.startsWith('NFO:') || symbol.startsWith('BSE:') || symbol.startsWith('BFO:')) && !isCommodity;
+
+    const askBuf = isIndianNonCommodity ? 0 : (buySetting?.entry_buffer ?? buySetting?.bid_buffer ?? 0.003);
+    const bidBuf = isIndianNonCommodity ? 0 : (sellSetting?.entry_buffer ?? sellSetting?.bid_buffer ?? 0.003);
 
     const effective = resolveEffectivePrices({
       ltp: baseLtp,
       rawBid,
       rawAsk,
-      hasRealBidAsk,
+      hasRealBidAsk: isCommodity ? false : hasRealBidAsk,
       askBuffer: askBuf,
       bidBuffer: bidBuf,
     });

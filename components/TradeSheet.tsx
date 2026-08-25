@@ -241,16 +241,18 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       if (rawAsk > 0 && rawAsk < 20) rawAsk *= usdInrRate;
     }
 
-    const isIndianMarket = !isCrypto && !isComex;
+    const isCommodity = dbSeg.toUpperCase().includes('MCX') ||
+      ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => (item?.symbol || item?.name || item?.kiteSymbol || '').toUpperCase().includes(c));
+    const isIndianNonCommodity = (!isCrypto && !isComex) && !isCommodity;
 
-    const activeAskBuffer = isIndianMarket ? 0 : (buyEntryBuffer || buySetting?.bid_buffer || 0.3);
-    const activeBidBuffer = isIndianMarket ? 0 : (sellEntryBuffer || sellSetting?.bid_buffer || 0.3);
+    const activeAskBuffer = isIndianNonCommodity ? 0 : (buyEntryBuffer || buySetting?.bid_buffer || 0.3);
+    const activeBidBuffer = isIndianNonCommodity ? 0 : (sellEntryBuffer || sellSetting?.bid_buffer || 0.3);
 
     const effective = resolveEffectivePrices({
       ltp: currentLtp,
       rawBid,
       rawAsk,
-      hasRealBidAsk: Boolean(rawBid && rawAsk && rawBid < rawAsk),
+      hasRealBidAsk: isCommodity ? false : Boolean(rawBid && rawAsk && rawBid < rawAsk),
       askBuffer: activeAskBuffer,
       bidBuffer: activeBidBuffer,
     });
@@ -344,8 +346,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     displayIntraday = 0;
     displayCarry = rawCarryCharge;
   } else {
-    // INTRADAY open: entry+exit both charged upfront (Ã—2)
-    displayIntraday = rawIntradayCharge * 2;
+    // INTRADAY open: show entry brokerage only for UI
+    displayIntraday = rawIntradayCharge;
     displayCarry = 0;
   }
 
@@ -1737,7 +1739,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                           Intraday Carry
                         </span>
                         <span className="ts2-mv" style={displayIntraday > 0 ? {} : { opacity: 0.4 }}>
-                          {currencySymbol} {(displayIntraday > 0 ? rawIntradayCharge : 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {currencySymbol} {displayIntraday.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="ts2-margin-row">

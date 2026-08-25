@@ -292,7 +292,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           continue;
         }
 
-        const hasRealBidAsk = Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
+        const isCommodity = (pos.settlement || '').toUpperCase().includes('MCX') ||
+          ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => (pos.symbol || '').toUpperCase().includes(c));
+
+        const hasRealBidAsk = isCommodity ? false : Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
 
         const effective = resolveEffectivePrices({
           ltp: baseLtp,

@@ -701,8 +701,8 @@ function OptionChainContent() {
 
           const ltp = quote ? quote.lastPrice : (contractData?.price || 0);
           const chgPct = quote ? quote.changePercent : (contractData?.change || 0);
-          const bid = ltp > 0 ? ltp : 0;
-          const ask = ltp > 0 ? ltp : 0;
+          const bid = quote?.bid && quote.bid > 0 ? quote.bid : (ltp > 0 ? Math.round(ltp * 0.999 * 100) / 100 : 0);
+          const ask = quote?.ask && quote.ask > 0 ? quote.ask : (ltp > 0 ? Math.round(ltp * 1.001 * 100) / 100 : 0);
 
           // Find active opposite positions for options direction guards
           const activePos = activePositions.find(p =>
