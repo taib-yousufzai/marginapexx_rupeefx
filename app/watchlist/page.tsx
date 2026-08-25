@@ -1875,8 +1875,8 @@ function WatchlistContent() {
                   (s.side || '').toUpperCase() === 'SELL'
                 );
 
-                const activeAskBuf = isDetailIndian ? 0 : (Number(buySegSetting?.entry_buffer) || Number(buySegSetting?.bid_buffer) || 0.3);
-                const activeBidBuf = isDetailIndian ? 0 : (Number(sellSegSetting?.entry_buffer) || Number(sellSegSetting?.bid_buffer) || 0.3);
+                const activeAskBuf = 0;
+                const activeBidBuf = 0;
 
                 const effective = resolveEffectivePrices({
                   ltp: currentLtp,
