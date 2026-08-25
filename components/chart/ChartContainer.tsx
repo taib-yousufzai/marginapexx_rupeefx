@@ -44,14 +44,28 @@ let globalWidgetDestroyCount = 0;
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function getIsDark(): boolean {
-  if (typeof document === 'undefined') return true;
-  return (
+  if (typeof document === 'undefined') return false;
+  if (
     document.body.classList.contains('dark') ||
     document.body.classList.contains('black') ||
     document.documentElement.classList.contains('dark') ||
-    document.documentElement.classList.contains('black') ||
-    !document.body.classList.contains('light')
-  );
+    document.documentElement.classList.contains('black')
+  ) {
+    return true;
+  }
+  if (
+    document.body.classList.contains('light') ||
+    document.documentElement.classList.contains('light')
+  ) {
+    return false;
+  }
+  try {
+    const saved = localStorage.getItem('marginApexTheme');
+    if (saved === 'dark' || saved === 'black' || saved === 'blue') return true;
+    if (saved === 'light') return false;
+  } catch (e) {}
+
+  return false;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -397,15 +411,28 @@ export default function ChartContainer({
   // ── Task 8.5: Theme sync via MutationObserver ─────────────────────────────
 
   useEffect(() => {
-    const observer = new MutationObserver(() => {
+    const syncTheme = () => {
       const dark = getIsDark();
       setIsDark(dark);
       const theme = dark ? 'dark' : 'light';
       if (!isReadyRef.current) { pendingRef.current.theme = theme; return; }
       tvWidgetRef.current?.changeTheme(theme);
-    });
+    };
+
+    syncTheme();
+
+    const observer = new MutationObserver(syncTheme);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
-    return () => observer.disconnect();
+
+    window.addEventListener('themeChanged', syncTheme);
+    window.addEventListener('storage', syncTheme);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('themeChanged', syncTheme);
+      window.removeEventListener('storage', syncTheme);
+    };
   }, []);
 
   // ── Task 8.6: Render ──────────────────────────────────────────────────────

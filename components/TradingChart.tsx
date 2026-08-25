@@ -49,16 +49,17 @@ const getUnderlyingSymbol = (sym: string) => {
 }
 
 function getAppTheme(): 'dark' | 'black' | 'light' {
-  if (typeof document === 'undefined') return 'dark';
+  if (typeof document === 'undefined') return 'light';
   if (document.documentElement.classList.contains('black') || document.body.classList.contains('black')) return 'black';
   if (document.documentElement.classList.contains('dark') || document.body.classList.contains('dark')) return 'dark';
   if (document.documentElement.classList.contains('light') || document.body.classList.contains('light')) return 'light';
   try {
     const saved = localStorage.getItem('marginApexTheme');
     if (saved === 'black') return 'black';
+    if (saved === 'dark') return 'dark';
     if (saved === 'light') return 'light';
   } catch (e) {}
-  return 'dark';
+  return 'light';
 }
 
 interface TradingChartProps {
