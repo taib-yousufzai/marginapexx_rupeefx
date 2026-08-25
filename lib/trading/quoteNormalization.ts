@@ -14,8 +14,7 @@ export function calculateSyntheticOptionSpread(
 
   const getBufferAmount = (buf: number): number => {
     if (!buf || buf <= 0) {
-      // Default fallback synthetic spread (0.1% of LTP, min 0.15 pts) when buffer is 0
-      return Math.max(0.15, Math.round(ltp * 0.001 * 100) / 100);
+      return 0; // When buffer is 0, bid and ask equal LTP (no artificial spread)
     }
     if (buf >= 1) {
       return buf; // Absolute points if >= 1

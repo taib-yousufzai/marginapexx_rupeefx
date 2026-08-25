@@ -29,11 +29,9 @@ describe('Option Quote Depth Normalization (B/A Mode)', () => {
     expect(result).toEqual({ bid: 2700, ask: 2750 });
   });
 
-  it('F. Synthetic Crypto-style spread generation from LTP with 0 buffers -> calculates synthetic spread around LTP', () => {
+  it('F. Synthetic spread generation from LTP with 0 buffers -> bid and ask equal LTP', () => {
     const synthetic = calculateSyntheticOptionSpread(2724, 0, 0);
-    expect(synthetic.bid).toBeLessThan(2724);
-    expect(synthetic.ask).toBeGreaterThan(2724);
-    expect(synthetic).toEqual({ bid: 2721.28, ask: 2726.72 });
+    expect(synthetic).toEqual({ bid: 2724, ask: 2724 });
   });
 
   it('G. Synthetic Crypto-style spread generation from LTP with 0.3 buffers', () => {
@@ -43,9 +41,8 @@ describe('Option Quote Depth Normalization (B/A Mode)', () => {
     expect(synthetic).toEqual({ bid: 2715.83, ask: 2732.17 });
   });
 
-  it('H. Default option normalization -> forceSynthetic produces synthetic spread around LTP', () => {
+  it('H. Default option normalization with 0 buffers -> bid and ask equal LTP', () => {
     const result = normalizeOptionQuoteDepth(2724, 1179.0, 3228.5, { askBuffer: 0, bidBuffer: 0, forceSynthetic: true });
-    expect(result.bid).toBeLessThan(2724);
-    expect(result.ask).toBeGreaterThan(2724);
+    expect(result).toEqual({ bid: 2724, ask: 2724 });
   });
 });

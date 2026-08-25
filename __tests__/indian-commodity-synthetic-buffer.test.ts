@@ -19,12 +19,12 @@ describe('Indian Commodities Synthetic Buffer Normalization', () => {
     expect(normalized.bid).not.toBe(rawBid);
     expect(normalized.ask).not.toBe(rawAsk);
 
-    // Should generate a tight synthetic spread around LTP (0.1% of 2619 = 2.62)
-    expect(normalized.bid).toBe(2616.38);
-    expect(normalized.ask).toBe(2621.62);
+    // With 0 buffer, bid and ask equal LTP (2619)
+    expect(normalized.bid).toBe(2619);
+    expect(normalized.ask).toBe(2619);
   });
 
-  it('B. MCX Silver Option with 0 raw depth uses synthetic spread around LTP instead of equal LTP fallback', () => {
+  it('B. MCX Silver Option with 0 raw depth and 0 buffers sets bid and ask equal to LTP', () => {
     const ltp = 650;
     const normalized = normalizeOptionQuoteDepth(ltp, 0, 0, {
       forceSynthetic: true,
@@ -33,9 +33,8 @@ describe('Indian Commodities Synthetic Buffer Normalization', () => {
       useSyntheticFallback: true,
     });
 
-    // 0.1% of 650 is 0.65
-    expect(normalized.bid).toBe(649.35);
-    expect(normalized.ask).toBe(650.65);
+    expect(normalized.bid).toBe(650);
+    expect(normalized.ask).toBe(650);
   });
 
   it('C. Synthetic spread with custom buffer (0.3%) for MCX Crude Oil option', () => {
