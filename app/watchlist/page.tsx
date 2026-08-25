@@ -824,15 +824,17 @@ function WatchlistContent() {
   const marketSymbols = useMemo(() => {
     const list: string[] = [];
     watchlistItems.forEach(i => {
-      if (i.kiteSymbol) list.push(i.kiteSymbol);
-      if (i.binanceSymbol) list.push(i.binanceSymbol);
+      const sym = i.kiteSymbol || i.symbol;
+      if (sym && !i.binanceSymbol && !list.includes(sym)) list.push(sym);
+      if (i.binanceSymbol && !list.includes(i.binanceSymbol)) list.push(i.binanceSymbol);
     });
     // Also subscribe to the detail sheet item's symbol if it's not already on the watchlist
-    if (selectedItem?.kiteSymbol && !list.includes(selectedItem.kiteSymbol)) {
-      list.push(selectedItem.kiteSymbol);
+    const selSym = selectedItem?.kiteSymbol || selectedItem?.symbol;
+    if (selSym && !list.includes(selSym)) {
+      list.push(selSym);
     }
     return list;
-  }, [watchlistItems, selectedItem?.kiteSymbol]);
+  }, [watchlistItems, selectedItem?.kiteSymbol, selectedItem?.symbol]);
 
   const { quotes: marketQuotes } = useMarketQuotes(marketSymbols);
 
@@ -1816,7 +1818,7 @@ function WatchlistContent() {
                     <InstrumentRow
                       key={`${item.symbol}_${index}`}
                       item={item}
-                      quote={marketQuotes[item.kiteSymbol] || (item.binanceSymbol ? marketQuotes[item.binanceSymbol] : undefined)}
+                      quote={marketQuotes[item.kiteSymbol] || marketQuotes[item.symbol] || (item.binanceSymbol ? marketQuotes[item.binanceSymbol] : undefined)}
                       binanceQuote={item.binanceSymbol ? (marketQuotes[item.binanceSymbol] || binanceQuotesAsQuoteData[item.binanceSymbol]) : undefined}
                       comexQuote={item.comexSymbol ? comexQuotes[item.comexSymbol] : undefined}
                       onTrade={(it: WatchlistItem, type?: 'BUY' | 'SELL' | 'BOTH') => {

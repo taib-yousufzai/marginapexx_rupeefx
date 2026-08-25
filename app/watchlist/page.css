@@ -32,6 +32,8 @@
     display: flex;
     flex-direction: column;
     gap: 0;
+    position: relative;
+    z-index: 10;
 }
 
 .mobile-app .header-top {
@@ -291,7 +293,7 @@
     background: var(--bg-body, #f3f6fb);
     display: flex;
     flex-direction: column;
-    padding-bottom: calc(var(--footer-nav-height, 4.0625rem) + env(safe-area-inset-bottom, 0px) + 0.9375rem) !important;
+    padding-bottom: calc(var(--footer-nav-height, 4.0625rem) + env(safe-area-inset-bottom, 0px) + 2.5rem) !important;
 }
 
 .search-results-section {
