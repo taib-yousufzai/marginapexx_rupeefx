@@ -65,7 +65,7 @@ export function calculateBufferedPrice({
     if (val === undefined || val === null || isNaN(Number(val))) return fallback;
     const num = Number(val);
     if (num === 0) return 0;
-    return num > 0.005 ? num / 100 : num;
+    return Math.abs(num) > 0.005 ? num / 100 : num;
   };
 
   const buyEntryBuffer  = toDecimalBuffer(buySetting?.entry_buffer, 0);
