@@ -8,7 +8,8 @@ const withSerwist = withSerwistInit({
 });
 
 const nextConfig: NextConfig = {
-  output: 'standalone', // enables minimal Docker image via Dockerfile.nextjs
+  // Disable standalone output when deploying to Vercel so Vercel's serverless build tracer finds next-server.js.nft.json
+  output: process.env.VERCEL ? undefined : 'standalone',
   typescript: {
     ignoreBuildErrors: true,
   },
