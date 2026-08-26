@@ -66,10 +66,10 @@ export function resolveEffectivePrices({
     const askVal = Number(askBuffer) || 0;
     const bidVal = Number(bidBuffer) || 0;
 
-    // Handle percentage buffers (e.g. 0.003 or 0.3 for 0.3%) vs absolute point buffers (e.g. 0.50 points)
+    // Handle percentage buffers (e.g. 0.3 for 0.3%, 0.08 for 0.08%, 0.003 ratio) vs absolute point buffers (>= 10 points)
     const getBufferAmount = (val: number) => {
-      if (!val) return 0;
-      if (val === 0.3 || val < 0.01) {
+      if (!val || val <= 0) return 0;
+      if (val < 10) {
         const pct = val > 0.005 ? val / 100 : val;
         return baseLtp * pct;
       }

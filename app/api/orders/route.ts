@@ -1014,6 +1014,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         buySetting,
         sellSetting,
         exitPriceModeOverride: exitPriceMode,
+        isBasePriceRealBidAsk: exitPriceMode === 'BID_ASK',
       });
     }
 

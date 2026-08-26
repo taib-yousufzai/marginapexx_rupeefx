@@ -251,16 +251,16 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => (item?.symbol || item?.name || item?.kiteSymbol || '').toUpperCase().includes(c));
     const isIndianNonCommodity = (!isCrypto && !isComex) && !isCommodity;
 
-    const activeAskBuffer = 0;
-    const activeBidBuffer = 0;
+    const activeAskBuffer = isIndianNonCommodity ? 0 : (segSetting?.entry_buffer ?? segSetting?.bid_buffer ?? 0.003);
+    const activeBidBuffer = isIndianNonCommodity ? 0 : (segSetting?.entry_buffer ?? segSetting?.bid_buffer ?? 0.003);
 
     const effective = resolveEffectivePrices({
       ltp: currentLtp,
       rawBid,
       rawAsk,
       hasRealBidAsk: isCommodity ? false : Boolean(rawBid && rawAsk && rawBid < rawAsk),
-      askBuffer: 0,
-      bidBuffer: 0,
+      askBuffer: activeAskBuffer,
+      bidBuffer: activeBidBuffer,
     });
 
     bidPrice = effective.effectiveBid;

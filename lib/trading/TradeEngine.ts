@@ -525,13 +525,27 @@ export class TradeEngine {
     if (isLimitType) {
       executionBasePrice = clientPriceNum > 0 ? clientPriceNum : kiteLtp;
     } else {
-      // MARKET or SLM orders - Resolve Effective Ask (for BUY) or Effective Bid (for SELL)
       const hasRealBidAsk = Boolean(quotesMap[`${kiteInst}_bid`] && quotesMap[`${kiteInst}_ask`]);
+
+      const symbolExchange = (symbol.includes(':') ? symbol.split(':')[0] : '').toUpperCase();
+      const isCommodity = symbolExchange === 'MCX' || symbolExchange === 'NCO' ||
+        symbol.startsWith('MCX:') || symbol.startsWith('MCX-') ||
+        dbSegment.includes('MCX') ||
+        ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => symbol.toUpperCase().includes(c));
+
+      const isIndianNonCommodity = (['NSE', 'NFO', 'BSE', 'BFO'].includes(symbolExchange) ||
+        symbol.startsWith('NSE:') || symbol.startsWith('NFO:') || symbol.startsWith('BSE:') || symbol.startsWith('BFO:')) && !isCommodity;
+
+      const askBuf = isIndianNonCommodity ? 0 : ((buySetting as any)?.entry_buffer ?? (buySetting as any)?.bid_buffer ?? 0.003);
+      const bidBuf = isIndianNonCommodity ? 0 : ((sellSetting as any)?.entry_buffer ?? (sellSetting as any)?.bid_buffer ?? 0.003);
+
       const effectivePrices = resolveEffectivePrices({
         ltp: kiteLtp,
         rawBid: kiteBid,
         rawAsk: kiteAsk,
-        hasRealBidAsk,
+        hasRealBidAsk: isCommodity ? false : hasRealBidAsk,
+        askBuffer: askBuf,
+        bidBuffer: bidBuf,
       });
 
       const isExecutingBuy = side === 'BUY';
@@ -580,7 +594,7 @@ export class TradeEngine {
       sellSetting,
       brokeragePerUnit: 0,
       exitPriceMode,
-      isBasePriceRealBidAsk: true,
+      isBasePriceRealBidAsk: exitPriceMode === 'BID_ASK',
     });
 
     fillPrice = Math.max(0.01, Math.round(fillPrice * 100) / 100);
