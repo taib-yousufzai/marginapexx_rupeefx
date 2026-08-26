@@ -258,7 +258,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     // LTP mode    : Ask = LTP + LTP*bid_buffer%   |  Bid = LTP - LTP*bid_buffer%
     // BID/ASK mode: Ask = RealAsk + LTP*bid_buffer%  |  Bid = RealBid - LTP*bid_buffer%
     const bidBufferRaw = isIndianNonCommodity ? 0 : (segSetting?.bid_buffer ?? 0);
-    const bidBufferDecimal = bidBufferRaw > 0.005 ? bidBufferRaw / 100 : bidBufferRaw;
+    const bidBufferDecimal = Math.abs(bidBufferRaw) > 0.005 ? bidBufferRaw / 100 : bidBufferRaw;
     const bidBufferAmount = currentLtp * bidBufferDecimal; // always LTP-based
 
     const execPriceMode = segSetting?.exit_price_mode || 'BID_ASK';

@@ -1962,7 +1962,7 @@ function WatchlistContent() {
                     (selectedItem.symbol || selectedItem.name || '').toUpperCase().includes(c));
                 const isDetailIndianNonCommodity = isDetailIndian && !isDetailCommodity;
                 const detailBidBufferRaw = isDetailIndianNonCommodity ? 0 : Number(buySegSetting?.bid_buffer ?? sellSegSetting?.bid_buffer ?? 0);
-                const detailBidBufferDecimal = detailBidBufferRaw > 0.005 ? detailBidBufferRaw / 100 : detailBidBufferRaw;
+                const detailBidBufferDecimal = Math.abs(detailBidBufferRaw) > 0.005 ? detailBidBufferRaw / 100 : detailBidBufferRaw;
                 const detailBidBufferAmount = currentLtp * detailBidBufferDecimal; // always LTP-based
 
                 const detailExecMode = buySegSetting?.exit_price_mode || sellSegSetting?.exit_price_mode || 'BID_ASK';

@@ -241,7 +241,7 @@ export async function POST(
 
   // Layer 1: displayed Bid/Ask using bid_buffer (same formula as TradeSheet/DetailSheet)
   const bidBufRaw = Number(segSetting?.bid_buffer ?? 0);
-  const bidBufDecimal = bidBufRaw > 0.005 ? bidBufRaw / 100 : bidBufRaw;
+  const bidBufDecimal = Math.abs(bidBufRaw) > 0.005 ? bidBufRaw / 100 : bidBufRaw;
   const bidBufAmount = baseLtp * bidBufDecimal; // always LTP-based
 
   const hasRealBidAskClose = Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);

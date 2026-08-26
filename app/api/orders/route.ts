@@ -984,7 +984,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // bid_buffer controls the displayed spread (Layer 1 — same formula as TradeSheet/DetailSheet).
     // entry/exit buffer is added on top at execution time (Layer 2 — hidden from user).
     const bidBufRaw = isIndianNonCommodity ? 0 : Number(buySetting?.bid_buffer ?? sellSetting?.bid_buffer ?? 0);
-    const bidBufDecimal = bidBufRaw > 0.005 ? bidBufRaw / 100 : bidBufRaw;
+    const bidBufDecimal = Math.abs(bidBufRaw) > 0.005 ? bidBufRaw / 100 : bidBufRaw;
     const bidBufAmount = baseLtp * bidBufDecimal; // always LTP-based
 
     let displayedAsk: number = baseLtp;
