@@ -1000,16 +1000,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const exitPriceMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
 
       const isExecutingBuy = side === 'BUY';
-      const basePrice = isExecutingBuy ? effective.effectiveAsk : effective.effectiveBid;
+      const rawBasePrice = isExecutingBuy ? effective.effectiveAsk : effective.effectiveBid;
+
+      // Safeguard: if effective price is 0/invalid (e.g. Binance quote fetch failed or stale feed),
+      // fall back to the client_price that was sent from the frontend at click time.
+      // This prevents the cryptic "Invalid base price for buffer calculation" error from surfacing.
+      const safeBasePrice = (rawBasePrice > 0) ? rawBasePrice : (client_price > 0 ? client_price : 0);
+
+      if (!safeBasePrice || safeBasePrice <= 0) {
+        return NextResponse.json(
+          { error: 'Could not fetch live market price. Please wait a moment and try again.' },
+          { status: 503 }
+        );
+      }
 
       fillPrice = calculateBufferedPrice({
         side: side as 'BUY' | 'SELL',
         isExit: is_exit ?? false,
-        basePrice,
+        basePrice: safeBasePrice,
         buySetting,
         sellSetting,
         exitPriceModeOverride: exitPriceMode,
-        isBasePriceRealBidAsk: true,
+        isBasePriceRealBidAsk: rawBasePrice > 0, // only true if we got a real live price
       });
     }
 
