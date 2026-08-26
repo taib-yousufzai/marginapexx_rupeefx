@@ -594,7 +594,7 @@ export class TradeEngine {
       sellSetting,
       brokeragePerUnit: 0,
       exitPriceMode,
-      isBasePriceRealBidAsk: exitPriceMode === 'BID_ASK',
+      isBasePriceRealBidAsk: true,
     });
 
     fillPrice = Math.max(0.01, Math.round(fillPrice * 100) / 100);

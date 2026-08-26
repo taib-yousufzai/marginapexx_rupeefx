@@ -999,13 +999,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
       const exitPriceMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
 
-      let basePrice: number;
-      if (exitPriceMode === 'LTP') {
-        basePrice = baseLtp;
-      } else {
-        const isExecutingBuy = side === 'BUY';
-        basePrice = isExecutingBuy ? effective.effectiveAsk : effective.effectiveBid;
-      }
+      const isExecutingBuy = side === 'BUY';
+      const basePrice = isExecutingBuy ? effective.effectiveAsk : effective.effectiveBid;
 
       fillPrice = calculateBufferedPrice({
         side: side as 'BUY' | 'SELL',
@@ -1014,7 +1009,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         buySetting,
         sellSetting,
         exitPriceModeOverride: exitPriceMode,
-        isBasePriceRealBidAsk: exitPriceMode === 'BID_ASK',
+        isBasePriceRealBidAsk: true,
       });
     }
 
