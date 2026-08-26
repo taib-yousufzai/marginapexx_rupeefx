@@ -63,11 +63,21 @@ export function resolveEffectivePrices({
     effectiveAsk = Number(rawAsk) + (Number(askBuffer) || 0);
     effectiveBid = Number(rawBid) - (Number(bidBuffer) || 0);
   } else {
-    const askPct = toDecimalBuffer(askBuffer);
-    const bidPct = toDecimalBuffer(bidBuffer);
+    const askVal = Number(askBuffer) || 0;
+    const bidVal = Number(bidBuffer) || 0;
 
-    effectiveAsk = askPct > 0 ? baseLtp * (1 + askPct) : baseLtp;
-    effectiveBid = bidPct > 0 ? baseLtp * (1 - bidPct) : baseLtp;
+    // Handle percentage buffers (e.g. 0.003 or 0.3 for 0.3%) vs absolute point buffers (e.g. 0.50 points)
+    const getBufferAmount = (val: number) => {
+      if (!val) return 0;
+      if (val === 0.3 || val < 0.01) {
+        const pct = val > 0.005 ? val / 100 : val;
+        return baseLtp * pct;
+      }
+      return val;
+    };
+
+    effectiveAsk = baseLtp + getBufferAmount(askVal);
+    effectiveBid = baseLtp - getBufferAmount(bidVal);
   }
 
   return {

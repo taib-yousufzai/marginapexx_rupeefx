@@ -26,20 +26,12 @@ describe('Demo User Buffer Application & Audit Verification', () => {
     const buySetting = { segment: 'INDEX-OPT', side: 'BUY', entry_buffer: 0.2, exit_buffer: 0.1 };
     const sellSetting = { segment: 'INDEX-OPT', side: 'SELL', entry_buffer: 0.4, exit_buffer: 0.2 };
 
-    const effective = resolveEffectivePrices({
-      ltp: 200,
-      hasRealBidAsk: false,
-      askBuffer: buySetting.entry_buffer,
-      bidBuffer: sellSetting.entry_buffer,
-    });
-
     const fillPrice = calculateBufferedPrice({
       side: 'BUY',
       isExit: false,
-      basePrice: effective.effectiveAsk,
+      basePrice: 200,
       buySetting,
       sellSetting,
-      isBasePriceRealBidAsk: true,
     });
 
     // 200 * (1 + 0.002) = 200.4
@@ -50,20 +42,12 @@ describe('Demo User Buffer Application & Audit Verification', () => {
     const buySetting = { segment: 'INDEX-OPT', side: 'BUY', entry_buffer: 0.2, exit_buffer: 0.1 };
     const sellSetting = { segment: 'INDEX-OPT', side: 'SELL', entry_buffer: 0.4, exit_buffer: 0.2 };
 
-    const effective = resolveEffectivePrices({
-      ltp: 200,
-      hasRealBidAsk: false,
-      askBuffer: buySetting.entry_buffer,
-      bidBuffer: sellSetting.entry_buffer,
-    });
-
     const fillPrice = calculateBufferedPrice({
       side: 'SELL',
       isExit: false,
-      basePrice: effective.effectiveBid,
+      basePrice: 200,
       buySetting,
       sellSetting,
-      isBasePriceRealBidAsk: true,
     });
 
     // 200 * (1 - 0.004) = 199.2

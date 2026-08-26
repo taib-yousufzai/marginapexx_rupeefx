@@ -68,9 +68,9 @@ beforeEach(() => {
   process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://test.supabase.co';
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-service-role-key';
 
-  // Default: valid admin caller
+  // Default: valid super_admin caller
   mockGetUser.mockResolvedValue({
-    data: { user: makeUser('admin') },
+    data: { user: makeUser('super_admin') },
     error: null,
   });
 

@@ -609,6 +609,23 @@ describe('DELETE /api/admin/users/[id]', () => {
   const TARGET_ID = 'target-user-uuid';
   const SCHEDULED_DELETE_AT = '2099-01-02T00:00:00.000Z';
 
+  beforeEach(async () => {
+    try {
+      const { getRedisClient } = await import('../../../../../lib/redis');
+      const redis = getRedisClient();
+      if (redis && typeof (redis as any).flushall === 'function') {
+        await (redis as any).flushall();
+      }
+    } catch {
+      // Ignore if redis clear fails
+    }
+
+    mockGetUser.mockResolvedValue({
+      data: { user: makeUser('super_admin') },
+      error: null,
+    });
+  });
+
   // -------------------------------------------------------------------------
   // 200 — Success (soft delete)
   // Validates: Requirements 5.3, 5.4
@@ -621,7 +638,7 @@ describe('DELETE /api/admin/users/[id]', () => {
         error: null,
       });
 
-      const req = makeDeleteRequest(TARGET_ID, 'Bearer admin-token');
+      const req = makeDeleteRequest(TARGET_ID, 'Bearer super-admin-token');
       const res = await DELETE(req, { params: { id: TARGET_ID } });
 
       expect(res.status).toBe(200);
@@ -642,7 +659,7 @@ describe('DELETE /api/admin/users/[id]', () => {
     it('returns 404 when profile row not found', async () => {
       setupUpdateChain({ data: null, error: { code: 'PGRST116', message: 'no rows' } });
 
-      const req = makeDeleteRequest(TARGET_ID, 'Bearer admin-token');
+      const req = makeDeleteRequest(TARGET_ID, 'Bearer super-admin-token');
       const res = await DELETE(req, { params: { id: TARGET_ID } });
 
       expect(res.status).toBe(404);
