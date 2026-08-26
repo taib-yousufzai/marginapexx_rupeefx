@@ -299,9 +299,11 @@ export default function Page() {
           const list = result.notifications ?? [];
           setNotifications(list);
         }
-      } catch (err) {
+      } catch (err: any) {
         if (err instanceof ApiError) {
-          console.error('Failed to fetch notifications', err.status, err.details);
+          if (err.status !== 401) {
+            console.error('Failed to fetch notifications', err.status, err.details);
+          }
         } else {
           console.error('Failed to fetch notifications', err);
         }

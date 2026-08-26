@@ -53,8 +53,8 @@ export async function GET(request: NextRequest) {
 
   let finalSettings = (currentSettings ?? []).map(s => ({
     ...s,
-    entry_buffer: (s.entry_buffer != null && Number(s.entry_buffer) !== 0) ? Number(s.entry_buffer) : 0.3,
-    bid_buffer: (s.bid_buffer != null && Number(s.bid_buffer) !== 0) ? Number(s.bid_buffer) : (s.entry_buffer != null && Number(s.entry_buffer) !== 0 ? Number(s.entry_buffer) : 0.3),
+    entry_buffer: (s.entry_buffer != null && String(s.entry_buffer).trim() !== '') ? Number(s.entry_buffer) : 0.3,
+    bid_buffer: (s.bid_buffer != null && String(s.bid_buffer).trim() !== '') ? Number(s.bid_buffer) : ((s.entry_buffer != null && String(s.entry_buffer).trim() !== '') ? Number(s.entry_buffer) : 0.3),
     exit_buffer: s.exit_buffer != null ? Number(s.exit_buffer) : 0.17,
   }));
 
@@ -123,8 +123,8 @@ export async function GET(request: NextRequest) {
     if (!insertErr && insertedData) {
       const mappedInserted = insertedData.map(s => ({
         ...s,
-        entry_buffer: (s.entry_buffer != null && Number(s.entry_buffer) !== 0) ? Number(s.entry_buffer) : 0.3,
-        bid_buffer: (s.bid_buffer != null && Number(s.bid_buffer) !== 0) ? Number(s.bid_buffer) : 0.3,
+        entry_buffer: (s.entry_buffer != null && String(s.entry_buffer).trim() !== '') ? Number(s.entry_buffer) : 0.3,
+        bid_buffer: (s.bid_buffer != null && String(s.bid_buffer).trim() !== '') ? Number(s.bid_buffer) : 0.3,
         exit_buffer: s.exit_buffer != null ? Number(s.exit_buffer) : 0.17,
       }));
       finalSettings = [...finalSettings, ...mappedInserted];

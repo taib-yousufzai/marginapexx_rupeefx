@@ -251,20 +251,31 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => (item?.symbol || item?.name || item?.kiteSymbol || '').toUpperCase().includes(c));
     const isIndianNonCommodity = (!isCrypto && !isComex) && !isCommodity;
 
-    const activeAskBuffer = isIndianNonCommodity ? 0 : (segSetting?.entry_buffer ?? segSetting?.bid_buffer ?? 0.003);
-    const activeBidBuffer = isIndianNonCommodity ? 0 : (segSetting?.entry_buffer ?? segSetting?.bid_buffer ?? 0.003);
+    // ── Two-Layer Price Model: Layer 1 (Display) ──────────────────────────────
+    // bid_buffer is used ONLY for display. entry/exit buffers are applied at
+    // execution time (hidden from user) on top of these displayed prices.
+    //
+    // LTP mode    : Ask = LTP + LTP*bid_buffer%   |  Bid = LTP - LTP*bid_buffer%
+    // BID/ASK mode: Ask = RealAsk + LTP*bid_buffer%  |  Bid = RealBid - LTP*bid_buffer%
+    const bidBufferRaw = isIndianNonCommodity ? 0 : (segSetting?.bid_buffer ?? 0);
+    const bidBufferDecimal = bidBufferRaw > 0.005 ? bidBufferRaw / 100 : bidBufferRaw;
+    const bidBufferAmount = currentLtp * bidBufferDecimal; // always LTP-based
 
-    const effective = resolveEffectivePrices({
-      ltp: currentLtp,
-      rawBid,
-      rawAsk,
-      hasRealBidAsk: isCommodity ? false : Boolean(rawBid && rawAsk && rawBid < rawAsk),
-      askBuffer: activeAskBuffer,
-      bidBuffer: activeBidBuffer,
-    });
+    const execPriceMode = segSetting?.exit_price_mode || 'BID_ASK';
+    const hasRealBidAsk = Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
+    const useLtpMode = execPriceMode === 'LTP' || isCommodity || !hasRealBidAsk;
 
-    bidPrice = effective.effectiveBid;
-    askPrice = effective.effectiveAsk;
+    if (useLtpMode) {
+      askPrice = currentLtp + bidBufferAmount;
+      bidPrice = currentLtp - bidBufferAmount;
+    } else {
+      askPrice = rawAsk + bidBufferAmount;
+      bidPrice = rawBid - bidBufferAmount;
+    }
+
+    // Sanity: ensure bid > 0 and ask >= bid
+    if (bidPrice <= 0) bidPrice = currentLtp;
+    if (askPrice <= 0) askPrice = currentLtp;
   }
 
   const priceOfScript = activeSide === 'SELL' ? rawBid : rawAsk;

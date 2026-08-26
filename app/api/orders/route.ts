@@ -981,47 +981,55 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const isIndianNonCommodity = (['NSE', 'NFO', 'BSE', 'BFO'].includes(symbolExchange) ||
       symbol.startsWith('NSE:') || symbol.startsWith('NFO:') || symbol.startsWith('BSE:') || symbol.startsWith('BFO:')) && !isCommodity;
 
-    const askBuf = isIndianNonCommodity ? 0 : (buySetting?.entry_buffer ?? buySetting?.bid_buffer ?? 0.003);
-    const bidBuf = isIndianNonCommodity ? 0 : (sellSetting?.entry_buffer ?? sellSetting?.bid_buffer ?? 0.003);
+    // bid_buffer controls the displayed spread (Layer 1 — same formula as TradeSheet/DetailSheet).
+    // entry/exit buffer is added on top at execution time (Layer 2 — hidden from user).
+    const bidBufRaw = isIndianNonCommodity ? 0 : Number(buySetting?.bid_buffer ?? sellSetting?.bid_buffer ?? 0);
+    const bidBufDecimal = bidBufRaw > 0.005 ? bidBufRaw / 100 : bidBufRaw;
+    const bidBufAmount = baseLtp * bidBufDecimal; // always LTP-based
 
-    const effective = resolveEffectivePrices({
-      ltp: baseLtp,
-      rawBid,
-      rawAsk,
-      hasRealBidAsk: isCommodity ? false : hasRealBidAsk,
-      askBuffer: askBuf,
-      bidBuffer: bidBuf,
-    });
+    let displayedAsk: number = baseLtp;
+    let displayedBid: number = baseLtp;
 
     if (order_type === 'LIMIT' || order_type === 'SL' || order_type === 'GTT') {
       fillPrice = client_price;
     } else {
       const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
-      const exitPriceMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
+      const execMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
 
       const isExecutingBuy = side === 'BUY';
-      const rawBasePrice = isExecutingBuy ? effective.effectiveAsk : effective.effectiveBid;
+      const useLtpMode = execMode === 'LTP' || isCommodity || !hasRealBidAsk;
 
-      // Safeguard: if effective price is 0/invalid (e.g. Binance quote fetch failed or stale feed),
-      // fall back to the client_price that was sent from the frontend at click time.
-      // This prevents the cryptic "Invalid base price for buffer calculation" error from surfacing.
-      const safeBasePrice = (rawBasePrice > 0) ? rawBasePrice : (client_price > 0 ? client_price : 0);
+      // Layer 1: compute displayed Ask/Bid (same formula as TradeSheet)
+      if (useLtpMode) {
+        displayedAsk = baseLtp + bidBufAmount;
+        displayedBid = baseLtp - bidBufAmount;
+      } else {
+        displayedAsk = (rawAsk ?? baseLtp) + bidBufAmount;
+        displayedBid = (rawBid ?? baseLtp) - bidBufAmount;
+      }
+      if (displayedAsk <= 0) displayedAsk = baseLtp;
+      if (displayedBid <= 0) displayedBid = baseLtp;
 
-      if (!safeBasePrice || safeBasePrice <= 0) {
+      // Use frontend-sent price as fallback if server couldn't resolve a price
+      const rawDisplayed = isExecutingBuy ? displayedAsk : displayedBid;
+      const safeDisplayed = (rawDisplayed > 0) ? rawDisplayed : (client_price > 0 ? client_price : 0);
+
+      if (!safeDisplayed || safeDisplayed <= 0) {
         return NextResponse.json(
           { error: 'Could not fetch live market price. Please wait a moment and try again.' },
           { status: 503 }
         );
       }
 
+      // Layer 2: apply entry/exit buffer on top (hidden from user), LTP used as buffer base
       fillPrice = calculateBufferedPrice({
         side: side as 'BUY' | 'SELL',
         isExit: is_exit ?? false,
-        basePrice: safeBasePrice,
+        basePrice: safeDisplayed,           // displayed Ask (BUY) or Bid (SELL)
+        ltp: baseLtp,                        // LTP used for buffer amount
         buySetting,
         sellSetting,
-        exitPriceModeOverride: exitPriceMode,
-        isBasePriceRealBidAsk: rawBasePrice > 0, // only true if we got a real live price
+        isBasePriceRealBidAsk: true,         // tells calculator bid_buffer already applied
       });
     }
 
@@ -1046,8 +1054,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         backendBid: rawBid,
         backendAsk: rawAsk,
 
-        executionBid: effective.effectiveBid,
-        executionAsk: effective.effectiveAsk,
+        executionBid: displayedBid,
+        executionAsk: displayedAsk,
 
         depthBestAsk: typeof rawQuote === 'object' ? (rawQuote?.depth?.sell?.[0]?.price ?? rawAsk) : rawAsk,
         depthBestAskQuantity: typeof rawQuote === 'object' ? (rawQuote?.depth?.sell?.[0]?.quantity ?? null) : null,
@@ -1056,8 +1064,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         bidBuffer: sellSetting?.entry_buffer ?? sellSetting?.bid_buffer ?? 0,
         normalBuffer: segSetting?.entry_buffer ?? 0,
 
-        effectiveBid: effective.effectiveBid,
-        effectiveAsk: effective.effectiveAsk,
+        effectiveBid: displayedBid,
+        effectiveAsk: displayedAsk,
 
         finalFillPrice: fillPrice,
 

@@ -194,7 +194,7 @@ export async function POST(
   const lookupId = profileResult.data?.parent_id ?? user.id;
   const [segSettingResult, kiteLtp] = await Promise.all([
     admin.from(targetTable)
-      .select('exit_buffer, profit_hold_sec, loss_hold_sec')
+      .select('exit_buffer, profit_hold_sec, loss_hold_sec, bid_buffer, exit_price_mode')
       .eq('user_id', lookupId)
       .eq('segment', pos.settlement ?? '')
       .eq('side', pos.side)
@@ -237,27 +237,36 @@ export async function POST(
   const hasRealBidAsk = isCommodity ? false : Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
 
   const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
-  const exitPriceMode = platformExitMode || segSetting?.exit_price_mode || 'BID_ASK';
+  const execMode = platformExitMode || segSetting?.exit_price_mode || 'BID_ASK';
 
-  // Exit price calculation using resolveEffectivePrices
-  const effective = resolveEffectivePrices({
-    ltp: baseLtp,
-    rawBid,
-    rawAsk,
-    hasRealBidAsk,
-    askBuffer: Number(segSetting?.bid_buffer ?? 0),
-    bidBuffer: Number(segSetting?.bid_buffer ?? 0),
-  });
+  // Layer 1: displayed Bid/Ask using bid_buffer (same formula as TradeSheet/DetailSheet)
+  const bidBufRaw = Number(segSetting?.bid_buffer ?? 0);
+  const bidBufDecimal = bidBufRaw > 0.005 ? bidBufRaw / 100 : bidBufRaw;
+  const bidBufAmount = baseLtp * bidBufDecimal; // always LTP-based
 
+  const hasRealBidAskClose = Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
+  const useLtpModeClose = execMode === 'LTP' || isCommodity || !hasRealBidAskClose;
+
+  let displayedAsk: number;
+  let displayedBid: number;
+  if (useLtpModeClose) {
+    displayedAsk = baseLtp + bidBufAmount;
+    displayedBid = baseLtp - bidBufAmount;
+  } else {
+    displayedAsk = (rawAsk ?? baseLtp) + bidBufAmount;
+    displayedBid = (rawBid ?? baseLtp) - bidBufAmount;
+  }
+  if (displayedAsk <= 0) displayedAsk = baseLtp;
+  if (displayedBid <= 0) displayedBid = baseLtp;
+
+  // Layer 2: apply exit_buffer on top using LTP as the base amount (hidden from user)
+  //   Closing BUY  = SELLING  → Displayed Bid  - LTP * exit_buffer%
+  //   Closing SELL = BUYING   → Displayed Ask  + LTP * exit_buffer%
   let exitPrice: number;
   if (pos.side === 'BUY') {
-    // Closing BUY position = SELLING -> Base is Effective Bid minus exitBuffer
-    const base = exitPriceMode === 'LTP' ? baseLtp : effective.effectiveBid;
-    exitPrice = base * (1 - exitBuffer);
+    exitPrice = displayedBid - baseLtp * exitBuffer;
   } else {
-    // Closing SELL position = BUYING BACK -> Base is Effective Ask plus exitBuffer
-    const base = exitPriceMode === 'LTP' ? baseLtp : effective.effectiveAsk;
-    exitPrice = base * (1 + exitBuffer);
+    exitPrice = displayedAsk + baseLtp * exitBuffer;
   }
   exitPrice = Math.round(exitPrice * 100) / 100;
 

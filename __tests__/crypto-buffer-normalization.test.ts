@@ -85,7 +85,7 @@ describe('Crypto & Non-Indian Market Quote Buffering', () => {
       basePrice: effectiveAsk,
       buySetting,
       sellSetting: undefined,
-      exitPriceMode: 'BID_ASK',
+      exitPriceModeOverride: 'BID_ASK',
       isBasePriceRealBidAsk: true,
     });
 

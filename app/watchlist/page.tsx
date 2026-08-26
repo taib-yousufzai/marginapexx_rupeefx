@@ -1951,20 +1951,37 @@ function WatchlistContent() {
                   (s.side || '').toUpperCase() === 'SELL'
                 );
 
-                const activeAskBuf = 0;
-                const activeBidBuf = 0;
+                // ── Two-Layer Price Model: Layer 1 (Display) ──────────────────────────
+                // bid_buffer creates the displayed spread shown to the user.
+                // entry/exit buffer is hidden, applied only at execution.
+                //
+                // LTP mode    : Ask = LTP + LTP*bid_buffer%   |  Bid = LTP - LTP*bid_buffer%
+                // BID/ASK mode: Ask = RealAsk + LTP*bid_buffer%  |  Bid = RealBid - LTP*bid_buffer%
+                const isDetailCommodity = dbSeg.toUpperCase().includes('MCX') ||
+                  ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c =>
+                    (selectedItem.symbol || selectedItem.name || '').toUpperCase().includes(c));
+                const isDetailIndianNonCommodity = isDetailIndian && !isDetailCommodity;
+                const detailBidBufferRaw = isDetailIndianNonCommodity ? 0 : Number(buySegSetting?.bid_buffer ?? sellSegSetting?.bid_buffer ?? 0);
+                const detailBidBufferDecimal = detailBidBufferRaw > 0.005 ? detailBidBufferRaw / 100 : detailBidBufferRaw;
+                const detailBidBufferAmount = currentLtp * detailBidBufferDecimal; // always LTP-based
 
-                const effective = resolveEffectivePrices({
-                  ltp: currentLtp,
-                  rawBid,
-                  rawAsk,
-                  hasRealBidAsk: Boolean(rawBid && rawAsk && rawBid < rawAsk),
-                  askBuffer: activeAskBuf,
-                  bidBuffer: activeBidBuf,
-                });
+                const detailExecMode = buySegSetting?.exit_price_mode || sellSegSetting?.exit_price_mode || 'BID_ASK';
+                const detailHasRealBidAsk = Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
+                const detailUseLtpMode = detailExecMode === 'LTP' || isDetailCommodity || !detailHasRealBidAsk;
+
+                let bid: number;
+                let ask: number;
+                if (detailUseLtpMode) {
+                  ask = currentLtp + detailBidBufferAmount;
+                  bid = currentLtp - detailBidBufferAmount;
+                } else {
+                  ask = rawAsk + detailBidBufferAmount;
+                  bid = rawBid - detailBidBufferAmount;
+                }
+                if (bid <= 0) bid = currentLtp;
+                if (ask <= 0) ask = currentLtp;
+                
                 const ltp = currentLtp;
-                const bid = effective.effectiveBid;
-                const ask = effective.effectiveAsk;
                 const chgPct = currentChangePercent;
                 const fmt = (v: number) => formatPrice(v);
                 return (

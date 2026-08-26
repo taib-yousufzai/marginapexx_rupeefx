@@ -64,7 +64,7 @@ describe('Demo User Buffer Application & Audit Verification', () => {
       basePrice: 1000,
       buySetting,
       sellSetting,
-      exitPriceMode: 'LTP',
+      exitPriceModeOverride: 'LTP',
     });
 
     // 1000 * (1 + 0.003) = 1003
