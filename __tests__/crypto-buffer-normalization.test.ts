@@ -92,4 +92,11 @@ describe('Crypto & Non-Indian Market Quote Buffering', () => {
     // Should return exactly 2507.5 (NOT 2515.02)
     expect(fillPrice).toBe(2507.5);
   });
+
+  it('F. Treats values >= 10 as percentages (e.g. 10 = 10%) instead of absolute points', () => {
+    // 10% of 2500 is 250
+    const eff10 = resolveEffectivePrices({ ltp: 2500, hasRealBidAsk: false, askBuffer: 10, bidBuffer: 10 });
+    expect(eff10.effectiveAsk).toBe(2750);
+    expect(eff10.effectiveBid).toBe(2250);
+  });
 });

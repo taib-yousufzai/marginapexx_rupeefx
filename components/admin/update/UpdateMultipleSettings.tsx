@@ -196,7 +196,8 @@ export default function UpdateMultipleSettings({ selectedUser: _selectedUser }: 
         <div className="adm-upd-grid2">
           <div className="adm-upd-field">
             <label className="adm-upd-label">Entry Buffer</label>
-            <input className="adm-upd-input" type="number" step="0.0001" value={config.entryBuffer} onChange={e => upd('entryBuffer', e.target.value)} />
+            <input className="adm-upd-input" type="number" step="0.0001" placeholder="e.g. 0.3" value={config.entryBuffer} onChange={e => upd('entryBuffer', e.target.value)} />
+            <span style={{ fontSize: '10px', color: '#8b949e', marginTop: '3px', display: 'block' }}>% format: 0.3 = 0.3% | 1.0 = 1% | 0.1 = 0.1%</span>
           </div>
           <div className="adm-upd-field">
             <label className="adm-upd-label">Holding Type</label>
@@ -209,7 +210,8 @@ export default function UpdateMultipleSettings({ selectedUser: _selectedUser }: 
         <div className="adm-upd-grid2" style={{ alignItems: 'center' }}>
           <div className="adm-upd-field">
             <label className="adm-upd-label">Exit Buffer</label>
-            <input className="adm-upd-input" type="number" step="0.0001" value={config.exitBuffer} onChange={e => upd('exitBuffer', e.target.value)} />
+            <input className="adm-upd-input" type="number" step="0.0001" placeholder="e.g. 0.17" value={config.exitBuffer} onChange={e => upd('exitBuffer', e.target.value)} />
+            <span style={{ fontSize: '10px', color: '#8b949e', marginTop: '3px', display: 'block' }}>% format: 0.17 = 0.17% | 1.0 = 1% | 0.1 = 0.1%</span>
           </div>
           <div className="adm-upd-toggle-item" style={{ marginTop: 14 }}>
             <span className="adm-upd-label">Trade Allowed</span>

@@ -58,26 +58,24 @@ export function resolveEffectivePrices({
   let effectiveAsk: number;
   let effectiveBid: number;
 
+  const askVal = Number(askBuffer) || 0;
+  const bidVal = Number(bidBuffer) || 0;
+
+  // Handle percentage buffers (e.g. 0.3 for 0.3%, 10 for 10%, 0.003 ratio)
+  const getBufferAmount = (val: number, basePrice: number) => {
+    if (!val || val <= 0) return 0;
+    const pct = val > 0.005 ? val / 100 : val;
+    return basePrice * pct;
+  };
+
   if (validRealSpread) {
-    // Real orderbook spread feed
-    effectiveAsk = Number(rawAsk) + (Number(askBuffer) || 0);
-    effectiveBid = Number(rawBid) - (Number(bidBuffer) || 0);
+    // Real orderbook spread feed: apply % buffer on top of real ask/bid
+    effectiveAsk = Number(rawAsk) + getBufferAmount(askVal, Number(rawAsk));
+    effectiveBid = Number(rawBid) - getBufferAmount(bidVal, Number(rawBid));
   } else {
-    const askVal = Number(askBuffer) || 0;
-    const bidVal = Number(bidBuffer) || 0;
-
-    // Handle percentage buffers (e.g. 0.3 for 0.3%, 0.08 for 0.08%, 0.003 ratio) vs absolute point buffers (>= 10 points)
-    const getBufferAmount = (val: number) => {
-      if (!val || val <= 0) return 0;
-      if (val < 10) {
-        const pct = val > 0.005 ? val / 100 : val;
-        return baseLtp * pct;
-      }
-      return val;
-    };
-
-    effectiveAsk = baseLtp + getBufferAmount(askVal);
-    effectiveBid = baseLtp - getBufferAmount(bidVal);
+    // Synthetic spread feed: apply % buffer on top of LTP
+    effectiveAsk = baseLtp + getBufferAmount(askVal, baseLtp);
+    effectiveBid = baseLtp - getBufferAmount(bidVal, baseLtp);
   }
 
   return {
