@@ -530,23 +530,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     } else if (side === 'SELL') {
       minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
     }
-  }
-
-  // For SLM: the stop loss must be on the correct side of current market price
-  // BUY SLM entry â†’ stop loss below market (protect a new long)
-  // SELL SLM entry â†’ stop loss above market (protect a new short)
-  if (orderType === 'SLM' && !exitMode) {
-    if (side === 'BUY') {
-      maxAllowedPrice = Math.min(maxAllowedPrice, currentLtp);
-    } else if (side === 'SELL') {
-      minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
-    }
-  }
-
-  // Exit mode specific logic for Stop Loss (SL)
-  // Exiting a long (SELL SL): stop loss must be placed BELOW market
-  // Exiting a short (BUY SL): stop loss must be placed ABOVE market
-  if ((orderType === 'SL' || orderType === 'SLM') && exitMode) {
+  } else if (orderType === 'SL' || orderType === 'SLM') {
+    // For SL / SLM (Stop Loss / Stop Buy / Stop Sell):
+    // BUY side (BUY SL/SLM): Trigger price must be ABOVE current market price (> LTP)
+    // SELL side (SELL SL/SLM): Trigger price must be BELOW current market price (< LTP)
     if (side === 'BUY') {
       minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
     } else if (side === 'SELL') {
