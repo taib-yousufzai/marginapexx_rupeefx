@@ -526,7 +526,7 @@ export function normalizeQuote(q: any, symbolKey?: string): QuoteData {
 
   // For Indian equities/indices (NSE, NFO, BSE, BFO), ignore buffers and use raw ask/bid 1:1.
   // For Commodities (MCX), Crypto, and Forex, force synthetic buffer calculation (ignore Zerodha depth).
-  const forceSynthetic = !isIndianMarket || isCommodity;
+  const forceSynthetic = !isIndianMarket;
 
   const { bid: finalBid, ask: finalAsk } = normalizeOptionQuoteDepth(
     lastPrice,
