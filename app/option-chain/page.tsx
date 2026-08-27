@@ -732,7 +732,8 @@ function OptionChainContent() {
               bid = ltp;
               ask = ltp;
             } else {
-              const bufAmount = displayBidBuffer >= 1 ? displayBidBuffer : Math.max(0.05, Math.round(ltp * (displayBidBuffer / 100) * 100) / 100);
+              const decimalBuffer = Math.abs(displayBidBuffer) > 0.005 ? displayBidBuffer / 100 : displayBidBuffer;
+              const bufAmount = Math.max(0.05, Math.round(ltp * decimalBuffer * 100) / 100);
               bid = Math.max(0.05, Math.round((ltp - bufAmount) * 100) / 100);
               ask = Math.round((ltp + bufAmount) * 100) / 100;
             }

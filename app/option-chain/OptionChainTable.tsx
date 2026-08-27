@@ -76,17 +76,19 @@ interface StrikeRowProps {
 }
 
 // Apply bid_buffer to compute synthetic spread:
-// If bidBuffer >= 1 → treat as absolute points (e.g. 10 = ₹10 away from LTP)
-// If bidBuffer < 1 and > 0 → treat as percentage (e.g. 0.3 = 0.3% of LTP)
+// Matches TradeSheet logic: values > 0.005 are treated as percentages (e.g. 50 = 50%).
 function applyBidBuffer(ltp: number, rawBid: number | null, rawAsk: number | null, bidBuffer: number): { bid: number; ask: number } {
   if (!ltp || ltp <= 0) return { bid: rawBid ?? 0, ask: rawAsk ?? 0 };
   if (!bidBuffer || bidBuffer <= 0) {
     return { bid: rawBid ?? ltp, ask: rawAsk ?? ltp };
   }
-  // Compute buffer amount
-  const bufAmount = bidBuffer >= 1 ? bidBuffer : Math.max(0.05, Math.round(ltp * (bidBuffer / 100) * 100) / 100);
-  const bid = Math.max(0.05, Math.round((ltp - bufAmount) * 100) / 100);
-  const ask = Math.round((ltp + bufAmount) * 100) / 100;
+
+  const decimalBuffer = Math.abs(bidBuffer) > 0.005 ? bidBuffer / 100 : bidBuffer;
+  const bufferAmount = Math.max(0.05, Math.round(ltp * decimalBuffer * 100) / 100);
+
+  const bid = Math.max(0.05, Math.round((ltp - bufferAmount) * 100) / 100);
+  const ask = Math.round((ltp + bufferAmount) * 100) / 100;
+
   return { bid, ask };
 }
 
