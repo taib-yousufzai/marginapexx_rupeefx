@@ -20,6 +20,7 @@ interface OptionChainTableProps {
   hideMainHeader?: boolean;
   strikeRange?: number;
   loading?: boolean;
+  bidBuffer?: number; // User's bid_buffer setting (e.g. 10 = 10 points or 10%)
 }
 
 import { getCenteredStrikeWindow } from '@/lib/trading/optionStrikeWindow';
@@ -69,28 +70,49 @@ interface StrikeRowProps {
   atmRef: React.RefObject<HTMLDivElement | null>;
   priceMode: 'BA' | 'LTP';
   onTrade: (symbol: string, side: 'BUY' | 'SELL') => void;
+  bidBuffer?: number;
+}
+
+// Apply bid_buffer to compute synthetic spread:
+// If bidBuffer >= 1 → treat as absolute points (e.g. 10 = ₹10 away from LTP)
+// If bidBuffer < 1 and > 0 → treat as percentage (e.g. 0.3 = 0.3% of LTP)
+function applyBidBuffer(ltp: number, rawBid: number | null, rawAsk: number | null, bidBuffer: number): { bid: number; ask: number } {
+  if (!ltp || ltp <= 0) return { bid: rawBid ?? 0, ask: rawAsk ?? 0 };
+  if (!bidBuffer || bidBuffer <= 0) {
+    return { bid: rawBid ?? ltp, ask: rawAsk ?? ltp };
+  }
+  // Compute buffer amount
+  const bufAmount = bidBuffer >= 1 ? bidBuffer : Math.max(0.05, Math.round(ltp * (bidBuffer / 100) * 100) / 100);
+  const bid = Math.max(0.05, Math.round((ltp - bufAmount) * 100) / 100);
+  const ask = Math.round((ltp + bufAmount) * 100) / 100;
+  return { bid, ask };
 }
 
 const StrikeRow = React.memo(function StrikeRow({
   strike, ceSymbol, ceStaticPrice, ceQuote,
   peSymbol, peStaticPrice, peQuote,
-  isAtm, atmRef, priceMode, onTrade,
+  isAtm, atmRef, priceMode, onTrade, bidBuffer = 0,
 }: StrikeRowProps) {
   const ceLtpVal = ceQuote?.lastPrice ?? ceStaticPrice;
   const peLtpVal = peQuote?.lastPrice ?? peStaticPrice;
 
-  const ceBidVal = ceQuote?.bid && ceQuote.bid > 0 ? ceQuote.bid : null;
-  const ceAskVal = ceQuote?.ask && ceQuote.ask > 0 ? ceQuote.ask : null;
-  const peBidVal = peQuote?.bid && peQuote.bid > 0 ? peQuote.bid : null;
-  const peAskVal = peQuote?.ask && peQuote.ask > 0 ? peQuote.ask : null;
+  // When bidBuffer > 0, force synthetic bid/ask from LTP (MCX options).
+  // When bidBuffer = 0, use raw exchange bid/ask if available.
+  const { bid: ceBidFinal, ask: ceAskFinal } = bidBuffer > 0 && ceLtpVal
+    ? applyBidBuffer(ceLtpVal, null, null, bidBuffer)
+    : { bid: ceQuote?.bid && ceQuote.bid > 0 ? ceQuote.bid : null, ask: ceQuote?.ask && ceQuote.ask > 0 ? ceQuote.ask : null };
 
-  const ceHasSpread = !!(ceBidVal && ceAskVal && ceBidVal < ceAskVal);
-  const peHasSpread = !!(peBidVal && peAskVal && peBidVal < peAskVal);
+  const { bid: peBidFinal, ask: peAskFinal } = bidBuffer > 0 && peLtpVal
+    ? applyBidBuffer(peLtpVal, null, null, bidBuffer)
+    : { bid: peQuote?.bid && peQuote.bid > 0 ? peQuote.bid : null, ask: peQuote?.ask && peQuote.ask > 0 ? peQuote.ask : null };
 
-  const ceBid = ceBidVal != null ? ceBidVal.toFixed(1) : (ceLtpVal ? ceLtpVal.toFixed(1) : '---');
-  const ceAsk = ceAskVal != null ? ceAskVal.toFixed(1) : (ceLtpVal ? ceLtpVal.toFixed(1) : '---');
-  const peBid = peBidVal != null ? peBidVal.toFixed(1) : (peLtpVal ? peLtpVal.toFixed(1) : '---');
-  const peAsk = peAskVal != null ? peAskVal.toFixed(1) : (peLtpVal ? peLtpVal.toFixed(1) : '---');
+  const ceHasSpread = !!(ceBidFinal && ceAskFinal && ceBidFinal < ceAskFinal);
+  const peHasSpread = !!(peBidFinal && peAskFinal && peBidFinal < peAskFinal);
+
+  const ceBid = ceBidFinal != null ? ceBidFinal.toFixed(1) : (ceLtpVal ? ceLtpVal.toFixed(1) : '---');
+  const ceAsk = ceAskFinal != null ? ceAskFinal.toFixed(1) : (ceLtpVal ? ceLtpVal.toFixed(1) : '---');
+  const peBid = peBidFinal != null ? peBidFinal.toFixed(1) : (peLtpVal ? peLtpVal.toFixed(1) : '---');
+  const peAsk = peAskFinal != null ? peAskFinal.toFixed(1) : (peLtpVal ? peLtpVal.toFixed(1) : '---');
   const ceLtp = ceLtpVal ? `₹${ceLtpVal.toFixed(1)}` : '---';
   const peLtp = peLtpVal ? `₹${peLtpVal.toFixed(1)}` : '---';
 
@@ -165,7 +187,7 @@ const StrikeRow = React.memo(function StrikeRow({
   );
 }, (prev, next) => {
   if (prev.strike !== next.strike || prev.ceSymbol !== next.ceSymbol || prev.peSymbol !== next.peSymbol) return false;
-  if (prev.isAtm !== next.isAtm || prev.priceMode !== next.priceMode) return false;
+  if (prev.isAtm !== next.isAtm || prev.priceMode !== next.priceMode || prev.bidBuffer !== next.bidBuffer) return false;
   const cq = [prev.ceQuote, next.ceQuote]; const pq = [prev.peQuote, next.peQuote];
   if (cq[0]?.lastPrice !== cq[1]?.lastPrice || cq[0]?.bid !== cq[1]?.bid || cq[0]?.ask !== cq[1]?.ask) return false;
   if (pq[0]?.lastPrice !== pq[1]?.lastPrice || pq[0]?.bid !== pq[1]?.bid || pq[0]?.ask !== pq[1]?.ask) return false;
@@ -177,7 +199,7 @@ const StrikeRow = React.memo(function StrikeRow({
 export default function OptionChainTable({
   strikes, quotes, spotPrice, symbol = '', onTrade,
   priceMode = 'LTP', stickyTop = 58, hideMainHeader = false,
-  strikeRange = 0, loading = false,
+  strikeRange = 0, loading = false, bidBuffer = 0,
 }: OptionChainTableProps) {
   const atmRef = React.useRef<HTMLDivElement>(null);
   const tableHeaderRef = React.useRef<HTMLDivElement>(null);
@@ -261,6 +283,7 @@ export default function OptionChainTable({
                   atmRef={atmRef}
                   priceMode={priceMode}
                   onTrade={stableOnTrade}
+                  bidBuffer={bidBuffer}
                 />
               ))
           }

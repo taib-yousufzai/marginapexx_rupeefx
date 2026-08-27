@@ -2,7 +2,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import http from 'http';
 
-// Load environment variables from .env.local
+// Load environment variables from .env first, then .env.local (which can override)
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
 // @ts-ignore
@@ -253,7 +254,7 @@ class TickerDaemon {
     // Setup periodic matching engine cache sync (every 60 seconds) to self-heal state if Supabase Realtime drops.
     // Run non-blocking — never await in the critical tick path.
     this.matchingEngineSyncTimer = setInterval(() => {
-      processPendingOrdersAndPositions().catch((err: any) => {
+      processPendingOrdersAndPositions([]).catch((err: any) => {
         logger.error({ err }, 'Periodic matching engine cache sync failed');
       });
     }, 60000);

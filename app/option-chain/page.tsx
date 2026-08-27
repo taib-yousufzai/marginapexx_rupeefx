@@ -202,6 +202,18 @@ function OptionChainContent() {
     return Number(setting?.strike_range ?? 0);
   }, [segmentSettings, symbol]);
 
+  // Compute bid_buffer for display spread in option chain (MCX-OPT / INDEX-OPT)
+  // bid_buffer = 0 for NSE/BSE options (real exchange depth is used)
+  // bid_buffer = user setting for MCX options (synthetic spread from LTP)
+  const displayBidBuffer = React.useMemo(() => {
+    const isIndexOpt = symbol.includes('NIFTY') || symbol.includes('SENSEX') || symbol.includes('BANKEX');
+    // Index options (NSE/BSE) use real exchange bid/ask — no synthetic buffer needed
+    if (isIndexOpt) return 0;
+    // MCX options: use user's configured bid_buffer
+    const mcxSetting = segmentSettings.find(s => s.segment === 'MCX-OPT');
+    return Number(mcxSetting?.bid_buffer ?? 0);
+  }, [segmentSettings, symbol]);
+
   const [selectedExpiry, setSelectedExpiry] = useState<string | null>(null);
   const [showCharges, setShowCharges] = useState(false);
 
@@ -487,6 +499,7 @@ function OptionChainContent() {
                   priceMode={priceMode}
                   strikeRange={0}
                   loading={loading}
+                  bidBuffer={displayBidBuffer}
                 />
               </>
             )}
