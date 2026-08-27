@@ -524,9 +524,9 @@ export function normalizeQuote(q: any, symbolKey?: string): QuoteData {
     rawSym.startsWith('NSE:') || rawSym.startsWith('NFO:') || rawSym.startsWith('MCX:') || rawSym.startsWith('BSE:') || rawSym.startsWith('BFO:') || rawSym.startsWith('NCO:') || rawSym.startsWith('MCX-') ||
     ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL', 'NIFTY', 'BANKNIFTY', 'FINNIFTY', 'SENSEX'].some(c => cleanSym.includes(c));
 
-  // For Indian equities/indices (NSE, NFO, BSE, BFO), ignore buffers and use raw ask/bid 1:1.
-  // For Commodities (MCX), Crypto, and Forex, force synthetic buffer calculation (ignore Zerodha depth).
-  const forceSynthetic = !isIndianMarket || isCommodity;
+  // For all Indian market instruments (NSE, NFO, MCX, BSE, BFO), pass real API bid/ask through.
+  // For Crypto and Forex, force synthetic buffer calculation (no reliable depth from exchange).
+  const forceSynthetic = !isIndianMarket;
 
   const { bid: finalBid, ask: finalAsk } = normalizeOptionQuoteDepth(
     lastPrice,
