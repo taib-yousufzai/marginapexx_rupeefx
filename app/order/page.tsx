@@ -116,8 +116,8 @@ export default function OrderPage() {
     }, 80);
   };
 
-  const openOrders = orders.filter(o => o.status === 'PENDING');
-  const closedOrders = orders.filter(o => o.status !== 'PENDING');
+  const openOrders = orders.filter(o => o.status?.toUpperCase() === 'PENDING' || o.status?.toUpperCase() === 'TRIGGER_PENDING');
+  const closedOrders = orders.filter(o => o.status?.toUpperCase() !== 'PENDING' && o.status?.toUpperCase() !== 'TRIGGER_PENDING');
 
   const activeList = tab === 'open' ? openOrders : closedOrders;
   const filtered = activeList.filter(o =>

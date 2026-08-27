@@ -799,20 +799,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             return NextResponse.json({ error: 'Stop loss trigger price must be below the current market price for long exits.' }, { status: 400 });
           }
         } else {
-          if (order_type === 'SLM') {
-            if (side === 'BUY' && trigPrice >= baseLtp) {
-              return NextResponse.json({ error: 'Stop loss price must be below the current market price.' }, { status: 400 });
-            }
-            if (side === 'SELL' && trigPrice <= baseLtp) {
-              return NextResponse.json({ error: 'Stop loss price must be above the current market price.' }, { status: 400 });
-            }
-          } else { // SL order type
-            if (side === 'BUY' && trigPrice <= baseLtp) {
-              return NextResponse.json({ error: 'Trigger price must be above the current market price for stop limit buy.' }, { status: 400 });
-            }
-            if (side === 'SELL' && trigPrice >= baseLtp) {
-              return NextResponse.json({ error: 'Trigger price must be below the current market price for stop limit sell.' }, { status: 400 });
-            }
+          // Entry mode (!is_exit): trigger_price is the entry breakout condition
+          if (side === 'BUY' && trigPrice <= baseLtp) {
+            return NextResponse.json({ error: 'Trigger price must be above the current market price for stop buy.' }, { status: 400 });
+          }
+          if (side === 'SELL' && trigPrice >= baseLtp) {
+            return NextResponse.json({ error: 'Trigger price must be below the current market price for stop sell.' }, { status: 400 });
           }
         }
       }
@@ -950,7 +942,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 10. Compute fill price (LTP ± buffer from segment_settings)
     let fillPrice: number;
-    const isImmediate = (order_type ?? 'MARKET') === 'MARKET' || order_type === 'SLM';
+    const isImmediate = (order_type ?? 'MARKET') === 'MARKET' || (order_type === 'SLM' && Boolean(is_exit));
 
     let rawBid = typeof rawQuote === 'object' ? (rawQuote?.bid ?? null) : null;
     let rawAsk = typeof rawQuote === 'object' ? (rawQuote?.ask ?? null) : null;
@@ -1085,14 +1077,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // 11. Atomic write via Postgres RPC
     const targetOrderType = order_type ?? 'MARKET';
     
-    // To make SLM execute immediately and create a position, we tell the DB it's a MARKET order
-    const rpcOrderType = targetOrderType === 'SLM' ? 'MARKET' : targetOrderType;
+    // To make exit SLM execute immediately and create a position, we tell the DB it's a MARKET order
+    const rpcOrderType = (targetOrderType === 'SLM' && is_exit) ? 'MARKET' : targetOrderType;
 
     let resolvedTriggerPrice = trigger_price ? parseFloat(trigger_price.toString()) : null;
     let resolvedStopLoss = stop_loss ? parseFloat(stop_loss.toString()) : null;
 
-    // For SLM, the UI sends the Stop Loss price in the trigger_price field.
-    if (targetOrderType === 'SLM') {
+    // For exit SLM, the UI sends the Stop Loss price in the trigger_price field.
+    if (targetOrderType === 'SLM' && is_exit) {
       if (resolvedTriggerPrice !== null) {
         resolvedStopLoss = resolvedTriggerPrice;
         resolvedTriggerPrice = null; // Clear trigger price since it's a market order now
@@ -1142,8 +1134,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: err.message || 'Order execution failed. Please try again.' }, { status: 400 });
     }
 
-    // Update order_type to 'SLM' in the database if it was an SLM order asynchronously
-    if (targetOrderType === 'SLM' && orderId) {
+    // Update order_type to 'SLM' in the database if it was an exit SLM order asynchronously
+    if (targetOrderType === 'SLM' && is_exit && orderId) {
       admin
         .from('orders')
         .update({ order_type: 'SLM' })

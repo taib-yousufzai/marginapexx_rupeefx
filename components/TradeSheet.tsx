@@ -661,13 +661,29 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
 
       // Validate Limit price constraints relative to LTP
-      if (resolvedOrderType === 'LIMIT' || (resolvedOrderType === 'GTT' && !exitMode)) {
-        if (placeSide === 'BUY' && resolvedClientPrice >= currentLtp) {
-          window.dispatchEvent(new CustomEvent('order_error', { detail: 'Buy at limit price must be below the current market price.' }));
+      const hasExplicitLimit = Boolean(limitPrice && parseFloat(limitPrice) > 0);
+      if (resolvedOrderType === 'LIMIT') {
+        const limitVal = parseFloat(limitPrice);
+        if (!limitPrice || isNaN(limitVal) || limitVal <= 0) {
+          showToast('Please enter a valid limit price.');
           return;
         }
-        if (placeSide === 'SELL' && resolvedClientPrice <= currentLtp) {
-          window.dispatchEvent(new CustomEvent('order_error', { detail: 'Sell at limit price must be above the current market price.' }));
+        if (placeSide === 'BUY' && limitVal >= currentLtp) {
+          showToast('Buy at limit price must be below the current market price.');
+          return;
+        }
+        if (placeSide === 'SELL' && limitVal <= currentLtp) {
+          showToast('Sell at limit price must be above the current market price.');
+          return;
+        }
+      } else if (resolvedOrderType === 'GTT' && !exitMode && hasExplicitLimit) {
+        const limitVal = parseFloat(limitPrice);
+        if (placeSide === 'BUY' && limitVal >= currentLtp) {
+          showToast('Buy at limit price must be below the current market price.');
+          return;
+        }
+        if (placeSide === 'SELL' && limitVal <= currentLtp) {
+          showToast('Sell at limit price must be above the current market price.');
           return;
         }
       }
@@ -699,45 +715,34 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
 
       if (resolvedOrderType === 'SL' || resolvedOrderType === 'SLM') {
-        const trigPrice = resolvedTriggerPrice;
-        if (trigPrice !== undefined && !isNaN(trigPrice)) {
-          if (isExitOrder) {
-            // Exit stop loss order:
-            // - Exiting LONG (SELL order): stop loss must be below current market price
-            // - Exiting SHORT (BUY order): stop loss must be above current market price
-            if (placeSide === 'BUY' && trigPrice <= currentLtp) {
-              showToast('Stop loss trigger price must be above the current market price for short exits.');
-              return;
-            }
-            if (placeSide === 'SELL' && trigPrice >= currentLtp) {
-              showToast('Stop loss trigger price must be below the current market price for long exits.');
-              return;
-            }
-          } else {
-            // Entry stop loss order:
-            // - SLM entry executes immediately and sets trigger price as stop loss of new position.
-            //   Thus, BUY SLM = LONG position (SL below market), SELL SLM = SHORT position (SL above market).
-            // - SL entry is a pending breakout order.
-            //   Thus, BUY SL = breakout buy (above market), SELL SL = breakout sell (below market).
-            if (resolvedOrderType === 'SLM') {
-              if (placeSide === 'BUY' && trigPrice >= currentLtp) {
-                showToast('Stop loss price must be below the current market price.');
-                return;
-              }
-              if (placeSide === 'SELL' && trigPrice <= currentLtp) {
-                showToast('Stop loss price must be above the current market price.');
-                return;
-              }
-            } else { // SL order type
-              if (placeSide === 'BUY' && trigPrice <= currentLtp) {
-                showToast('Trigger price must be above the current market price for stop limit buy.');
-                return;
-              }
-              if (placeSide === 'SELL' && trigPrice >= currentLtp) {
-                showToast('Trigger price must be below the current market price for stop limit sell.');
-                return;
-              }
-            }
+        const trigVal = parseFloat(triggerPrice);
+        if (!triggerPrice || isNaN(trigVal) || trigVal <= 0) {
+          showToast('Please enter a valid trigger price.');
+          return;
+        }
+        if (isExitOrder) {
+          // Exit stop loss order:
+          // - Exiting LONG (SELL order): stop loss must be below current market price
+          // - Exiting SHORT (BUY order): stop loss must be above current market price
+          if (placeSide === 'BUY' && trigVal <= currentLtp) {
+            showToast('Stop loss trigger price must be above the current market price for short exits.');
+            return;
+          }
+          if (placeSide === 'SELL' && trigVal >= currentLtp) {
+            showToast('Stop loss trigger price must be below the current market price for long exits.');
+            return;
+          }
+        } else {
+          // Entry stop loss order:
+          // - BUY SL/SLM entry: breakout buy above market price
+          // - SELL SL/SLM entry: breakout sell below market price
+          if (placeSide === 'BUY' && trigVal <= currentLtp) {
+            showToast('Trigger price must be above the current market price for stop buy.');
+            return;
+          }
+          if (placeSide === 'SELL' && trigVal >= currentLtp) {
+            showToast('Trigger price must be below the current market price for stop sell.');
+            return;
           }
         }
       }
@@ -1586,9 +1591,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 {(orderType === 'SL' || orderType === 'SLM') && (
                   <div className="ts2-card">
                     <div className="ts2-label">
-                      {orderType === 'SLM'
+                      {exitMode
                         ? <>Stop Loss <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) order executes at market price</span></>
-                        : <>Stop Loss Price <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol})</span></>
+                        : <>Trigger Price <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol})</span></>
                       }
                     </div>
                     <input
