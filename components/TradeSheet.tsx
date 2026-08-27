@@ -504,7 +504,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    setOrderErrorMsg(msg);
+    window.dispatchEvent(new CustomEvent('toast_msg', { detail: msg }));
+    window.dispatchEvent(new CustomEvent('order_error', { detail: msg }));
+    setTimeout(() => setToast(null), 4000);
   };
 
 
