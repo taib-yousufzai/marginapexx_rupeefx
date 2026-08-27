@@ -81,11 +81,35 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
     console.log(`[Order Matching] Found ${pendingOrders.length} pending orders to evaluate.`);
 
     for (const order of pendingOrders) {
-      const symbolKey = order.kite_instrument || order.symbol;
-      const priceObj = pricesMap.get(symbolKey);
+      const rawSymbol = order.kite_instrument || order.symbol || '';
+
+      // Try multiple key variants to handle crypto (BTCUSDT, BTC, BTC/USDT)
+      // and Indian equities (NSE:INFY, NFO:NIFTY25JUNFUT, etc.)
+      const symbolVariants = [
+        rawSymbol,
+        rawSymbol.toUpperCase(),
+        rawSymbol.replace('/', ''),                          // BTC/USDT → BTCUSDT
+        rawSymbol.replace('/USDT', 'USDT'),                  // BTC/USDT → BTCUSDT
+        rawSymbol + 'USDT',                                  // BTC → BTCUSDT
+        rawSymbol.replace('USDT', ''),                       // BTCUSDT → BTC
+        (rawSymbol.includes(':') ? rawSymbol.split(':')[1] : rawSymbol), // NSE:INFY → INFY
+      ];
+
+      let priceObj: { ltp: number; bid: number; ask: number } | undefined;
+      let symbolKey = rawSymbol;
+      for (const variant of symbolVariants) {
+        const found = pricesMap.get(variant);
+        if (found) {
+          priceObj = found;
+          symbolKey = variant;
+          break;
+        }
+      }
+
       const ltp = priceObj?.ltp;
 
       if (ltp === undefined || ltp <= 0) {
+        console.log(`[Order Matching] No price found for order ${order.id} symbol "${rawSymbol}" (tried ${symbolVariants.join(', ')})`);
         continue; // No price update for this symbol in the current batch
       }
 
@@ -95,7 +119,7 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
       const orderType = order.order_type;
       const side = order.side;
       const triggerPrice = order.trigger_price ? Number(order.trigger_price) : null;
-      const limitPrice = order.price ? Number(order.price) : null;
+      const limitPrice = (order.client_price ?? order.fill_price ?? order.price) ? Number(order.client_price ?? order.fill_price ?? order.price) : null;
 
       const effective = resolveEffectivePrices({
         ltp,
@@ -105,12 +129,17 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
       });
 
       if (orderType === 'LIMIT' && limitPrice !== null) {
+        console.log(`[DEBUG] Evaluating LIMIT order ${order.id} | side: ${side} | limitPrice: ${limitPrice} | ltp: ${ltp} | client_price: ${order.client_price} | fill_price: ${order.fill_price} | price: ${order.price}`);
         if (side === 'BUY' && ltp <= limitPrice) {
           shouldTrigger = true;
           fillPrice = limitPrice;
+          console.log(`[DEBUG] -> Triggered BUY LIMIT at ${limitPrice}`);
         } else if (side === 'SELL' && ltp >= limitPrice) {
           shouldTrigger = true;
           fillPrice = limitPrice;
+          console.log(`[DEBUG] -> Triggered SELL LIMIT at ${limitPrice}`);
+        } else {
+          console.log(`[DEBUG] -> Condition not met. ltp (${ltp}) vs limitPrice (${limitPrice})`);
         }
       } else if ((orderType === 'SL' || orderType === 'SLM') && triggerPrice !== null) {
         if (side === 'BUY' && ltp >= triggerPrice) {
@@ -201,18 +230,40 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           }
         } else {
           // Entry orders (is_exit is false)
+          // BUT: if an opposite position exists, treat this as an exit order to close it.
+          // e.g. User places BUY LIMIT while holding a SELL position → close the short.
           if (order.side === 'BUY') {
-            // BUY entry order cannot proceed if there is an open opposite SELL position
-            if (existingPos && existingPos.some((p: any) => p.side === 'SELL')) {
-              console.log(`[Order Matching] Skipping BUY entry order ${order.id} due to existing opposite SELL position`);
-              continue;
+            const oppSellPos = existingPos && existingPos.find((p: any) => p.side === 'SELL');
+            if (oppSellPos) {
+              console.log(`[Order Matching] BUY entry order ${order.id} has opposite SELL position — treating as exit to close short`);
+              // Fall through: let it execute as an exit below by overriding is_exit
+              (order as any)._runtimeIsExit = true;
+              (order as any)._runtimeLinkedPosId = oppSellPos.id;
             }
           } else if (order.side === 'SELL') {
-            // SELL entry order cannot proceed if there is an open opposite BUY position
-            if (existingPos && existingPos.some((p: any) => p.side === 'BUY')) {
-              console.log(`[Order Matching] Skipping SELL entry order ${order.id} due to existing opposite BUY position`);
-              continue;
+            const oppBuyPos = existingPos && existingPos.find((p: any) => p.side === 'BUY');
+            if (oppBuyPos) {
+              console.log(`[Order Matching] SELL entry order ${order.id} has opposite BUY position — treating as exit to close long`);
+              (order as any)._runtimeIsExit = true;
+              (order as any)._runtimeLinkedPosId = oppBuyPos.id;
             }
+          }
+        }
+
+        // 1b. If this was a runtime-detected exit (opposite position found), patch is_exit in DB first
+        if ((order as any)._runtimeIsExit && (order as any)._runtimeLinkedPosId) {
+          const { error: patchErr } = await admin
+            .from('orders')
+            .update({
+              is_exit: true,
+              linked_position_id: (order as any)._runtimeLinkedPosId,
+            })
+            .eq('id', order.id);
+
+          if (patchErr) {
+            console.error(`[Order Matching] Failed to patch is_exit for order ${order.id}:`, patchErr);
+          } else {
+            console.log(`[Order Matching] Patched order ${order.id} as exit for position ${(order as any)._runtimeLinkedPosId}`);
           }
         }
 
