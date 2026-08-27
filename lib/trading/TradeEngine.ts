@@ -364,7 +364,8 @@ export class TradeEngine {
     }
 
     // Cumulative Position limit check (Per Segment across open positions and pending orders)
-    let totalOpenLots = 0;
+    let openPositionsLots = 0;
+    let pendingOrdersLots = 0;
     const ctxScriptSettings = ctx.script_settings || [];
 
     for (const pos of openPositions) {
@@ -374,7 +375,7 @@ export class TradeEngine {
           ctxScriptSettings.find((s: any) => s.symbol === pos.symbol)?.lot_size
           || getLotSizeFallback(pos.symbol, ctxScriptSettings)
         );
-        if (pLot > 0) totalOpenLots += Number(pos.qty_open) / pLot;
+        if (pLot > 0) openPositionsLots += Number(pos.qty_open) / pLot;
       }
     }
 
@@ -387,16 +388,20 @@ export class TradeEngine {
             || getLotSizeFallback(po.symbol, ctxScriptSettings)
           );
           if (poLot > 0) {
-            totalOpenLots += Number(po.lots) > 0
+            pendingOrdersLots += Number(po.lots) > 0
               ? Number(po.lots)
               : (Number(po.qty) / poLot);
           }
         }
       }
     }
+    const totalOpenLots = openPositionsLots + pendingOrdersLots;
     const newOrderLots = qty / symbolLotSize;
     if (!is_exit && !RiskValidation.validateMaxLotLimit(totalOpenLots + newOrderLots, Number(segSetting.max_lot || 50))) {
-      throw new Error(`Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current open positions: ${totalOpenLots.toFixed(2)} lots.`);
+      const breakdownMsg = pendingOrdersLots > 0
+        ? `(${openPositionsLots.toFixed(2)} open positions + ${pendingOrdersLots.toFixed(2)} pending orders)`
+        : `(${totalOpenLots.toFixed(2)} in open positions)`;
+      throw new Error(`Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current segment exposure: ${totalOpenLots.toFixed(2)} lots ${breakdownMsg}.`);
     }
 
     const activePosition = openPositions.find((p: any) => p.symbol === symbol && p.product_type === (product_type || 'INTRADAY'));

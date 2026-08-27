@@ -247,6 +247,14 @@ function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: num
   if (n.includes('MIDCP') || n.includes('MIDCAP')) return 75;
   if (n.includes('SENSEX')) return 10;
   if (n.includes('NIFTY')) return 25;
+  if (n.includes('GOLDM')) return 10;
+  if (n.includes('GOLD')) return 100;
+  if (n.includes('SILVERM')) return 5;
+  if (n.includes('SILVER')) return 30;
+  if (n.includes('CRUDEOILM')) return 10;
+  if (n.includes('CRUDEOIL')) return 100;
+  if (n.includes('NATGASMINI')) return 250;
+  if (n.includes('NATURALGAS') || n.includes('NATGAS')) return 1250;
   return 1;
 }
 
@@ -679,21 +687,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const symbolLotSize = lots > 0 ? (qty / lots) : getLotSize(symbol, dbScriptSettings);
     const maxQty = (segSetting.max_order_lot as number) * symbolLotSize;
-    if (qty > maxQty) {
+    if (!is_exit && qty > maxQty) {
       return NextResponse.json({
-        error: `The maximum you can exit in a single order is ${segSetting.max_order_lot} lots or ${maxQty} qty. Please execute your position in multiple orders, or use the Exit All button available on the top right.`,
+        error: `Order exceeds maximum allowed limit of ${segSetting.max_order_lot} lots (${maxQty} qty) per order.`,
       }, { status: 400 });
     }
 
     // Verify cumulative segment limits (max_lot) across open positions and pending orders
-    let totalOpenLots = 0;
+    let openPositionsLots = 0;
+    let pendingOrdersLots = 0;
+
     const openPositions = positionsResult?.data ?? [];
     if (openPositions.length > 0) {
       for (const pos of openPositions) {
         const posSegment = mapSymbolToSegment(pos.symbol);
         if (posSegment === dbSegment) {
           const size = getLotSize(pos.symbol, dbScriptSettings);
-          if (size > 0) totalOpenLots += Number(pos.qty_open) / size;
+          if (size > 0) openPositionsLots += Number(pos.qty_open) / size;
         }
       }
     }
@@ -706,7 +716,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           if (poSegment === dbSegment) {
             const poSize = getLotSize(po.symbol, dbScriptSettings);
             if (poSize > 0) {
-              totalOpenLots += Number(po.lots) > 0
+              pendingOrdersLots += Number(po.lots) > 0
                 ? Number(po.lots)
                 : (Number(po.qty) / poSize);
             }
@@ -715,10 +725,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    const totalOpenLots = openPositionsLots + pendingOrdersLots;
     const newOrderLots = lots > 0 ? lots : (qty / symbolLotSize);
     if (!is_exit && (totalOpenLots + newOrderLots) > (segSetting.max_lot as number)) {
+      const breakdownMsg = pendingOrdersLots > 0
+        ? `(${openPositionsLots.toFixed(2)} open positions + ${pendingOrdersLots.toFixed(2)} pending orders)`
+        : `(${totalOpenLots.toFixed(2)} in open positions)`;
       return NextResponse.json({
-        error: `Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current open positions: ${totalOpenLots.toFixed(2)} lots.`,
+        error: `Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current segment exposure: ${totalOpenLots.toFixed(2)} lots ${breakdownMsg}.`,
       }, { status: 400 });
     }
 

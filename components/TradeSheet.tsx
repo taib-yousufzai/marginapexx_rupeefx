@@ -394,13 +394,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const activePositionsRef = useRef(activePositions);
   useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
 
-  // Sync qtyInput â†’ orderQty when input is a valid number (supports decimals in lot mode)
+  // Sync qtyInput → orderQty when input is a valid number (supports decimals in lot mode)
   const handleQtyChange = (val: string) => {
     // Allow digits, a leading optional zero, and a single decimal point
     if (val !== '' && !/^\d*\.?\d*$/.test(val)) return;
-
-    // If lotSize > 1, prevent decimals in LOT mode to avoid confusion
-    if (orderUnit === 'lot' && lotSize > 1 && val.includes('.')) return;
 
     userHasEditedQty.current = true;
     setQtyInput(val);
@@ -412,7 +409,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const stepQty = (delta: number) => {
     if (qtyError) setQtyError(null);
-    const step = orderUnit === 'lot' ? 1 : 1;
+    const step = orderUnit === 'lot' ? 0.1 : 1;
     const maxOrderLot = segSetting?.max_order_lot ?? segSetting?.max_lot ?? 0;
     const maxVal = maxOrderLot > 0
       ? (orderUnit === 'lot' ? maxOrderLot : maxOrderLot * lotSize)
@@ -448,9 +445,15 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           setGttSubOption(exitMode ? 'TARGET' : 'LIMIT');
         }
       } else {
-        setOrderQty(lotSize);
-        setQtyInput(String(lotSize));
-        setOrderUnit('qty');
+        if (lotSize > 1) {
+          setOrderQty(1);
+          setQtyInput('1');
+          setOrderUnit('lot');
+        } else {
+          setOrderQty(1);
+          setQtyInput('1');
+          setOrderUnit('qty');
+        }
         setOrderType('MARKET');
         setProductType(propProductType || 'INTRADAY');
         setLimitPrice('');
@@ -1469,7 +1472,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                           if (orderUnit !== 'lot') {
                             setOrderUnit('lot');
                             const newLots = lotSize > 0 ? (orderQty / lotSize) : orderQty;
-                            const formattedLots = parseFloat(newLots.toFixed(2));
+                            const formattedLots = parseFloat(newLots.toFixed(4));
                             setOrderQty(formattedLots);
                             setQtyInput(String(formattedLots));
                           }
@@ -1497,7 +1500,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                     </div>
                     <div className="ts2-info-card">
                       <div className="ts2-ic-label">Order Lots</div>
-                      <div className="ts2-ic-val">{orderUnit === 'lot' ? orderQty : (orderQty / lotSize)}</div>
+                      <div className="ts2-ic-val">{orderUnit === 'lot' ? orderQty : Number((orderQty / lotSize).toFixed(4))}</div>
                     </div>
                     <div className="ts2-info-card">
                       <div className="ts2-ic-label">Total Qty</div>
@@ -1524,16 +1527,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                         if (!qtyInput || isNaN(n) || n <= 0) {
                           setQtyInput(String(orderQty));
                         } else {
-                          let snapped = n;
-                          if (lotSize > 1) {
-                            if (orderUnit === 'qty') {
-                              // Keep the exact custom quantity entered by the user
-                              snapped = Math.max(0.0001, n);
-                            } else {
-                              // Snap to nearest integer lot
-                              snapped = Math.max(1, Math.round(n));
-                            }
-                          }
+                          const snapped = Math.max(0.0001, n);
                           setQtyInput(String(snapped));
                           setOrderQty(snapped);
                         }
