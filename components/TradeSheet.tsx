@@ -263,7 +263,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
     const execPriceMode = segSetting?.exit_price_mode || 'BID_ASK';
     const hasRealBidAsk = Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
-    const useLtpMode = execPriceMode === 'LTP' || isCommodity || !hasRealBidAsk;
+    const useLtpMode = execPriceMode === 'LTP' || !hasRealBidAsk;
 
     if (useLtpMode) {
       askPrice = currentLtp + bidBufferAmount;
