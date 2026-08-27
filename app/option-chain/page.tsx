@@ -196,23 +196,31 @@ function OptionChainContent() {
 
   // Compute user's strike range for INDEX-OPT from their segment settings
   const userStrikeRange = React.useMemo(() => {
-    const isIndexOpt = symbol.includes('NIFTY') || symbol.includes('SENSEX') || symbol.includes('BANKEX');
+    const isIndexOpt = normalizedSymbol.includes('NIFTY') || normalizedSymbol.includes('SENSEX') || normalizedSymbol.includes('BANKEX');
     const seg = isIndexOpt ? 'INDEX-OPT' : 'MCX-OPT';
     const setting = segmentSettings.find(s => s.segment === seg);
     return Number(setting?.strike_range ?? 0);
-  }, [segmentSettings, symbol]);
+  }, [segmentSettings, normalizedSymbol]);
 
   // Compute bid_buffer for display spread in option chain (MCX-OPT / INDEX-OPT)
   // bid_buffer = 0 for NSE/BSE options (real exchange depth is used)
   // bid_buffer = user setting for MCX options (synthetic spread from LTP)
   const displayBidBuffer = React.useMemo(() => {
-    const isIndexOpt = symbol.includes('NIFTY') || symbol.includes('SENSEX') || symbol.includes('BANKEX');
+    const isIndexOpt = normalizedSymbol.includes('NIFTY') || normalizedSymbol.includes('SENSEX') || normalizedSymbol.includes('BANKEX');
     // Index options (NSE/BSE) use real exchange bid/ask — no synthetic buffer needed
     if (isIndexOpt) return 0;
     // MCX options: use user's configured bid_buffer
     const mcxSetting = segmentSettings.find(s => s.segment === 'MCX-OPT');
     return Number(mcxSetting?.bid_buffer ?? 0);
-  }, [segmentSettings, symbol]);
+  }, [segmentSettings, normalizedSymbol]);
+
+  const useLtpMode = React.useMemo(() => {
+    const isIndexOpt = normalizedSymbol.includes('NIFTY') || normalizedSymbol.includes('SENSEX') || normalizedSymbol.includes('BANKEX');
+    const seg = isIndexOpt ? 'INDEX-OPT' : 'MCX-OPT';
+    const setting = segmentSettings.find(s => s.segment === seg);
+    return setting?.exit_price_mode === 'LTP';
+  }, [segmentSettings, normalizedSymbol]);
+
 
   const [selectedExpiry, setSelectedExpiry] = useState<string | null>(null);
   const [showCharges, setShowCharges] = useState(false);
@@ -500,6 +508,7 @@ function OptionChainContent() {
                   strikeRange={0}
                   loading={loading}
                   bidBuffer={displayBidBuffer}
+                  useLtpMode={useLtpMode}
                 />
               </>
             )}
@@ -714,8 +723,24 @@ function OptionChainContent() {
 
           const ltp = quote ? quote.lastPrice : (contractData?.price || 0);
           const chgPct = quote ? quote.changePercent : (contractData?.change || 0);
-          const bid = quote?.bid && quote.bid > 0 ? quote.bid : (ltp > 0 ? Math.round(ltp * 0.999 * 100) / 100 : 0);
-          const ask = quote?.ask && quote.ask > 0 ? quote.ask : (ltp > 0 ? Math.round(ltp * 1.001 * 100) / 100 : 0);
+          const forceSynthetic = useLtpMode || displayBidBuffer > 0;
+          let bid = quote?.bid && quote.bid > 0 ? quote.bid : null;
+          let ask = quote?.ask && quote.ask > 0 ? quote.ask : null;
+
+          if (forceSynthetic && ltp > 0) {
+            if (!displayBidBuffer || displayBidBuffer <= 0) {
+              bid = ltp;
+              ask = ltp;
+            } else {
+              const bufAmount = displayBidBuffer >= 1 ? displayBidBuffer : Math.max(0.05, Math.round(ltp * (displayBidBuffer / 100) * 100) / 100);
+              bid = Math.max(0.05, Math.round((ltp - bufAmount) * 100) / 100);
+              ask = Math.round((ltp + bufAmount) * 100) / 100;
+            }
+          } else {
+            bid = bid ?? (ltp > 0 ? Math.round(ltp * 0.999 * 100) / 100 : 0);
+            ask = ask ?? (ltp > 0 ? Math.round(ltp * 1.001 * 100) / 100 : 0);
+          }
+
 
           // Find active opposite positions for options direction guards
           const activePos = activePositions.find(p =>
