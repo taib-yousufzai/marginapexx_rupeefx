@@ -914,42 +914,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Segment Price Limits validation (top_limit and min_limit)
     const topLimit = Number(segSetting.top_limit ?? 0);
     const minLimit = Number(segSetting.min_limit ?? 0);
-    if (['LIMIT', 'SL', 'GTT'].includes(order_type ?? 'MARKET')) {
-      if (side === 'BUY') {
-        if (topLimit > 0) {
-          const maxAllowed = baseLtp * (1 + topLimit / 100);
-          if (client_price > maxAllowed) {
-            return NextResponse.json({
-              error: `Maximum price allowed is ₹${maxAllowed.toFixed(2)}`
-            }, { status: 400 });
-          }
-        }
+    const orderPriceToCheck = (order_type === 'SL' || order_type === 'SLM')
+      ? (trigger_price ? parseFloat(trigger_price.toString()) : client_price)
+      : client_price;
 
-        if (minLimit > 0) {
-          const minAllowed = baseLtp * (1 - minLimit / 100);
-          if (client_price < minAllowed) {
-            return NextResponse.json({
-              error: `Minimum price allowed is ₹${minAllowed.toFixed(2)}`
-            }, { status: 400 });
-          }
+    if (['LIMIT', 'SL', 'SLM', 'GTT'].includes(order_type ?? 'MARKET')) {
+      if (topLimit > 0) {
+        const maxAllowed = baseLtp * (1 + topLimit / 100);
+        if (orderPriceToCheck > maxAllowed) {
+          return NextResponse.json({
+            error: `Maximum price allowed is ₹${maxAllowed.toFixed(2)}`
+          }, { status: 400 });
         }
-      } else { // SELL side
-        if (topLimit > 0) {
-          const maxAllowed = baseLtp * (1 + topLimit / 100);
-          if (client_price > maxAllowed) {
-            return NextResponse.json({
-              error: `Maximum price allowed is ₹${maxAllowed.toFixed(2)}`
-            }, { status: 400 });
-          }
-        }
+      }
 
-        if (minLimit > 0) {
-          const minAllowed = baseLtp * (1 - minLimit / 100);
-          if (client_price < minAllowed) {
-            return NextResponse.json({
-              error: `Minimum price allowed is ₹${minAllowed.toFixed(2)}`
-            }, { status: 400 });
-          }
+      if (minLimit > 0) {
+        const minAllowed = baseLtp * (1 - minLimit / 100);
+        if (orderPriceToCheck < minAllowed) {
+          return NextResponse.json({
+            error: `Minimum price allowed is ₹${minAllowed.toFixed(2)}`
+          }, { status: 400 });
         }
       }
     }

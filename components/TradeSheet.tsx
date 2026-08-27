@@ -719,6 +719,22 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           showOrderError('Please enter a valid trigger price.');
           return;
         }
+
+        if (pTopLimit > 0) {
+          const maxAllowed = currentLtp * (1 + pTopLimit / 100);
+          if (trigVal > maxAllowed) {
+            showOrderError(`Maximum price allowed is ₹${maxAllowed.toFixed(2)}`);
+            return;
+          }
+        }
+        if (pMinLimit > 0) {
+          const minAllowed = currentLtp * (1 - pMinLimit / 100);
+          if (trigVal < minAllowed) {
+            showOrderError(`Minimum price allowed is ₹${minAllowed.toFixed(2)}`);
+            return;
+          }
+        }
+
         if (isExitOrder) {
           // Exit stop loss order:
           // - Exiting LONG (SELL order): stop loss must be below current market price
