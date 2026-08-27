@@ -612,7 +612,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         }
         Object.assign(pendingUpdatesRef.current, mapped);
       } else if (type === 'update') {
-        const { symbol, quote: q } = data;
+        const { symbol, quote: q = data.data } = data;
         lastWsTickTimeRef.current[symbol] = Date.now();
         const normalized = normalizeQuote(q, symbol);
         pendingUpdatesRef.current[symbol] = normalized;
