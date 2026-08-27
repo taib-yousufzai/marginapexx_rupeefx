@@ -333,14 +333,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       created_at:   r.created_at as string,
     }));
 
-    // Build a set of "symbol|exitSide" from real EXECUTED exit orders.
-    // If a real exit order already exists for a given symbol+exitSide, we skip generating
-    // a virtual SL/Target order for the same open position.
-    const realExitOrderKeys = new Set<string>(
-      dbOrders
-        .filter((o: any) => o.is_exit === true && o.status === 'EXECUTED')
-        .map((o: any) => `${o.symbol}|${o.side}`)
-    );
+    // (Removed flawed realExitOrderKeys check that hid virtual orders if ANY past exit order existed)
 
     // Also build a set of position IDs that are fully closed to skip virtual orders
     const closedPosRes = await admin
@@ -357,10 +350,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (closedPosIds.has(pos.id)) continue;
 
       const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
-      const exitKey = `${pos.symbol}|${exitSide}`;
-
-      // Skip if a real executed exit order already exists for this symbol+exitSide
-      if (realExitOrderKeys.has(exitKey)) continue;
 
       const stopLoss = pos.stop_loss ? Number(pos.stop_loss) : (pos.sl ? Number(pos.sl) : null);
       const target = pos.target ? Number(pos.target) : (pos.tp ? Number(pos.tp) : null);

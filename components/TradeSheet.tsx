@@ -643,8 +643,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedOrderType = 'LIMIT';
           resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
         } else if (orderType === 'SLM') {
-          resolvedOrderType = 'SLM';
-          resolvedTriggerPrice = parseFloat(triggerPrice) || undefined;
+          // User intends to buy at Market and attach a Stop Loss
+          resolvedOrderType = 'MARKET';
+          resolvedStopLoss = parseFloat(triggerPrice) || undefined;
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
           resolvedOrderType = 'GTT';
@@ -1599,7 +1600,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                     <div className="ts2-label">
                       {exitMode
                         ? <>Stop Loss <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) order executes at market price</span></>
-                        : <>Trigger Price <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol})</span></>
+                        : (orderType === 'SLM' 
+                            ? <>Stop Loss <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) attached to Market order</span></> 
+                            : <>Trigger Price <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol})</span></>)
                       }
                     </div>
                     <input
