@@ -504,8 +504,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const showToast = (msg: string) => {
     setToast(msg);
-    setOrderErrorMsg(msg);
+    setOrderErrorMsg(null);
     window.dispatchEvent(new CustomEvent('toast_msg', { detail: msg }));
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const showOrderError = (msg: string) => {
+    setToast(msg);
+    setOrderErrorMsg(msg);
     window.dispatchEvent(new CustomEvent('order_error', { detail: msg }));
     setTimeout(() => setToast(null), 4000);
   };
@@ -569,7 +575,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
       const parsedInputQty = parseFloat(qtyInput);
       if (isNaN(parsedInputQty) || parsedInputQty <= 0) {
-        showToast('Please enter a valid quantity.');
+        showOrderError('Please enter a valid quantity.');
         return;
       }
 
@@ -587,7 +593,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           maxExitQty = totalOpenQtyForSymbol || existingPos.qty_open;
         }
         if (maxExitQty > 0 && rawQty > maxExitQty) {
-          showToast(`Error: Exit qty (${rawQty}) exceeds this lot's available qty (${maxExitQty}). Please reduce the quantity.`);
+          showOrderError(`Error: Exit qty (${rawQty}) exceeds this lot's available qty (${maxExitQty}). Please reduce the quantity.`);
           setQtyError(`Cannot exceed ${maxExitQty} qty for this lot`);
           return;
         }
@@ -598,7 +604,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           const maxOrderQty = maxOrderLot * lotSize;
           if (rawQty > maxOrderQty) {
             setQtyError(`Max ${maxOrderLot} lots or ${maxOrderQty} qty per order`);
-            showToast(`The maximum you can exit in a single order is ${maxOrderLot} lots or ${maxOrderQty} qty. Please execute your position in multiple orders, or use the Exit All button available on the top right.`);
+            showOrderError(`The maximum you can exit in a single order is ${maxOrderLot} lots or ${maxOrderQty} qty. Please execute your position in multiple orders, or use the Exit All button available on the top right.`);
             return;
           }
         }
@@ -671,25 +677,25 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       if (resolvedOrderType === 'LIMIT') {
         const limitVal = parseFloat(limitPrice);
         if (!limitPrice || isNaN(limitVal) || limitVal <= 0) {
-          showToast('Please enter a valid limit price.');
+          showOrderError('Please enter a valid limit price.');
           return;
         }
         if (placeSide === 'BUY' && limitVal >= currentLtp) {
-          showToast('Buy at limit price must be below the current market price.');
+          showOrderError('Buy at limit price must be below the current market price.');
           return;
         }
         if (placeSide === 'SELL' && limitVal <= currentLtp) {
-          showToast('Sell at limit price must be above the current market price.');
+          showOrderError('Sell at limit price must be above the current market price.');
           return;
         }
       } else if (resolvedOrderType === 'GTT' && !exitMode && hasExplicitLimit) {
         const limitVal = parseFloat(limitPrice);
         if (placeSide === 'BUY' && limitVal >= currentLtp) {
-          showToast('Buy at limit price must be below the current market price.');
+          showOrderError('Buy at limit price must be below the current market price.');
           return;
         }
         if (placeSide === 'SELL' && limitVal <= currentLtp) {
-          showToast('Sell at limit price must be above the current market price.');
+          showOrderError('Sell at limit price must be above the current market price.');
           return;
         }
       }
@@ -723,7 +729,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       if (resolvedOrderType === 'SL' || resolvedOrderType === 'SLM') {
         const trigVal = parseFloat(triggerPrice);
         if (!triggerPrice || isNaN(trigVal) || trigVal <= 0) {
-          showToast('Please enter a valid trigger price.');
+          showOrderError('Please enter a valid trigger price.');
           return;
         }
         if (isExitOrder) {
@@ -731,11 +737,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           // - Exiting LONG (SELL order): stop loss must be below current market price
           // - Exiting SHORT (BUY order): stop loss must be above current market price
           if (placeSide === 'BUY' && trigVal <= currentLtp) {
-            showToast('Stop loss trigger price must be above the current market price for short exits.');
+            showOrderError('Stop loss trigger price must be above the current market price for short exits.');
             return;
           }
           if (placeSide === 'SELL' && trigVal >= currentLtp) {
-            showToast('Stop loss trigger price must be below the current market price for long exits.');
+            showOrderError('Stop loss trigger price must be below the current market price for long exits.');
             return;
           }
         } else {
@@ -743,11 +749,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           // - BUY SL/SLM entry: breakout buy above market price
           // - SELL SL/SLM entry: breakout sell below market price
           if (placeSide === 'BUY' && trigVal <= currentLtp) {
-            showToast('Trigger price must be above the current market price for stop buy.');
+            showOrderError('Trigger price must be above the current market price for stop buy.');
             return;
           }
           if (placeSide === 'SELL' && trigVal >= currentLtp) {
-            showToast('Trigger price must be below the current market price for stop sell.');
+            showOrderError('Trigger price must be below the current market price for stop sell.');
             return;
           }
         }
@@ -760,20 +766,20 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       if (exitMode) {
         if (isLong) {
           if (resolvedTarget !== undefined && !isNaN(resolvedTarget) && resolvedTarget <= currentLtp) {
-            showToast('Target price must be above the current market price.');
+            showOrderError('Target price must be above the current market price.');
             return;
           }
           if (resolvedStopLoss !== undefined && !isNaN(resolvedStopLoss) && resolvedStopLoss >= currentLtp) {
-            showToast('Stop loss price must be below the current market price.');
+            showOrderError('Stop loss price must be below the current market price.');
             return;
           }
         } else {
           if (resolvedTarget !== undefined && !isNaN(resolvedTarget) && resolvedTarget >= currentLtp) {
-            showToast('Target price must be below the current market price.');
+            showOrderError('Target price must be below the current market price.');
             return;
           }
           if (resolvedStopLoss !== undefined && !isNaN(resolvedStopLoss) && resolvedStopLoss <= currentLtp) {
-            showToast('Stop loss price must be above the current market price.');
+            showOrderError('Stop loss price must be above the current market price.');
             return;
           }
         }
@@ -784,13 +790,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           if (resolvedStopLoss !== undefined && !isNaN(resolvedStopLoss)) {
             const referencePrice = hasLimitPrice ? resolvedClientPrice : currentLtp;
             if (resolvedStopLoss >= referencePrice) {
-              showToast(`Stop loss price must be below the ${hasLimitPrice ? 'limit' : 'market'} price.`);
+              showOrderError(`Stop loss price must be below the ${hasLimitPrice ? 'limit' : 'market'} price.`);
               return;
             }
           }
           if (resolvedTarget !== undefined && !isNaN(resolvedTarget)) {
             if (resolvedTarget <= currentLtp) {
-              showToast('Target price must be above the current market price.');
+              showOrderError('Target price must be above the current market price.');
               return;
             }
           }
@@ -798,13 +804,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           if (resolvedStopLoss !== undefined && !isNaN(resolvedStopLoss)) {
             const referencePrice = hasLimitPrice ? resolvedClientPrice : currentLtp;
             if (resolvedStopLoss <= referencePrice) {
-              showToast(`Stop loss price must be above the ${hasLimitPrice ? 'limit' : 'market'} price.`);
+              showOrderError(`Stop loss price must be above the ${hasLimitPrice ? 'limit' : 'market'} price.`);
               return;
             }
           }
           if (resolvedTarget !== undefined && !isNaN(resolvedTarget)) {
             if (resolvedTarget >= currentLtp) {
-              showToast('Target price must be below the current market price.');
+              showOrderError('Target price must be below the current market price.');
               return;
             }
           }
@@ -814,12 +820,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       if (resolvedOrderType === 'LIMIT') {
         if (placeSide === 'BUY') {
           if (resolvedClientPrice >= currentLtp) {
-            showToast('Limit price must be lower than the current market price.');
+            showOrderError('Limit price must be lower than the current market price.');
             return;
           }
         } else {
           if (resolvedClientPrice <= currentLtp) {
-            showToast('Limit price must be higher than the current market price.');
+            showOrderError('Limit price must be higher than the current market price.');
             return;
           }
         }
@@ -831,14 +837,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           if (pTopLimit > 0) {
             const maxAllowed = currentLtp * (1 + pTopLimit / 100);
             if (parsedPrice > maxAllowed) {
-              showToast(`Maximum price allowed is ${currencySymbol}${maxAllowed.toFixed(2)}`);
+              showOrderError(`Maximum price allowed is ${currencySymbol}${maxAllowed.toFixed(2)}`);
               return;
             }
           }
           if (pMinLimit > 0) {
             const minAllowed = currentLtp * (1 - pMinLimit / 100);
             if (parsedPrice < minAllowed) {
-              showToast(`Minimum price allowed is ${currencySymbol}${minAllowed.toFixed(2)}`);
+              showOrderError(`Minimum price allowed is ${currencySymbol}${minAllowed.toFixed(2)}`);
               return;
             }
           }
@@ -846,14 +852,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           if (pTopLimit > 0) {
             const maxAllowed = currentLtp * (1 + pTopLimit / 100);
             if (parsedPrice > maxAllowed) {
-              showToast(`Maximum price allowed is ${currencySymbol}${maxAllowed.toFixed(2)}`);
+              showOrderError(`Maximum price allowed is ${currencySymbol}${maxAllowed.toFixed(2)}`);
               return;
             }
           }
           if (pMinLimit > 0) {
             const minAllowed = currentLtp * (1 - pMinLimit / 100);
             if (parsedPrice < minAllowed) {
-              showToast(`Minimum price allowed is ${currencySymbol}${minAllowed.toFixed(2)}`);
+              showOrderError(`Minimum price allowed is ${currencySymbol}${minAllowed.toFixed(2)}`);
               return;
             }
           }
@@ -886,9 +892,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             return;
           } catch (err) {
             if (err instanceof ApiError) {
-              showToast((err.details as any)?.error || 'Failed to update position stop loss/target.');
+              showOrderError((err.details as any)?.error || 'Failed to update position stop loss/target.');
             } else {
-              showToast('Failed to update position stop loss/target.');
+              showOrderError('Failed to update position stop loss/target.');
             }
             return;
           }
@@ -911,7 +917,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       if (exitMode && (orderType === 'SL' || orderType === 'TARGET' || orderType === 'GTT')) {
         console.log('[DEBUG TradeSheet handlePlace] exitMode setting SL/target. existingPos:', existingPos?.id, 'orderType:', orderType);
         if (!existingPos) {
-          showToast('No active position found to set exit criteria.');
+          showOrderError('No active position found to set exit criteria.');
           return;
         }
         const updateData: { stop_loss?: number | null; target?: number | null } = {};
@@ -937,9 +943,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         } catch (err) {
           console.error('[DEBUG TradeSheet handlePlace] PATCH exception:', err);
           if (err instanceof ApiError) {
-            showToast((err.details as any)?.error || 'Failed to update position stop loss/target.');
+            showOrderError((err.details as any)?.error || 'Failed to update position stop loss/target.');
           } else {
-            showToast('Failed to update position stop loss/target.');
+            showOrderError('Failed to update position stop loss/target.');
           }
           return;
         }
