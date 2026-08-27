@@ -83,27 +83,18 @@ export function normalizeOptionQuoteDepth(
     }
   }
 
-  // 2. Normalize Ask:
-  if (ask > 0) {
-    if (ltp < ask) {
-      ask = ltp;
-    } else if (ltp > ask) {
-      ask = ltp;
-    }
-  } else {
-    ask = Math.round((ltp + askBuffer) * 100) / 100;
+  // Pass-through the raw bid/ask, only filling missing sides from LTP.
+  // Do NOT override valid spread data (e.g. ask > ltp is normal for futures).
+  if (ask <= 0) {
+    ask = ask > 0 ? ask : Math.round((ltp + askBuffer) * 100) / 100;
   }
-
-  // 3. Normalize Bid:
-  if (bid > 0) {
-    if (bid > ltp) {
-      bid = ltp;
-    }
-  } else {
+  if (bid <= 0) {
     bid = Math.max(0.05, Math.round((ltp - bidBuffer) * 100) / 100);
   }
+  // Clamp: bid should not exceed ltp (stale depth edge case)
+  if (bid > ltp) bid = ltp;
 
-  // 4. Preserve Bid <= Ask invariant:
+  // Preserve Bid <= Ask invariant:
   if (bid > 0 && ask > 0 && bid > ask) {
     ask = bid;
   }
