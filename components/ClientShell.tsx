@@ -50,11 +50,12 @@ export default function ClientShell({ children }: { children: React.ReactNode })
     };
     const onEnd = () => setIsGlobalLoading(false);
 
-    const onExitStart = () => {
-      setLoadingText('Exiting Position...');
+    const onExitStart = (e: any) => {
+      setLoadingText(e?.detail || 'Exiting Position...');
       setIsGlobalLoading(true);
     };
     const onExitEnd = () => setIsGlobalLoading(false);
+
 
     const onToast = (e: any) => {
       const msg = (e as CustomEvent).detail;

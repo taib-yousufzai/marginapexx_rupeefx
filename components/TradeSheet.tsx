@@ -917,7 +917,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
       if (exitMode) {
         // Exit mode: show the full-screen overlay and await the order
-        window.dispatchEvent(new Event('exit-overlay-start'));
+        const loadingDetail = (orderType === 'TARGET' || orderType === 'SL' || orderType === 'GTT')
+          ? 'Modifying Position...'
+          : 'Exiting Position...';
+        window.dispatchEvent(new CustomEvent('exit-overlay-start', { detail: loadingDetail }));
+
 
         try {
           const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (computedKiteSymbol ? marketQuotes[computedKiteSymbol] : null) || (item?.symbol ? marketQuotes[item.symbol] : null);
