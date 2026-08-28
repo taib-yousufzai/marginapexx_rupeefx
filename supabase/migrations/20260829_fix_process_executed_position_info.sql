@@ -1,4 +1,5 @@
 -- Migration to fix process_executed_position ignoring v_order.info when called from triggers
+-- Also fixes: invalid input syntax for type boolean: "" on is_exit column
 CREATE OR REPLACE FUNCTION public.process_executed_position(p_order_id uuid, p_info text DEFAULT NULL)
 RETURNS void
 LANGUAGE plpgsql
@@ -15,6 +16,7 @@ DECLARE
   v_chunk_brokerage numeric;
   v_closed_entry_brokerage numeric;
   v_closed_brokerage numeric;
+  v_is_exit boolean;
 BEGIN
   -- Fetch the order
   SELECT * INTO v_order
@@ -33,6 +35,16 @@ BEGIN
     RAISE EXCEPTION 'EXECUTED order must have fill_price set';
   END IF;
 
+  -- Safely resolve is_exit (handles boolean, empty string, null, text variants)
+  BEGIN
+    v_is_exit := CASE
+      WHEN v_order.is_exit::text IN ('true', 't', '1', 'yes', 'on') THEN true
+      ELSE false
+    END;
+  EXCEPTION WHEN OTHERS THEN
+    v_is_exit := false;
+  END;
+
   -- 1. Deduct Brokerage and Buffer Fee (Single Source of Truth)
   IF COALESCE(v_order.brokerage, 0) > 0 THEN
     INSERT INTO public.transactions (user_id, type, amount, status, ref_id)
@@ -49,7 +61,7 @@ BEGIN
     RAISE EXCEPTION 'Order qty must be > 0 to execute';
   END IF;
 
-  IF v_order.is_exit THEN
+  IF v_is_exit THEN
     -- 2. EXIT LOGIC
     v_remaining_qty := v_order.qty;
 

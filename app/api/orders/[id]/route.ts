@@ -325,9 +325,22 @@ async function handleModifyOrder(
 
     // If modified to MARKET — execute immediately (don't wait for ticker)
     if (updatedOrder.order_type === 'MARKET') {
-      // Fetch current LTP from kite quotes via supabase or use fill_price as fallback
-      // Use fill_price (which was set from the limit price) as LTP fallback
-      const fillPrice = updatedOrder.price || updatedOrder.fill_price || 0;
+      // For SL orders, price/fill_price may be null — fall back to trigger_price or ltp_at_entry
+      const fillPrice =
+        Number(updatedOrder.price || 0) ||
+        Number(updatedOrder.fill_price || 0) ||
+        Number(updatedOrder.trigger_price || 0) ||
+        Number(updatedOrder.ltp_at_entry || 0) ||
+        0;
+
+      if (!fillPrice) {
+        console.error('[Modify→MARKET] Cannot execute: no valid fill price found for order', id);
+        return NextResponse.json({
+          success: true,
+          order: updatedOrder,
+          warning: 'Order modified but could not auto-execute: no price available. Ticker will pick it up.'
+        });
+      }
 
       // Mark as EXECUTED immediately
       const { error: execErr } = await admin
@@ -340,21 +353,31 @@ async function handleModifyOrder(
         .eq('id', id)
         .eq('status', 'PENDING');
 
-      if (!execErr) {
-        // Call process_executed_position to create the position
-        const { error: rpcErr } = await admin.rpc('process_executed_position', {
-          p_order_id: id,
-          p_info: updatedOrder.info || null,
-        });
-
-        if (rpcErr) {
-          console.error('[Modify→MARKET] RPC error:', rpcErr);
-        } else {
-          console.log(`[Modify→MARKET] Order ${id} executed instantly at fill_price: ${fillPrice}`);
-        }
-      } else {
+      if (execErr) {
         console.error('[Modify→MARKET] Failed to mark order as EXECUTED:', execErr);
+        return NextResponse.json({
+          success: true,
+          order: updatedOrder,
+          warning: `Order modified but auto-execute failed: ${execErr.message}`
+        });
       }
+
+      // Call process_executed_position to create/close the position
+      const linkedInfo = updatedOrder.info || null;
+      const { error: rpcErr } = await admin.rpc('process_executed_position', {
+        p_order_id: id,
+        p_info: linkedInfo,
+      });
+
+      if (rpcErr) {
+        console.error('[Modify→MARKET] RPC error:', rpcErr);
+        return NextResponse.json({
+          success: false,
+          error: `Order executed but position processing failed: ${rpcErr.message}`
+        }, { status: 500 });
+      }
+
+      console.log(`[Modify→MARKET] Order ${id} executed instantly at fill_price: ${fillPrice}, linked pos: ${linkedInfo}`);
     }
 
     return NextResponse.json({
