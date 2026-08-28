@@ -287,7 +287,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const totalQty = orderUnit === 'lot' ? orderQty * lotSize : orderQty;
   const effectivePrice = side === 'SELL' ? bidPrice : askPrice;
   // Compute individual charge amounts for display
-  const chargePrice = (orderType === 'LIMIT' || orderType === 'GTT') && limitPrice && !isNaN(parseFloat(limitPrice))
+  const chargePrice = (orderType === 'LIMIT' || orderType === 'TARGET' || orderType === 'GTT') && limitPrice && !isNaN(parseFloat(limitPrice))
     ? parseFloat(limitPrice) : (currentLtp > 0 ? currentLtp : 0);
   const chargeQty = orderUnit === 'lot' ? orderQty * lotSize : orderQty;
   const chargeExposure = chargeQty * chargePrice;
@@ -369,7 +369,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const holdingType = segSetting?.holding_type ?? 'Multiplier';
   const leverageType = productType === 'CARRY' ? holdingType : intradayType;
 
-  const baseExposure = (orderType === 'LIMIT' || orderType === 'GTT') && limitPrice && !isNaN(parseFloat(limitPrice))
+  const baseExposure = (orderType === 'LIMIT' || orderType === 'TARGET' || orderType === 'GTT') && limitPrice && !isNaN(parseFloat(limitPrice))
     ? (totalQty * parseFloat(limitPrice))
     : (totalQty * (priceOfScript > 0 ? priceOfScript : 0));
 
@@ -1559,7 +1559,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 <div className="ts2-card">
                   <div className="ts2-label">Order Type</div>
                   <div className="ts2-pills">
-                    {(exitMode ? ['MARKET', 'LIMIT', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT']).map(t => (
+                    {(exitMode ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT']).map(t => (
                       <button
                         key={t}
                         className={`ts2-pill${orderType === t ? ' active' : ''}`}
