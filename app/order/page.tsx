@@ -562,12 +562,6 @@ export default function OrderPage() {
               onSuccess={() => {
                 refresh();
                 if (modifyingOrderId) {
-                  // Only cancel the old order if it is not a virtual position order.
-                  // (TradeSheet already patches the position directly for virtual orders, 
-                  // so no cleanup is needed here for pos-sl- or pos-target-).
-                  if (!modifyingOrderId.startsWith('pos-sl-') && !modifyingOrderId.startsWith('pos-target-') && !modifyingOrderId.startsWith('pos-gtt-')) {
-                    cancelOrder(modifyingOrderId);
-                  }
                   showToast('Order modified successfully');
                   setModifyingOrderId(null);
                 }

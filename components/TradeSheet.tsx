@@ -990,16 +990,42 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         handedOffToOrderFlow = true;
         window.dispatchEvent(new CustomEvent('global-loader-start', { detail: 'Processing Order...' }));
 
-        // Modify flow: cancel the original order first, then re-place with new params
+        // Modify flow: update the pending order in place via PUT /api/orders/[id]
         if (isModify && modifyingOrderId && !modifyingOrderId.startsWith('pos-')) {
           try {
-            await api.patch<unknown>(`/api/orders/${modifyingOrderId}`, { status: 'CANCELLED' });
-          } catch (err) {
-            window.dispatchEvent(new CustomEvent('toast_msg', { detail: 'Failed to cancel original order for modify.' }));
+            const updatePayload = {
+              client_price: resolvedClientPrice,
+              price: resolvedClientPrice,
+              trigger_price: resolvedTriggerPrice,
+              stop_loss: resolvedStopLoss,
+              target: resolvedTarget,
+              qty: finalQty,
+              lots: finalLots,
+              order_type: resolvedOrderType,
+            };
+            await api.put(`/api/orders/${modifyingOrderId}`, updatePayload);
+            window.dispatchEvent(new Event('order_placed'));
+            showToast('Order modified successfully');
+            if (onSuccess) {
+              try {
+                onSuccess();
+              } catch (e) {
+                console.error('onSuccess refresh failed', e);
+              }
+            }
+            handleCloseAnimation();
+            return;
+          } catch (err: any) {
+            const errMsg = (err instanceof ApiError ? (err.details as any)?.error : null) || err.message || 'Failed to modify order.';
+            setOrderErrorMsg(errMsg);
+            setOrderState('error');
+            window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
+            window.dispatchEvent(new Event('order_failed'));
             window.dispatchEvent(new Event('global-loader-end'));
             return;
           }
         }
+
 
         try {
           const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (computedKiteSymbol ? marketQuotes[computedKiteSymbol] : null) || (item?.symbol ? marketQuotes[item.symbol] : null);

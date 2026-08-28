@@ -9,6 +9,106 @@ export interface Quote {
   ask?: number;
 }
 
+export interface OrderTriggerResult {
+  shouldTrigger: boolean;
+  fillPrice: number;
+}
+
+/**
+ * Evaluates whether a pending order (LIMIT, SL, SLM, GTT) should trigger given market LTP, bid, and ask.
+ */
+export function evaluateOrderTriggerCondition(
+  order: {
+    order_type: string;
+    side: 'BUY' | 'SELL';
+    price?: number | null;
+    client_price?: number | null;
+    fill_price?: number | null;
+    trigger_price?: number | null;
+    stop_loss?: number | null;
+    target?: number | null;
+    ltp_at_entry?: number | null;
+  },
+  ltp: number,
+  bid?: number,
+  ask?: number
+): OrderTriggerResult {
+  let shouldTrigger = false;
+  let fillPrice = Number(order.price ?? ltp);
+
+  const orderType = order.order_type;
+  const side = order.side;
+  const triggerPrice = order.trigger_price ? Number(order.trigger_price) : null;
+  const limitPrice = (order.client_price ?? order.fill_price ?? order.price) ? Number(order.client_price ?? order.fill_price ?? order.price) : null;
+
+  const effective = resolveEffectivePrices({
+    ltp,
+    rawBid: bid,
+    rawAsk: ask,
+    hasRealBidAsk: Boolean(bid && ask),
+  });
+
+  if (orderType === 'LIMIT' && limitPrice !== null) {
+    if (side === 'BUY' && ltp <= limitPrice) {
+      shouldTrigger = true;
+      fillPrice = limitPrice;
+    } else if (side === 'SELL' && ltp >= limitPrice) {
+      shouldTrigger = true;
+      fillPrice = limitPrice;
+    }
+  } else if ((orderType === 'SL' || orderType === 'SLM') && triggerPrice !== null) {
+    if (side === 'BUY' && ltp >= triggerPrice) {
+      shouldTrigger = true;
+      fillPrice = effective.effectiveAsk;
+    } else if (side === 'SELL' && ltp <= triggerPrice) {
+      shouldTrigger = true;
+      fillPrice = effective.effectiveBid;
+    }
+  } else if (orderType === 'GTT') {
+    if (triggerPrice !== null) {
+      const ltpAtEntry = order.ltp_at_entry ? Number(order.ltp_at_entry) : null;
+      if (side === 'BUY') {
+        if (ltpAtEntry !== null && ltpAtEntry < triggerPrice) {
+          if (ltp >= triggerPrice) shouldTrigger = true;
+        } else {
+          if (ltp <= triggerPrice) shouldTrigger = true;
+        }
+      } else if (side === 'SELL') {
+        if (ltpAtEntry !== null && ltpAtEntry > triggerPrice) {
+          if (ltp <= triggerPrice) shouldTrigger = true;
+        } else {
+          if (ltp >= triggerPrice) shouldTrigger = true;
+        }
+      }
+    }
+
+    const stopLoss = order.stop_loss ? Number(order.stop_loss) : null;
+    const target = order.target ? Number(order.target) : null;
+    if (triggerPrice === null) {
+      if (!shouldTrigger && stopLoss !== null) {
+        if (side === 'BUY') {
+          if (ltp >= stopLoss) shouldTrigger = true;
+        } else if (side === 'SELL') {
+          if (ltp <= stopLoss) shouldTrigger = true;
+        }
+      }
+      if (!shouldTrigger && target !== null) {
+        if (side === 'BUY') {
+          if (ltp <= target) shouldTrigger = true;
+        } else if (side === 'SELL') {
+          if (ltp >= target) shouldTrigger = true;
+        }
+      }
+    }
+
+    if (shouldTrigger) {
+      fillPrice = side === 'BUY' ? effective.effectiveAsk : effective.effectiveBid;
+    }
+  }
+
+  return { shouldTrigger, fillPrice };
+}
+
 /**
  * Iterates over all PENDING orders and open positions to check if they need to be triggered or updated.
  * Driven by the daily/regular price sync.
@@ -113,93 +213,15 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
         continue; // No price update for this symbol in the current batch
       }
 
-      let shouldTrigger = false;
-      let fillPrice = Number(order.price ?? ltp);
-
-      const orderType = order.order_type;
-      const side = order.side;
-      const triggerPrice = order.trigger_price ? Number(order.trigger_price) : null;
-      const limitPrice = (order.client_price ?? order.fill_price ?? order.price) ? Number(order.client_price ?? order.fill_price ?? order.price) : null;
-
-      const effective = resolveEffectivePrices({
+      const { shouldTrigger, fillPrice } = evaluateOrderTriggerCondition(
+        order,
         ltp,
-        rawBid: priceObj?.bid,
-        rawAsk: priceObj?.ask,
-        hasRealBidAsk: Boolean(priceObj?.bid && priceObj?.ask),
-      });
-
-      if (orderType === 'LIMIT' && limitPrice !== null) {
-        console.log(`[DEBUG] Evaluating LIMIT order ${order.id} | side: ${side} | limitPrice: ${limitPrice} | ltp: ${ltp} | client_price: ${order.client_price} | fill_price: ${order.fill_price} | price: ${order.price}`);
-        if (side === 'BUY' && ltp <= limitPrice) {
-          shouldTrigger = true;
-          fillPrice = limitPrice;
-          console.log(`[DEBUG] -> Triggered BUY LIMIT at ${limitPrice}`);
-        } else if (side === 'SELL' && ltp >= limitPrice) {
-          shouldTrigger = true;
-          fillPrice = limitPrice;
-          console.log(`[DEBUG] -> Triggered SELL LIMIT at ${limitPrice}`);
-        } else {
-          console.log(`[DEBUG] -> Condition not met. ltp (${ltp}) vs limitPrice (${limitPrice})`);
-        }
-      } else if ((orderType === 'SL' || orderType === 'SLM') && triggerPrice !== null) {
-        if (side === 'BUY' && ltp >= triggerPrice) {
-          shouldTrigger = true;
-          fillPrice = effective.effectiveAsk;
-        } else if (side === 'SELL' && ltp <= triggerPrice) {
-          shouldTrigger = true;
-          fillPrice = effective.effectiveBid;
-        }
-      } else if (orderType === 'GTT') {
-        if (triggerPrice !== null) {
-          // GTT trigger logic based on entry direction
-          const ltpAtEntry = order.ltp_at_entry ? Number(order.ltp_at_entry) : null;
-          if (side === 'BUY') {
-            if (ltpAtEntry !== null && ltpAtEntry < triggerPrice) {
-              // Entered below trigger (breakout buy), trigger when we rise above it
-              if (ltp >= triggerPrice) shouldTrigger = true;
-            } else {
-              // Entered above trigger (buy the dip), trigger when we drop below it
-              if (ltp <= triggerPrice) shouldTrigger = true;
-            }
-          } else if (side === 'SELL') {
-            if (ltpAtEntry !== null && ltpAtEntry > triggerPrice) {
-              // Entered above trigger (stop loss), trigger when we drop below it
-              if (ltp <= triggerPrice) shouldTrigger = true;
-            } else {
-              // Entered below trigger (target / breakout sell), trigger when we rise above it
-              if (ltp >= triggerPrice) shouldTrigger = true;
-            }
-          }
-        }
-
-        // Support GTT exit orders which have stop_loss or target or both
-        // Only check SL and Target triggers for pure exit GTT orders (when triggerPrice is null)
-        const stopLoss = order.stop_loss ? Number(order.stop_loss) : null;
-        const target = order.target ? Number(order.target) : null;
-        if (triggerPrice === null) {
-          if (!shouldTrigger && stopLoss !== null) {
-            if (side === 'BUY') {
-              if (ltp >= stopLoss) shouldTrigger = true;
-            } else if (side === 'SELL') {
-              if (ltp <= stopLoss) shouldTrigger = true;
-            }
-          }
-          if (!shouldTrigger && target !== null) {
-            if (side === 'BUY') {
-              if (ltp <= target) shouldTrigger = true;
-            } else if (side === 'SELL') {
-              if (ltp >= target) shouldTrigger = true;
-            }
-          }
-        }
-
-        if (shouldTrigger) {
-          fillPrice = side === 'BUY' ? effective.effectiveAsk : effective.effectiveBid;
-        }
-      }
+        priceObj?.bid,
+        priceObj?.ask
+      );
 
       if (shouldTrigger) {
-        console.log(`[Order Matching] Triggering order ${order.id} (${side} ${orderType} ${order.symbol}) at LTP: ${ltp}, Fill: ${fillPrice}`);
+        console.log(`[Order Matching] Triggering order ${order.id} (${order.side} ${order.order_type} ${order.symbol}) at LTP: ${ltp}, Fill: ${fillPrice}`);
 
         const { data: existingPos, error: posErrorCheck } = await admin
           .from('positions')
@@ -213,20 +235,10 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           continue;
         }
 
-        // Determine if order should proceed based on existing positions
         if (order.is_exit) {
-          if (order.side === 'BUY') {
-            // BUY exit order requires an existing open SELL position
-            if (!existingPos || !existingPos.some((p: any) => p.side === 'SELL')) {
-              console.log(`[Order Matching] Skipping BUY exit order ${order.id} as no open SELL position exists`);
-              continue;
-            }
-          } else if (order.side === 'SELL') {
-            // SELL exit order requires an existing open BUY position
-            if (!existingPos || !existingPos.some((p: any) => p.side === 'BUY')) {
-              console.log(`[Order Matching] Skipping SELL exit order ${order.id} as no open BUY position exists`);
-              continue;
-            }
+          if (!existingPos || existingPos.length === 0) {
+            console.log(`[Order Matching] Skipping exit order ${order.id}: No open position to exit.`);
+            continue;
           }
         } else {
           // Entry orders (is_exit is false)
