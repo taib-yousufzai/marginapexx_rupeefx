@@ -1820,7 +1820,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                         style={(isBusy || isExpired) ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
                         onClick={() => handlePlace('SELL')}
                       >
-                        {isModify ? 'MODIFY' : exitMode ? 'EXIT POSITION' : hideLotText ? 'SELL' : `SELL ${actionText}${sellPriceLabel}`}
+                        {isModify ? 'MODIFY' : exitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'SELL' : `SELL ${actionText}${sellPriceLabel}`}
                       </button>
                     )}
                     {(side === 'BUY' || side === 'BOTH') && (
@@ -1830,7 +1830,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                         style={(isBusy || isExpired) ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
                         onClick={() => handlePlace('BUY')}
                       >
-                        {isModify ? 'MODIFY' : exitMode ? 'EXIT POSITION' : hideLotText ? 'BUY' : `BUY ${actionText}${buyPriceLabel}`}
+                        {isModify ? 'MODIFY' : exitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'BUY' : `BUY ${actionText}${buyPriceLabel}`}
                       </button>
                     )}
                   </div>
