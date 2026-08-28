@@ -1,5 +1,13 @@
 import type { Session, User } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
+import { clearSharedSession } from './sharedSession';
+
+export function clearAuthCache(): void {
+  _cachedSession = null;
+  _cacheTimestamp = 0;
+  clearSharedSession();
+}
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -79,13 +87,15 @@ export async function signOut(): Promise<void> {
   } catch (e) {
     console.error('Failed to clear demo watchlist on signout:', e);
   }
-  _cachedSession = null;
-  _cacheTimestamp = 0;
+  clearAuthCache();
   const { error } = await supabase.auth.signOut();
   if (error) {
     console.error('signOut error:', error);
   }
-  window.location.href = '/login';
+  if (typeof window !== 'undefined') {
+    window.location.href = '/login';
+  }
+
 }
 
 /**

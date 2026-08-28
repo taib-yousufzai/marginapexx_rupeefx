@@ -1,6 +1,8 @@
 'use client';
 
-import { getSharedSession } from '@/lib/sharedSession';
+import { getSharedSession, clearSharedSession } from '@/lib/sharedSession';
+import { clearAuthCache } from '@/lib/auth';
+
 
 // ─── Public Types ────────────────────────────────────────────────────────────
 
@@ -134,12 +136,15 @@ async function apiCall<T>(
       if (typeof window !== 'undefined') {
         const path = window.location.pathname;
         if (path !== '/login' && path !== '/register' && path !== '/forgot-password' && path !== '/reset-password') {
+          clearSharedSession();
+          clearAuthCache();
           window.location.href = '/login';
           // Return pending promise to prevent throwing uncaught ApiError during page unload
           return new Promise<T>(() => {});
         }
       }
     }
+
 
     // Error path: parse body for structured error info
     let details: unknown;
