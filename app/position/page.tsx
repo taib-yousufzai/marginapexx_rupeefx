@@ -6,6 +6,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { getSession } from '@/lib/auth';
 import { pageCache } from '@/lib/pageCache';
 import { useMyPositions, EnrichedPosition } from '@/hooks/useMyPositions';
+import { useMyOrders } from '@/hooks/useMyOrders';
 import { useOrderEntry } from '@/hooks/useOrderEntry';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { useMobileBack } from '@/hooks/useMobileBack';
@@ -126,29 +127,7 @@ export default function PositionPage() {
 
   const { balance: balanceFromHook, settlementAmount } = useBalance();
   const balance = balanceFromHook;
-  const [rawOrders, setRawOrders] = useState<any[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const fetchOrders = () => {
-      if (cancelled) return;
-      api.get<{ orders: any[] }>('/api/orders')
-        .then(data => {
-          if (!cancelled && data.orders) {
-            setRawOrders(data.orders);
-          }
-        })
-        .catch(() => { });
-    };
-    fetchOrders();
-    // Orders don't need rapid polling — refresh on events + slow fallback
-    const orderTimer = setInterval(fetchOrders, 30000);
-    const onOrderPlaced = () => setTimeout(() => fetchOrders(), 200);
-    window.addEventListener('order_placed', onOrderPlaced);
-
-    return () => { cancelled = true; clearInterval(orderTimer); window.removeEventListener('order_placed', onOrderPlaced); };
-  }, []);
+  const { orders: rawOrders } = useMyOrders();
 
   const formatBalance = (val: number | null) => {
     if (val === null || val === undefined || isNaN(val)) return '...';
@@ -500,21 +479,47 @@ export default function PositionPage() {
   };
 
   const openPositions = useMemo(() => {
+    const cleanSym = (s?: string | null) => {
+      if (!s) return '';
+      return s
+        .toUpperCase()
+        .replace(/^(NSE:|NFO:|BSE:|BFO:|MCX:|CDS:|NCO:)/, '')
+        .replace(/_FUT$/, '')
+        .trim();
+    };
+
     return positions.filter(p => {
       if (p.status !== 'open' && p.status !== 'active') return false;
 
-      // Filter out position if Target, Stop Loss, or GTT is attached to it
+      // Filter out position if Target, Stop Loss, or GTT is attached to it directly
       const hasTarget = Boolean(p.target && Number(p.target) > 0) || Boolean((p as any).tp && Number((p as any).tp) > 0);
       const hasSL = Boolean(p.stop_loss && Number(p.stop_loss) > 0) || Boolean((p as any).sl && Number((p as any).sl) > 0);
 
       // Filter out position if there is an active pending order attached to this position or symbol
+      const pCleanSym = cleanSym(p.symbol);
+      const pKiteClean = cleanSym(p.kite_instrument);
+
       const hasPendingExitOrder = rawOrders.some(o => {
         const isPendingStatus = ['PENDING', 'TRIGGER_PENDING', 'OPEN', 'VALIDATION_PENDING'].includes(o.status?.toUpperCase());
         if (!isPendingStatus) return false;
 
-        const isVirtualForPos = o.id && (o.id === `pos-target-${p.id}` || o.id === `pos-sl-${p.id}` || o.id === `pos-gtt-${p.id}`);
-        const isLinkedExitOrder = o.is_exit || o.linked_position_id === p.id || (o.info && o.info.includes(p.id));
-        const isSymbolSideMatch = (o.symbol === p.symbol || o.kite_instrument === p.kite_instrument) && o.side !== p.side;
+        const isVirtualForPos = Boolean(o.id && (o.id === `pos-target-${p.id}` || o.id === `pos-sl-${p.id}` || o.id === `pos-gtt-${p.id}`));
+        const isDirectlyLinked = Boolean((o.linked_position_id && o.linked_position_id === p.id) || (o.info && o.info.includes(p.id)));
+
+        const oCleanSym = cleanSym(o.symbol);
+        const oKiteClean = cleanSym(o.kite_instrument);
+
+        const isSameSymbol = Boolean(
+          (oCleanSym && pCleanSym && oCleanSym === pCleanSym) ||
+          (oCleanSym && pKiteClean && oCleanSym === pKiteClean) ||
+          (oKiteClean && pCleanSym && oKiteClean === pCleanSym) ||
+          (oKiteClean && pKiteClean && oKiteClean === pKiteClean)
+        );
+
+        const isOppositeSide = o.side !== p.side;
+
+        const isLinkedExitOrder = isDirectlyLinked || (Boolean(o.is_exit) && isSameSymbol && isOppositeSide);
+        const isSymbolSideMatch = isSameSymbol && isOppositeSide;
 
         return isVirtualForPos || isLinkedExitOrder || isSymbolSideMatch;
       });

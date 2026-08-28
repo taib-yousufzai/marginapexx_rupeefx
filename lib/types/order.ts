@@ -58,6 +58,8 @@ export interface PlaceOrderResponse {
 export interface MyOrder {
   id: string;
   symbol: string;
+  kite_instrument?: string;
+  linked_position_id?: string;
   segment: string;
   side: OrderSide;
   status: OrderStatus;
