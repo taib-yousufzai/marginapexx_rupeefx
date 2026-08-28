@@ -915,43 +915,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       }
 
-      if (exitMode && (orderType === 'SL' || orderType === 'TARGET' || orderType === 'GTT')) {
-        console.log('[DEBUG TradeSheet handlePlace] exitMode setting SL/target. existingPos:', existingPos?.id, 'orderType:', orderType);
-        if (!existingPos) {
-          showOrderError('No active position found to set exit criteria.');
-          return;
-        }
-        const updateData: { stop_loss?: number | null; target?: number | null } = {};
-        if (orderType === 'SL') {
-          updateData.stop_loss = resolvedTriggerPrice || resolvedStopLoss || null;
-        } else if (orderType === 'TARGET') {
-          updateData.target = resolvedClientPrice || resolvedTarget || null;
-        } else if (orderType === 'GTT') {
-          updateData.stop_loss = resolvedStopLoss || null;
-          updateData.target = resolvedTarget || null;
-        }
-
-        console.log('[DEBUG TradeSheet handlePlace] Sending PATCH payload:', updateData, 'to /api/positions/', existingPos.id);
-
-        try {
-          await api.patch<unknown>(`/api/positions/${existingPos.id}`, updateData);
-
-          console.log('[DEBUG TradeSheet handlePlace] PATCH successful');
-          showToast('Stop loss/target updated successfully');
-          onSuccess?.();
-          handleCloseAnimation();
-          return;
-        } catch (err) {
-          console.error('[DEBUG TradeSheet handlePlace] PATCH exception:', err);
-          if (err instanceof ApiError) {
-            showOrderError((err.details as any)?.error || 'Failed to update position stop loss/target.');
-          } else {
-            showOrderError('Failed to update position stop loss/target.');
-          }
-          return;
-        }
-      }
-
       if (exitMode) {
         // Exit mode: show the full-screen overlay and await the order
         window.dispatchEvent(new Event('exit-overlay-start'));
