@@ -994,7 +994,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         if (isModify && modifyingOrderId && !modifyingOrderId.startsWith('pos-')) {
           try {
             const updatePayload = {
-              client_price: resolvedClientPrice,
               price: resolvedClientPrice,
               trigger_price: resolvedTriggerPrice,
               stop_loss: resolvedStopLoss,
@@ -1004,6 +1003,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               order_type: resolvedOrderType,
             };
             await api.put(`/api/orders/${modifyingOrderId}`, updatePayload);
+            window.dispatchEvent(new Event('global-loader-end'));
             window.dispatchEvent(new Event('order_placed'));
             showToast('Order modified successfully');
             if (onSuccess) {

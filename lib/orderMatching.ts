@@ -104,6 +104,9 @@ export function evaluateOrderTriggerCondition(
     if (shouldTrigger) {
       fillPrice = side === 'BUY' ? effective.effectiveAsk : effective.effectiveBid;
     }
+  } else if (orderType === 'MARKET') {
+    shouldTrigger = true;
+    fillPrice = side === 'BUY' ? effective.effectiveAsk : effective.effectiveBid;
   }
 
   return { shouldTrigger, fillPrice };
@@ -314,6 +317,17 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           continue;
         }
 
+        // Explicitly call the RPC to process the position.
+        // This is required because the DB trigger may not fire reliably when
+        // order_type changes (e.g. LIMIT → MARKET via modify).
+        const linkedInfo = finalLinkedPosId || null;
+        const { error: rpcErr } = await admin.rpc('process_executed_position', {
+          p_order_id: order.id,
+          p_info: linkedInfo,
+        });
+        if (rpcErr) {
+          console.error(`[Order Matching] Failed to process executed position for order ${order.id}:`, rpcErr);
+        }
 
         // 3. Write audit log
         await admin.from('act_logs').insert({

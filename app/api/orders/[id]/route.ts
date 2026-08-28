@@ -267,13 +267,13 @@ async function handleModifyOrder(
     };
 
     if (payload.client_price !== undefined) {
-      updates.client_price = payload.client_price !== null ? Number(payload.client_price) : null;
-      updates.price = updates.client_price;
-      updates.fill_price = updates.client_price;
+      const p = payload.client_price !== null ? Number(payload.client_price) : null;
+      updates.price = p;
+      updates.fill_price = p;
     } else if (payload.price !== undefined) {
-      updates.price = payload.price !== null ? Number(payload.price) : null;
-      updates.client_price = updates.price;
-      updates.fill_price = updates.price;
+      const p = payload.price !== null ? Number(payload.price) : null;
+      updates.price = p;
+      updates.fill_price = p;
     }
 
     if (payload.trigger_price !== undefined) {
@@ -317,9 +317,44 @@ async function handleModifyOrder(
       .single();
 
     if (updateErr || !updatedOrder) {
+      console.error('Update error:', updateErr);
       return NextResponse.json({
-        error: 'Order modification failed. Order may have executed or cancelled concurrently.'
+        error: `Order modification failed: ${updateErr?.message || 'Order may have executed or cancelled concurrently.'}`
       }, { status: 400 });
+    }
+
+    // If modified to MARKET — execute immediately (don't wait for ticker)
+    if (updatedOrder.order_type === 'MARKET') {
+      // Fetch current LTP from kite quotes via supabase or use fill_price as fallback
+      // Use fill_price (which was set from the limit price) as LTP fallback
+      const fillPrice = updatedOrder.price || updatedOrder.fill_price || 0;
+
+      // Mark as EXECUTED immediately
+      const { error: execErr } = await admin
+        .from('orders')
+        .update({
+          status: 'EXECUTED',
+          fill_price: fillPrice,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .eq('status', 'PENDING');
+
+      if (!execErr) {
+        // Call process_executed_position to create the position
+        const { error: rpcErr } = await admin.rpc('process_executed_position', {
+          p_order_id: id,
+          p_info: updatedOrder.info || null,
+        });
+
+        if (rpcErr) {
+          console.error('[Modify→MARKET] RPC error:', rpcErr);
+        } else {
+          console.log(`[Modify→MARKET] Order ${id} executed instantly at fill_price: ${fillPrice}`);
+        }
+      } else {
+        console.error('[Modify→MARKET] Failed to mark order as EXECUTED:', execErr);
+      }
     }
 
     return NextResponse.json({
