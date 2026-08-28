@@ -104,6 +104,7 @@ export default function OrderPage() {
       trigger_price: order.trigger_price,
       stop_loss: order.stop_loss,
       target: order.target,
+      is_exit: order.is_exit,
     });
   };
 
@@ -558,7 +559,7 @@ export default function OrderPage() {
               initialOrder={tradeSheetInitialOrder}
               isModify={!!modifyingOrderId}
               modifyingOrderId={modifyingOrderId}
-              exitMode={modifyingOrderId ? (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-')) : false}
+              exitMode={tradeSheetInitialOrder?.is_exit || (modifyingOrderId ? (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-')) : false)}
               onSuccess={() => {
                 refresh();
                 if (modifyingOrderId) {
