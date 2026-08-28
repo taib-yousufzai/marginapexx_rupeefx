@@ -133,7 +133,7 @@ export default function PositionPage() {
 
     const fetchOrders = () => {
       if (cancelled) return;
-      api.get<{ orders: any[] }>('/api/orders?status=executed')
+      api.get<{ orders: any[] }>('/api/orders')
         .then(data => {
           if (!cancelled && data.orders) {
             setRawOrders(data.orders);
@@ -499,14 +499,41 @@ export default function PositionPage() {
     }
   };
 
-  const openPositions = useMemo(() => positions.filter(p => p.status === 'open' || p.status === 'active'), [positions]);
+  const openPositions = useMemo(() => {
+    return positions.filter(p => {
+      if (p.status !== 'open' && p.status !== 'active') return false;
+
+      // Filter out position if Target, Stop Loss, or GTT is attached to it
+      const hasTarget = Boolean(p.target && Number(p.target) > 0) || Boolean((p as any).tp && Number((p as any).tp) > 0);
+      const hasSL = Boolean(p.stop_loss && Number(p.stop_loss) > 0) || Boolean((p as any).sl && Number((p as any).sl) > 0);
+
+      // Filter out position if there is an active pending order attached to this position or symbol
+      const hasPendingExitOrder = rawOrders.some(o => {
+        const isPendingStatus = ['PENDING', 'TRIGGER_PENDING', 'OPEN', 'VALIDATION_PENDING'].includes(o.status?.toUpperCase());
+        if (!isPendingStatus) return false;
+
+        const isVirtualForPos = o.id && (o.id === `pos-target-${p.id}` || o.id === `pos-sl-${p.id}` || o.id === `pos-gtt-${p.id}`);
+        const isLinkedExitOrder = o.is_exit || o.linked_position_id === p.id || (o.info && o.info.includes(p.id));
+        const isSymbolSideMatch = (o.symbol === p.symbol || o.kite_instrument === p.kite_instrument) && o.side !== p.side;
+
+        return isVirtualForPos || isLinkedExitOrder || isSymbolSideMatch;
+      });
+
+      if (hasTarget || hasSL || hasPendingExitOrder) {
+        return false; // Hide from open positions view while pending exit order is active
+      }
+
+      return true;
+    });
+  }, [positions, rawOrders]);
+
   // closedPositions comes from the separate fetch above (positions hook only returns open/active)
   const hasOpenPositions = openPositions.length > 0;
 
   // Detailed view: open/active positions only — closed positions live in the Closed tab
   const detailedTickets = useMemo(() => {
-    return [...positions].sort((a, b) => new Date(b.entry_time).getTime() - new Date(a.entry_time).getTime());
-  }, [positions]);
+    return [...openPositions].sort((a, b) => new Date(b.entry_time).getTime() - new Date(a.entry_time).getTime());
+  }, [openPositions]);
 
   // ── Cumulative grouping: merge same symbol+side+product_type into one row ──
   interface GroupedPosition {
