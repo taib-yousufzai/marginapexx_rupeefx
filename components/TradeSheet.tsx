@@ -409,12 +409,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const stepQty = (delta: number) => {
     if (qtyError) setQtyError(null);
-    const step = orderUnit === 'lot' ? 0.1 : 1;
+    const step = orderUnit === 'lot' ? 1 : (lotSize > 1 ? lotSize : 1);
     const maxOrderLot = segSetting?.max_order_lot ?? segSetting?.max_lot ?? 0;
     const maxVal = maxOrderLot > 0
       ? (orderUnit === 'lot' ? maxOrderLot : maxOrderLot * lotSize)
       : Infinity;
-    const next = Math.min(maxVal, Math.max(0.0001, parseFloat((orderQty + delta * step).toFixed(4))));
+    const minVal = orderUnit === 'lot' ? 0.0001 : 1;
+    const next = Math.min(maxVal, Math.max(minVal, parseFloat((orderQty + delta * step).toFixed(4))));
     setOrderQty(next);
     setQtyInput(String(next));
   };
@@ -445,15 +446,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           setGttSubOption(exitMode ? 'TARGET' : 'LIMIT');
         }
       } else {
-        if (lotSize > 1) {
-          setOrderQty(1);
-          setQtyInput('1');
-          setOrderUnit('lot');
-        } else {
-          setOrderQty(1);
-          setQtyInput('1');
-          setOrderUnit('qty');
-        }
+        const defaultQty = lotSize > 0 ? lotSize : 1;
+        setOrderQty(defaultQty);
+        setQtyInput(String(defaultQty));
+        setOrderUnit('qty');
         setOrderType('MARKET');
         setProductType(propProductType || 'INTRADAY');
         setLimitPrice('');
@@ -543,7 +539,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const priceRangeHelp = currentLtp > 0 ? (
     <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary, #6B7280)', marginTop: '6px', fontWeight: 600 }}>
-      Allowed price: {minAllowedPrice > 0 ? `${currencySymbol}${minAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${currencySymbol}0.00`} to {maxAllowedPrice !== Infinity ? `${currencySymbol}${maxAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'No Limit'}
+      Allowed price: {minAllowedPrice > 0 ? `${currencySymbol}${minAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${currencySymbol}0.00`} to {maxAllowedPrice !== Infinity ? `${currencySymbol}${maxAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'less than limit'}
     </div>
   ) : null;
 
@@ -591,7 +587,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           const maxOrderQty = maxOrderLot * lotSize;
           if (rawQty > maxOrderQty) {
             setQtyError(`Max ${maxOrderLot} lots or ${maxOrderQty} qty per order`);
-            showOrderError(`The maximum you can exit in a single order is ${maxOrderLot} lots or ${maxOrderQty} qty. Please execute your position in multiple orders, or use the Exit All button available on the top right.`);
+            showOrderError(`The maximum allowed per order is ${maxOrderLot} lots or ${maxOrderQty} qty. Please place your trade in multiple orders.`);
             return;
           }
         }
@@ -918,6 +914,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           // Do not return; let execution continue to place the new order type
         }
       }
+
       if (exitMode && (orderType === 'SL' || orderType === 'TARGET' || orderType === 'GTT')) {
         console.log('[DEBUG TradeSheet handlePlace] exitMode setting SL/target. existingPos:', existingPos?.id, 'orderType:', orderType);
         if (!existingPos) {

@@ -28,6 +28,7 @@ import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { mapSymbolToSegment } from '@/lib/trading/SymbolMapping';
 import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
 import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
+import { getLotSizeFallback, extractUnderlyingName } from '@/lib/lotSize';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -236,26 +237,33 @@ function mapSegmentToDbSegment(s: string): string {
   return trimmed;
 }
 
-function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[]): number {
-  const n = symbol.toUpperCase();
-  if (dbSettings && Array.isArray(dbSettings)) {
-    const match = dbSettings.find(s => n.includes(s.symbol.toUpperCase()) || s.symbol.toUpperCase().includes(n));
-    if (match) return Number(match.lot_size);
+function getLotSize(
+  symbol: string,
+  dbSettings?: { symbol: string; lot_size: number }[],
+  dbInstruments?: { tradingsymbol?: string; name?: string; lot_size: number }[]
+): number {
+  const n = symbol.toUpperCase().replace(/^(NFO:|BFO:|MCX:|NSE:|BSE:|CDS:)/, '');
+  const underlying = extractUnderlyingName(n);
+
+  if (dbInstruments && Array.isArray(dbInstruments)) {
+    const exactMatch = dbInstruments.find(i => i.tradingsymbol && i.tradingsymbol.toUpperCase() === n);
+    if (exactMatch && Number(exactMatch.lot_size) > 0) return Number(exactMatch.lot_size);
+
+    const exactNameMatch = dbInstruments.find(i => i.name && i.name.toUpperCase() === underlying);
+    if (exactNameMatch && Number(exactNameMatch.lot_size) > 0) return Number(exactNameMatch.lot_size);
+
+    const sortedInst = [...dbInstruments].sort((a, b) => (b.name || '').length - (a.name || '').length);
+    const prefixMatch = sortedInst.find(i => i.name && n.startsWith(i.name.toUpperCase()));
+    if (prefixMatch && Number(prefixMatch.lot_size) > 0) return Number(prefixMatch.lot_size);
   }
-  if (n.includes('BANKNIFTY') || n.includes('BANKEX')) return 15;
-  if (n.includes('FINNIFTY')) return 40;
-  if (n.includes('MIDCP') || n.includes('MIDCAP')) return 75;
-  if (n.includes('SENSEX')) return 10;
-  if (n.includes('NIFTY')) return 25;
-  if (n.includes('GOLDM')) return 10;
-  if (n.includes('GOLD')) return 100;
-  if (n.includes('SILVERM')) return 5;
-  if (n.includes('SILVER')) return 30;
-  if (n.includes('CRUDEOILM')) return 10;
-  if (n.includes('CRUDEOIL')) return 100;
-  if (n.includes('NATGASMINI')) return 250;
-  if (n.includes('NATURALGAS') || n.includes('NATGAS')) return 1250;
-  return 1;
+
+  if (dbSettings && Array.isArray(dbSettings)) {
+    const sorted = [...dbSettings].sort((a, b) => (b.symbol || '').length - (a.symbol || '').length);
+    const match = sorted.find(s => s.symbol && (n === s.symbol.toUpperCase() || n.startsWith(s.symbol.toUpperCase())));
+    if (match && Number(match.lot_size) > 0) return Number(match.lot_size);
+  }
+
+  return getLotSizeFallback(symbol, dbSettings);
 }
 
 
@@ -427,7 +435,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
-    const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, is_exit, linked_position_id, orderAttemptId } = body;
+    const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, is_exit: isExitInput, linked_position_id, orderAttemptId } = body;
+    let is_exit = Boolean(isExitInput);
 
     // 2b. Idempotency pre-check using Redis
     let attemptRedisKey: string | null = null;
@@ -516,7 +525,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 4-6 + 8-9: Run all independent DB queries AND the Kite LTP fetch in parallel.
     // This is the key optimization — previously these were sequential (~4 round-trips).
-    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult] = await Promise.all([
+    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult, instrumentsResult] = await Promise.all([
       // Profile
       admin.from('profiles')
         .select('id, active, read_only, segments, parent_id, balance, trading_mode')
@@ -560,6 +569,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Fetch script settings for dynamic lot size
       admin.from('script_settings')
         .select('symbol, lot_size'),
+
+      // Fetch instruments table for targeted symbol & underlying (prevents 1000 row truncation cap)
+      admin.from('instruments')
+        .select('tradingsymbol, name, lot_size')
+        .gt('lot_size', 0)
+        .or(`tradingsymbol.eq.${symbol.toUpperCase().replace(/^(NFO:|BFO:|MCX:|NSE:|BSE:|CDS:)/, '')},name.eq.${extractUnderlyingName(symbol)}`),
     ]);
 
     const t4_backendQuoteRead = Date.now();
@@ -568,6 +583,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const rawQuote = quotesMap[kiteInst];
     const kiteLtp = typeof rawQuote === 'number' ? rawQuote : (rawQuote?.last_price ?? null);
     const dbScriptSettings = (scriptSettingsResult?.data as any[]) ?? [];
+    let dbInstruments = (instrumentsResult?.data as any[]) ?? [];
+
+    // Ensure instruments table records exist for all open positions & pending orders symbols
+    const openPositionsForInst = positionsResult?.data ?? [];
+    const pendingOrdersForInst = pendingOrdersResult?.data ?? [];
+    const extraSymbolsToLookup = Array.from(new Set([
+      ...openPositionsForInst.map((p: any) => p.symbol),
+      ...pendingOrdersForInst.map((po: any) => po.symbol)
+    ].filter(Boolean))).map(s => s.toUpperCase().replace(/^(NFO:|BFO:|MCX:|NSE:|BSE:|CDS:)/, ''));
+
+    const missingSymbols = extraSymbolsToLookup.filter(s =>
+      !dbInstruments.some(i => (i.tradingsymbol && i.tradingsymbol.toUpperCase() === s) || (i.name && s.startsWith(i.name.toUpperCase())))
+    );
+
+    if (missingSymbols.length > 0) {
+      const missingUnderlyings = Array.from(new Set(missingSymbols.map(s => extractUnderlyingName(s))));
+      const { data: extraInst } = await admin
+        .from('instruments')
+        .select('tradingsymbol, name, lot_size')
+        .gt('lot_size', 0)
+        .or(`tradingsymbol.in.("${missingSymbols.join('","')}"),name.in.("${missingUnderlyings.join('","')}")`);
+
+      if (extraInst && extraInst.length > 0) {
+        dbInstruments = [...dbInstruments, ...extraInst];
+      }
+    }
 
     // 4. Profile checks
     if (profileErr || !profile) {
@@ -669,12 +710,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const segSetting = side === 'BUY' ? buySetting : sellSetting;
 
+    const openPositions = positionsResult?.data ?? [];
+    let activePosition = openPositions.find((p: any) => p.symbol === symbol && p.product_type === (product_type || 'INTRADAY'));
+    if (activePosition && activePosition.side !== side) {
+      is_exit = true;
+    }
+
     // 7. Validate lot / qty limits & Strike Range
     if (!segSetting.trade_allowed) {
       return NextResponse.json({ error: `${side} orders not allowed in ${segment}` }, { status: 403 });
     }
 
-    const symbolLotSize = lots > 0 ? (qty / lots) : getLotSize(symbol, dbScriptSettings);
+    const symbolLotSize = lots > 0 ? (qty / lots) : getLotSize(symbol, dbScriptSettings, dbInstruments);
     const maxQty = (segSetting.max_order_lot as number) * symbolLotSize;
     if (!is_exit && qty > maxQty) {
       return NextResponse.json({
@@ -686,12 +733,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let openPositionsLots = 0;
     let pendingOrdersLots = 0;
 
-    const openPositions = positionsResult?.data ?? [];
     if (openPositions.length > 0) {
       for (const pos of openPositions) {
         const posSegment = mapSymbolToSegment(pos.symbol);
         if (posSegment === dbSegment) {
-          const size = getLotSize(pos.symbol, dbScriptSettings);
+          const size = getLotSize(pos.symbol, dbScriptSettings, dbInstruments);
           if (size > 0) openPositionsLots += Number(pos.qty_open) / size;
         }
       }
@@ -703,7 +749,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (!po.is_exit) {
           const poSegment = mapSymbolToSegment(po.symbol);
           if (poSegment === dbSegment) {
-            const poSize = getLotSize(po.symbol, dbScriptSettings);
+            const poSize = getLotSize(po.symbol, dbScriptSettings, dbInstruments);
             if (poSize > 0) {
               pendingOrdersLots += Number(po.lots) > 0
                 ? Number(po.lots)
@@ -819,9 +865,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const refPrice = ['LIMIT', 'SL', 'GTT'].includes(order_type ?? 'MARKET') ? client_price : baseLtp;
 
     // Resolve reference entry price and position side (Long vs Short)
-    const activePosition = openPositions.find(
-      (p: any) => p.symbol === symbol && p.product_type === targetProductType
-    );
+    if (!activePosition) {
+      activePosition = openPositions.find(
+        (p: any) => p.symbol === symbol && p.product_type === targetProductType
+      );
+    }
 
     const refEntry = (is_exit && activePosition) ? Number(activePosition.entry_price) : refPrice;
     const isLong = (is_exit && activePosition) ? (activePosition.side === 'BUY') : (side === 'BUY');
@@ -929,7 +977,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 10. Compute fill price (LTP ± buffer from segment_settings)
     let fillPrice: number;
-    const isImmediate = (order_type ?? 'MARKET') === 'MARKET' || (order_type === 'SLM' && Boolean(is_exit));
+    const isImmediate = (order_type ?? 'MARKET') === 'MARKET';
 
     let rawBid = typeof rawQuote === 'object' ? (rawQuote?.bid ?? null) : null;
     let rawAsk = typeof rawQuote === 'object' ? (rawQuote?.ask ?? null) : null;
@@ -1063,20 +1111,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 11. Atomic write via Postgres RPC
     const targetOrderType = order_type ?? 'MARKET';
-    
-    // To make exit SLM execute immediately and create a position, we tell the DB it's a MARKET order
-    const rpcOrderType = (targetOrderType === 'SLM' && is_exit) ? 'MARKET' : targetOrderType;
+    const rpcOrderType = targetOrderType;
 
     let resolvedTriggerPrice = trigger_price ? parseFloat(trigger_price.toString()) : null;
     let resolvedStopLoss = stop_loss ? parseFloat(stop_loss.toString()) : null;
-
-    // For exit SLM, the UI sends the Stop Loss price in the trigger_price field.
-    if (targetOrderType === 'SLM' && is_exit) {
-      if (resolvedTriggerPrice !== null) {
-        resolvedStopLoss = resolvedTriggerPrice;
-        resolvedTriggerPrice = null; // Clear trigger price since it's a market order now
-      }
-    }
 
     const executeDbCall = async () => {
       const { data: oId, error: rpcErr } = await admin.rpc('place_order_v2', {
@@ -1097,7 +1135,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         p_trigger_price: resolvedTriggerPrice,
         p_stop_loss:    resolvedStopLoss,
         p_target:       target ? parseFloat(target.toString()) : null,
-        p_info:         null,
+        p_info:         linked_position_id ?? null,
         p_expected_margin: requiredMargin,
         p_expected_brokerage: expectedBrokerage,
         p_idempotency_key: null,

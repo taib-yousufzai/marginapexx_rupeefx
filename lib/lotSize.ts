@@ -17,6 +17,9 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // ---------------------------------------------------------------------------
 // Hardcoded fallbacks (current as of Jul 2026)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Hardcoded fallbacks (current as of Jul 2026)
+// ---------------------------------------------------------------------------
 // Keep these updated when NSE revises lot sizes, but they're only used when
 // the instruments table hasn't been synced yet.
 const FALLBACK_LOT_SIZES: Record<string, number> = {
@@ -36,7 +39,23 @@ const FALLBACK_LOT_SIZES: Record<string, number> = {
   CRUDEOILM:   10,
   NATURALGAS:  1250,
   NATGASMINI:  250,
+  TECHM:       600,
+  RELIANCE:    250,
+  TCS:         175,
+  INFY:        400,
+  HDFCBANK:    550,
+  ICICIBANK:   700,
+  SBIN:        750,
+  BHARTIARTL:  475,
+  ITC:         1600,
+  LT:          150,
 };
+
+export function extractUnderlyingName(symbol: string): string {
+  const clean = symbol.toUpperCase().replace(/^(NFO:|BFO:|MCX:|NSE:|BSE:|CDS:)/, '');
+  const match = clean.match(/^([A-Z0-9]+?)(?:\d{2}[A-Z]{3}.*|\d+.*)?$/);
+  return (match && match[1]) ? match[1] : clean;
+}
 
 /**
  * Resolve lot size from the DB instruments table by symbol prefix matching.
@@ -48,6 +67,7 @@ const FALLBACK_LOT_SIZES: Record<string, number> = {
  */
 export async function getLotSizeFromDB(symbol: string, supabase: SupabaseClient): Promise<number> {
   const n = symbol.toUpperCase().replace(/^(NFO:|BFO:|MCX:|NSE:|BSE:|CDS:)/, '');
+  const underlying = extractUnderlyingName(n);
 
   // 1. Check script_settings (admin overrides)
   try {
@@ -58,27 +78,30 @@ export async function getLotSizeFromDB(symbol: string, supabase: SupabaseClient)
 
     if (scriptSettings && scriptSettings.length > 0) {
       const sorted = [...scriptSettings].sort((a, b) => (b.symbol || '').length - (a.symbol || '').length);
-      const match = sorted.find(s => s.symbol && n.includes(s.symbol.toUpperCase()));
+      const match = sorted.find(s => s.symbol && n.startsWith(s.symbol.toUpperCase()));
       if (match && Number(match.lot_size) > 0) return Number(match.lot_size);
     }
   } catch { /* fall through */ }
 
-  // 2. Check instruments table — look up by underlying name match
+  // 2. Check instruments table — targeted query on tradingsymbol or underlying name
   try {
     const { data: instruments, error: instErr } = await supabase
       .from('instruments')
-      .select('name, lot_size')
+      .select('tradingsymbol, name, lot_size')
       .gt('lot_size', 0)
-      .limit(100);
+      .or(`tradingsymbol.eq.${n},name.eq.${underlying}`);
 
-    // If lot_size column doesn't exist yet (migration pending), skip silently
     if (instErr && (instErr as any).code === '42703') {
       console.warn('[getLotSizeFromDB] lot_size column missing — run migration 20260705_add_lot_size_to_instruments.sql in Supabase SQL editor');
     } else if (instruments && instruments.length > 0) {
-      // Sort by name length descending so more specific names match first
-      // (e.g. CRUDEOILM before CRUDEOIL, GOLDM before GOLD)
+      const exact = instruments.find(i => i.tradingsymbol && i.tradingsymbol.toUpperCase() === n);
+      if (exact && Number(exact.lot_size) > 0) return Number(exact.lot_size);
+
+      const exactName = instruments.find(i => i.name && i.name.toUpperCase() === underlying);
+      if (exactName && Number(exactName.lot_size) > 0) return Number(exactName.lot_size);
+
       const sorted = [...instruments].sort((a, b) => (b.name || '').length - (a.name || '').length);
-      const match = sorted.find(s => s.name && n.startsWith(s.name.toUpperCase()));
+      const match = sorted.find(i => i.name && n.startsWith(i.name.toUpperCase()));
       if (match && Number(match.lot_size) > 0) return Number(match.lot_size);
     }
   } catch { /* fall through */ }
