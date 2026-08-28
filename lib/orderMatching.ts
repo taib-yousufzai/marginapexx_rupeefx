@@ -209,9 +209,12 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
       const ltp = priceObj?.ltp;
 
       if (ltp === undefined || ltp <= 0) {
-        console.log(`[Order Matching] No price found for order ${order.id} symbol "${rawSymbol}" (tried ${symbolVariants.join(', ')})`);
-        continue; // No price update for this symbol in the current batch
+        console.log(`[DEBUG] No price for order ${order.id} symbol "${rawSymbol}" (tried: ${symbolVariants.join(', ')})`);
+        continue;
       }
+
+      const limitPrice = (order.client_price ?? order.fill_price ?? order.price) ? Number(order.client_price ?? order.fill_price ?? order.price) : null;
+      console.log(`[DEBUG] Eval order ${order.id} | ${order.side} ${order.order_type} | limitPrice: ${limitPrice} | ltp: ${ltp} | symbol: "${symbolKey}"`);
 
       const { shouldTrigger, fillPrice } = evaluateOrderTriggerCondition(
         order,
@@ -219,6 +222,8 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
         priceObj?.bid,
         priceObj?.ask
       );
+
+      console.log(`[DEBUG] -> shouldTrigger: ${shouldTrigger}`);
 
       if (shouldTrigger) {
         console.log(`[Order Matching] Triggering order ${order.id} (${order.side} ${order.order_type} ${order.symbol}) at LTP: ${ltp}, Fill: ${fillPrice}`);
@@ -262,20 +267,36 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           }
         }
 
-        // 1b. If this was a runtime-detected exit (opposite position found), patch is_exit in DB first
-        if ((order as any)._runtimeIsExit && (order as any)._runtimeLinkedPosId) {
+        // 1b. Resolve the linked position ID. For virtual SL/Target orders, extract it from the ID.
+        let virtualPosId = null;
+        if (typeof order.id === 'string' && (order.id.startsWith('pos-sl-') || order.id.startsWith('pos-target-'))) {
+          virtualPosId = order.id.replace('pos-sl-', '').replace('pos-target-', '');
+        }
+        
+        const infoAsUuid = order.info && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(order.info))
+          ? String(order.info) : null;
+        const finalLinkedPosId = (order as any)._runtimeLinkedPosId
+          || virtualPosId
+          || (order.linked_position_id || null)
+          || infoAsUuid;
+        const finalIsExit = (order as any)._runtimeIsExit || order.is_exit;
+
+        if (finalIsExit && finalLinkedPosId) {
+          const patchPayload: any = {};
+          if ((order as any)._runtimeIsExit) patchPayload.is_exit = true;
+          if ((order as any)._runtimeLinkedPosId) patchPayload.linked_position_id = finalLinkedPosId;
+          // ALWAYS patch info for the RPC to consume
+          patchPayload.info = finalLinkedPosId;
+
           const { error: patchErr } = await admin
             .from('orders')
-            .update({
-              is_exit: true,
-              linked_position_id: (order as any)._runtimeLinkedPosId,
-            })
+            .update(patchPayload)
             .eq('id', order.id);
 
           if (patchErr) {
-            console.error(`[Order Matching] Failed to patch is_exit for order ${order.id}:`, patchErr);
+            console.error(`[Order Matching] Failed to patch exit info for order ${order.id}:`, patchErr);
           } else {
-            console.log(`[Order Matching] Patched order ${order.id} as exit for position ${(order as any)._runtimeLinkedPosId}`);
+            console.log(`[Order Matching] Patched order ${order.id} exit info (linked to ${finalLinkedPosId})`);
           }
         }
 
@@ -293,14 +314,6 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           continue;
         }
 
-        // 2. Call the unified Postgres RPC to process positions atomically
-        const { error: rpcErr } = await admin.rpc('process_executed_position', {
-          p_order_id: order.id,
-        });
-
-        if (rpcErr) {
-          console.error(`[Order Matching] Failed to process executed position for order ${order.id}:`, rpcErr);
-        }
 
         // 3. Write audit log
         await admin.from('act_logs').insert({
@@ -310,7 +323,7 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           symbol: order.symbol,
           qty: order.qty,
           price: fillPrice,
-          reason: `${orderType} Order Triggered @ ${ltp}`,
+          reason: `${order.order_type ?? 'LIMIT'} Order Triggered @ ${ltp}`,
         });
       }
     }
