@@ -812,6 +812,27 @@ export async function GET(request: Request) {
 
     if (forexInstruments.length > 0) segments.push({ name: 'FOREX', icon: 'fa-coins', instruments: forexInstruments });
 
+    // 8. US-EQ
+    const usStockCatalog = [
+      { name: 'Apple Inc.', symbol: 'US:AAPL', kiteSymbol: 'US:AAPL', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Tesla Inc.', symbol: 'US:TSLA', kiteSymbol: 'US:TSLA', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Nvidia Corp.', symbol: 'US:NVDA', kiteSymbol: 'US:NVDA', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Microsoft Corp.', symbol: 'US:MSFT', kiteSymbol: 'US:MSFT', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Amazon.com Inc.', symbol: 'US:AMZN', kiteSymbol: 'US:AMZN', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Alphabet Inc.', symbol: 'US:GOOGL', kiteSymbol: 'US:GOOGL', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Meta Platforms', symbol: 'US:META', kiteSymbol: 'US:META', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Netflix Inc.', symbol: 'US:NFLX', kiteSymbol: 'US:NFLX', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Advanced Micro Devices', symbol: 'US:AMD', kiteSymbol: 'US:AMD', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Intel Corp.', symbol: 'US:INTC', kiteSymbol: 'US:INTC', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'SPDR S&P 500 ETF (S&P 500)', symbol: 'US:SPY', kiteSymbol: 'US:SPY', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Invesco QQQ Trust (Nasdaq 100)', symbol: 'US:QQQ', kiteSymbol: 'US:QQQ', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'SPDR Dow Jones ETF (Dow Jones)', symbol: 'US:DIA', kiteSymbol: 'US:DIA', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'S&P 500 E-mini Futures', symbol: 'US:ES=F', kiteSymbol: 'US:ES=F', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Nasdaq 100 E-mini Futures', symbol: 'US:NQ=F', kiteSymbol: 'US:NQ=F', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+      { name: 'Dow Jones E-mini Futures', symbol: 'US:YM=F', kiteSymbol: 'US:YM=F', segment: 'US - Equity', price: 0, change: '0%', open: 0, high: 0, low: 0, close: 0, lotSize: 1 },
+    ];
+    segments.push({ name: 'US-EQ', icon: 'fa-flag-usa', instruments: usStockCatalog });
+
     try {
       // Cache for 60 seconds so that strikes auto-update with spot price movements
       const ttl = usedFallback ? 60 : 60;

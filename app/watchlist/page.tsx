@@ -117,6 +117,17 @@ const DEFAULT_COMEX_ITEMS: WatchlistItem[] = [
   { name: 'COPPER', symbol: 'MCX:COPPER26AUGFUT', kiteSymbol: 'MCX:COPPER26AUGFUT', comexSymbol: 'HG=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: 'Aug 2026', open: 0, high: 0, low: 0, close: 0 },
 ];
 
+const DEFAULT_US_ITEMS: WatchlistItem[] = [
+  { name: 'Apple Inc.', symbol: 'US:AAPL', kiteSymbol: 'US:AAPL', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+  { name: 'Tesla Inc.', symbol: 'US:TSLA', kiteSymbol: 'US:TSLA', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+  { name: 'Nvidia Corp.', symbol: 'US:NVDA', kiteSymbol: 'US:NVDA', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+  { name: 'Microsoft Corp.', symbol: 'US:MSFT', kiteSymbol: 'US:MSFT', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+  { name: 'Amazon.com Inc.', symbol: 'US:AMZN', kiteSymbol: 'US:AMZN', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+  { name: 'S&P 500 E-mini Futures', symbol: 'US:ES=F', kiteSymbol: 'US:ES=F', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+  { name: 'Nasdaq 100 E-mini Futures', symbol: 'US:NQ=F', kiteSymbol: 'US:NQ=F', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+  { name: 'Dow Jones E-mini Futures', symbol: 'US:YM=F', kiteSymbol: 'US:YM=F', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+];
+
 export function getDefaultWatchlistItems(): WatchlistItem[] {
   return [
     {
@@ -161,6 +172,7 @@ export function getDefaultWatchlistItems(): WatchlistItem[] {
     ...DEFAULT_CRYPTO_ITEMS,
     ...DEFAULT_FOREX_ITEMS,
     ...DEFAULT_COMEX_ITEMS,
+    ...DEFAULT_US_ITEMS,
   ];
 }
 
@@ -177,7 +189,8 @@ export type TabLabel =
   | 'NSE-EQ'
   | 'CRYPTO'
   | 'COMEX'
-  | 'FOREX';
+  | 'FOREX'
+  | 'US-EQ';
 
 export const TAB_LABELS: TabLabel[] = [
   'All',
@@ -190,7 +203,8 @@ export const TAB_LABELS: TabLabel[] = [
   'NSE-EQ',
   'CRYPTO',
   'COMEX',
-  'FOREX'
+  'FOREX',
+  'US-EQ'
 ];
 
 // ── Segment → Tab Mapping ────────────────────────────────────────────────────
@@ -230,6 +244,8 @@ export const SEGMENT_TAB_MAP: Record<string, TabLabel> = {
   'COMEX - Options': 'COMEX',
   'COMEX': 'COMEX',
   'COI': 'COMEX',
+  'US - Equity': 'US-EQ',
+  'US-EQ': 'US-EQ',
   'INDEX-FUT': 'INDEX-FUT',
   'INDEX-OPT': 'INDEX-OPT',
   'STOCK-FUT': 'STOCK-FUT',
@@ -252,6 +268,7 @@ export function getTabForItem(item: WatchlistItem): TabLabel {
     if (c.includes('CRYPTO')) return 'CRYPTO';
     if (c.includes('FOREX')) return 'FOREX';
     if (c.includes('COMEX') || c === 'COI') return 'COMEX';
+    if (c.includes('US-EQ') || c.includes('US EQUITY')) return 'US-EQ';
   }
 
   if (item.segment && SEGMENT_TAB_MAP[item.segment]) {
@@ -260,6 +277,7 @@ export function getTabForItem(item: WatchlistItem): TabLabel {
 
   // Robust fallback for unmapped instruments
   const n = (item.name || item.symbol || '').toUpperCase();
+  if (n.startsWith('US:') || n.includes('US-EQ')) return 'US-EQ';
   if (n.includes('NATURALGAS') || n.includes('CRUDEOIL') || n.includes('GOLD') || n.includes('SILVER') || n.includes('COPPER') || n.includes('ZINC') || n.includes('MCX') || n.includes('ALUMINIUM') || n.includes('LEAD')) {
     if (n.includes('CE') || n.includes('PE') || n.includes('OPT')) return 'MCX-OPT';
     return 'MCX-FUT';
@@ -1273,7 +1291,7 @@ function WatchlistContent() {
     if (allowedSegments === null) return; // Wait until session/allowedSegments are resolved to avoid premature loading/defaulting
 
     const userKey = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
-    let rawUser = null;
+    let rawUser: string | null = null;
     try {
       rawUser = localStorage.getItem(userKey);
     } catch (e) {
@@ -1284,7 +1302,7 @@ function WatchlistContent() {
 
     if (rawUser === null) {
       // User-specific key doesn't exist yet. Check if we should migrate from the legacy global key
-      let rawLegacy = null;
+      let rawLegacy: string | null = null;
       try {
         rawLegacy = localStorage.getItem(WATCHLIST_KEY);
       } catch (e) {

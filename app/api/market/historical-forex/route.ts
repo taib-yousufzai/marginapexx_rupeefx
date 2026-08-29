@@ -16,9 +16,10 @@ function mapResolutionToYahooInterval(res: string): string {
 function cleanForexSymbol(symbol: string): string {
   let s = symbol.trim().toUpperCase();
   if (s.startsWith('FOREX:')) s = s.slice(6);
+  if (s.startsWith('US:')) s = s.slice(3);
   if (s.endsWith('USDT')) s = s.slice(0, -4) + 'USD';
   s = s.replace(/\//g, '');
-  if (!s.endsWith('=X') && s.length === 6 && !s.includes('INR')) {
+  if (!s.endsWith('=X') && !s.endsWith('=F') && s.length === 6 && !s.includes('INR') && !s.includes('=')) {
     s = `${s}=X`;
   }
   return s;

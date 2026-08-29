@@ -3,14 +3,14 @@ type LibrarySymbolInfo = any;
 type PeriodParams = any;
 type ResolutionString = any;
 import { resolutionToBinanceInterval, resolutionToKiteInterval } from './resolutionUtils';
-import { getCanonicalSymbol, isForexSymbol } from './symbolResolver';
+import { getCanonicalSymbol, isForexSymbol, isUsSymbol } from './symbolResolver';
 
 type BinanceKline = any[];
 
 /**
  * Fetches historical bars for a given symbol and resolution.
  *
- * Routes to Binance API for CRYPTO, Yahoo Finance for FOREX, and Kite API for all Indian symbols.
+ * Routes to Binance API for CRYPTO, Yahoo Finance for FOREX and US instruments, and Kite API for all Indian symbols.
  */
 export async function fetchBars(
   symbolInfo: LibrarySymbolInfo,
@@ -24,21 +24,24 @@ export async function fetchBars(
   try {
     const canonicalSymbol = getCanonicalSymbol(symbolInfo);
     const upperSym = canonicalSymbol.toUpperCase();
+    const isUs = isUsSymbol(canonicalSymbol, segment) || symbolInfo?.exchange === 'US';
     const isGlobalYahooForex =
-      isForexSymbol(canonicalSymbol) ||
-      (segment.toUpperCase() === 'FOREX' &&
-        symbolInfo?.exchange === 'FOREX' &&
-        !upperSym.includes('INR') &&
-        !upperSym.endsWith('FUT') &&
-        !upperSym.startsWith('CDS:'));
+      !isUs &&
+      (isForexSymbol(canonicalSymbol) ||
+        (segment.toUpperCase() === 'FOREX' &&
+          symbolInfo?.exchange === 'FOREX' &&
+          !upperSym.includes('INR') &&
+          !upperSym.endsWith('FUT') &&
+          !upperSym.startsWith('CDS:')));
         
     const isCrypto =
+      !isUs &&
       !isGlobalYahooForex &&
       (segment.toUpperCase() === 'CRYPTO' || canonicalSymbol.endsWith('USDT'));
 
     if (isCrypto) {
       return fetchBinanceBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);
-    } else if (isGlobalYahooForex) {
+    } else if (isGlobalYahooForex || isUs) {
       return fetchYahooForexBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);
     } else {
       return fetchKiteBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);

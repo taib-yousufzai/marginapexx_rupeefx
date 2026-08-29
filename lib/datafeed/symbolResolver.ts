@@ -1,9 +1,25 @@
 type LibrarySymbolInfo = any;
 type ResolutionString = any;
 
+const KNOWN_US_SYMBOLS = new Set([
+  'AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC',
+  'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F', 'CL=F', 'GC=F', 'SI=F'
+]);
+
+export function isUsSymbol(symbolName: string, segment?: string): boolean {
+  if (!symbolName) return false;
+  const upper = symbolName.toUpperCase().trim();
+  if (upper.startsWith('US:')) return true;
+  if (segment && (segment.toUpperCase().includes('US') || segment.toUpperCase() === 'US EQUITIES' || segment.toUpperCase() === 'US FUTURES')) return true;
+  const clean = upper.replace(/^US:/, '').trim();
+  return KNOWN_US_SYMBOLS.has(clean) || clean.endsWith('=F');
+}
+
 export function isForexSymbol(symbolName: string): boolean {
   if (!symbolName) return false;
   let upper = symbolName.toUpperCase().trim();
+
+  if (upper.startsWith('US:') || isUsSymbol(symbolName)) return false;
   
   // Indian currency futures, exchange prefixes, and Indian indices/stocks are NOT Yahoo Forex
   if (
@@ -35,6 +51,10 @@ export function isForexSymbol(symbolName: string): boolean {
  */
 export function deriveExchange(symbolName: string): string {
   const upper = symbolName.toUpperCase();
+
+  if (isUsSymbol(symbolName)) {
+    return 'US';
+  }
 
   if (isForexSymbol(symbolName)) {
     return 'FOREX';
@@ -98,9 +118,10 @@ export function formatShortName(name: string): string {
 
 export function buildSymbolInfo(symbolName: string, segment: string): LibrarySymbolInfo {
   const upperSym = symbolName.toUpperCase();
-  const isGlobalForex = isForexSymbol(symbolName) || (segment.toUpperCase() === 'FOREX' && !upperSym.includes('INR') && !upperSym.endsWith('FUT') && !upperSym.startsWith('CDS:'));
+  const isUs = isUsSymbol(symbolName, segment);
+  const isGlobalForex = !isUs && (isForexSymbol(symbolName) || (segment.toUpperCase() === 'FOREX' && !upperSym.includes('INR') && !upperSym.endsWith('FUT') && !upperSym.startsWith('CDS:')));
   const isCrypto =
-    !isGlobalForex && (symbolName.endsWith('USDT') || segment.toUpperCase() === 'CRYPTO');
+    !isUs && !isGlobalForex && (symbolName.endsWith('USDT') || segment.toUpperCase() === 'CRYPTO');
 
   const colonIdx = symbolName.indexOf(':');
   const rawName = colonIdx >= 0 ? symbolName.slice(colonIdx + 1) : symbolName;
@@ -110,14 +131,17 @@ export function buildSymbolInfo(symbolName: string, segment: string): LibrarySym
     name = name.replace(/\//g, '');
   }
   
-  const exchange = isGlobalForex ? 'FOREX' : isCrypto ? 'BINANCE' : deriveExchange(symbolName);
-  let ticker = (isCrypto || isGlobalForex || symbolName.includes(':')) ? symbolName : `${exchange}:${symbolName}`;
+  const exchange = isUs ? 'US' : isGlobalForex ? 'FOREX' : isCrypto ? 'BINANCE' : deriveExchange(symbolName);
+  let ticker = isUs
+    ? (symbolName.startsWith('US:') ? symbolName : `US:${symbolName}`)
+    : (isCrypto || isGlobalForex || symbolName.includes(':')) ? symbolName : `${exchange}:${symbolName}`;
+
   if (exchange === 'MCX' && ticker.startsWith('NFO:')) {
     ticker = `MCX:${ticker.slice(4)}`;
   }
   
   let session = '0915-1530';
-  if (isCrypto || isGlobalForex) session = '24x7';
+  if (isCrypto || isGlobalForex || isUs) session = '24x7';
   else if (exchange === 'MCX') session = '0900-2355';
   else if (exchange === 'CDS') session = '0900-1700';
 
@@ -152,4 +176,3 @@ export function getCanonicalSymbol(symbolInfoOrName: any): string {
   }
   return symbolInfoOrName.ticker || symbolInfoOrName.name || '';
 }
-

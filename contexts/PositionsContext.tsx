@@ -51,15 +51,19 @@ const mapSegmentToDbSegment = (s: string): string => {
   if (trimmed === 'Crypto' || trimmed === 'CRYPTO') return 'CRYPTO';
   if (trimmed === 'Forex' || trimmed === 'FOREX' || trimmed === 'CDS - Futures' || trimmed === 'CDS - Options') return 'FOREX';
   if (trimmed === 'COMEX - Futures' || trimmed === 'COMEX - Options' || trimmed === 'COMEX' || trimmed === 'COI') return 'COMEX';
+  if (trimmed === 'US - Equity' || trimmed === 'US-EQ' || trimmed === 'US Equity' || trimmed === 'US') return 'US-EQ';
   return trimmed;
 };
 
 const resolveKitePrefix = (key: string, settlement: string) => {
+  if (!key) return '';
+  if (key.startsWith('US:')) return key;
   let baseKey = key;
   if (baseKey.includes(':')) {
     baseKey = baseKey.split(':').slice(1).join(':'); // Strip existing prefix
   }
   const seg = (settlement || '').toUpperCase();
+  if (seg.includes('US')) return `US:${baseKey}`;
   let prefix = 'NSE:';
   if (baseKey.startsWith('SENSEX') || baseKey.startsWith('BANKEX')) {
     prefix = 'BFO:';

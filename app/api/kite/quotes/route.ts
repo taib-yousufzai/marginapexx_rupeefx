@@ -6,7 +6,8 @@
  * 1. Bypasses DB lookup entirely.
  * 2. Fetches from local Redis Hash cache first.
  * 3. Handles Crypto symbols directly via Binance REST API when not cached.
- * 4. Falls back to Kite REST API in batches for missing/uncached Indian instruments.
+ * 4. Handles Forex and US Equity symbols via Yahoo Finance API.
+ * 5. Falls back to Kite REST API in batches for missing/uncached Indian instruments.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -20,6 +21,11 @@ const CRYPTO_BASES = new Set([
 
 const FOREX_PAIRS = new Set([
   'GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'
+]);
+
+const US_SYMBOLS = new Set([
+  'AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC',
+  'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F', 'CL=F', 'GC=F', 'SI=F'
 ]);
 
 function isCryptoSymbol(sym: string): boolean {
@@ -36,38 +42,46 @@ function isForexSymbol(sym: string): boolean {
   return FOREX_PAIRS.has(clean);
 }
 
+function isUsSymbol(sym: string): boolean {
+  if (!sym) return false;
+  const upper = sym.toUpperCase().trim();
+  if (upper.startsWith('US:')) return true;
+  const clean = upper.replace(/^US:/, '').trim();
+  return US_SYMBOLS.has(clean) || clean.endsWith('=F');
+}
+
 function toBinancePair(sym: string): string {
   const upper = sym.toUpperCase().replace(/^CRYPTO:/, '');
   return upper.endsWith('USDT') ? upper : `${upper}USDT`;
 }
 
-async function fetchYahooQuotesBatch(forexSymbols: string[]): Promise<Record<string, any>> {
-  if (forexSymbols.length === 0) return {};
+async function fetchYahooQuotesBatch(yahooSymbols: string[]): Promise<Record<string, any>> {
+  if (yahooSymbols.length === 0) return {};
 
   const symbolMap: Record<string, string[]> = {};
-  const yahooSymbols: string[] = [];
+  const querySymbols: string[] = [];
 
-  for (const id of forexSymbols) {
-    const clean = id.toUpperCase().replace(/^FOREX:/, '').replace('/', '').trim();
-    let yahooSym = '';
+  for (const id of yahooSymbols) {
+    const clean = id.toUpperCase().replace(/^FOREX:/, '').replace(/^US:/, '').replace('/', '').trim();
+    let ySym = '';
     if (FOREX_PAIRS.has(clean)) {
-      yahooSym = `${clean}=X`;
-    } else if (clean.endsWith('=F')) {
-      yahooSym = clean;
+      ySym = `${clean}=X`;
+    } else {
+      ySym = clean;
     }
-    if (yahooSym) {
-      if (!symbolMap[yahooSym]) {
-        symbolMap[yahooSym] = [];
-        yahooSymbols.push(yahooSym);
+    if (ySym) {
+      if (!symbolMap[ySym]) {
+        symbolMap[ySym] = [];
+        querySymbols.push(ySym);
       }
-      symbolMap[yahooSym].push(id);
+      symbolMap[ySym].push(id);
     }
   }
 
   const result: Record<string, any> = {};
 
   await Promise.all(
-    yahooSymbols.map(async (ySym) => {
+    querySymbols.map(async (ySym) => {
       try {
         const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySym)}?interval=1d&range=1d`;
         const res = await fetch(url, {
@@ -75,7 +89,7 @@ async function fetchYahooQuotesBatch(forexSymbols: string[]): Promise<Record<str
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Accept': 'application/json',
           },
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(3500),
           cache: 'no-store',
         });
         if (res.ok) {
@@ -84,7 +98,7 @@ async function fetchYahooQuotesBatch(forexSymbols: string[]): Promise<Record<str
           if (chartResult) {
             const meta = chartResult.meta || {};
             const quote = chartResult.indicators?.quote?.[0] || {};
-            const lastPrice = meta.regularMarketPrice ?? quote.close?.[0] ?? 0;
+            const lastPrice = meta.regularMarketPrice ?? quote.close?.[quote.close.length - 1] ?? 0;
             const close = meta.chartPreviousClose ?? lastPrice;
             const open = quote.open?.[0] ?? lastPrice;
             const high = meta.regularMarketDayHigh ?? quote.high?.[0] ?? lastPrice;
@@ -103,6 +117,10 @@ async function fetchYahooQuotesBatch(forexSymbols: string[]): Promise<Record<str
             const reqIds = symbolMap[ySym] || [];
             reqIds.forEach(id => {
               result[id] = quoteObj;
+              const cleanId = id.replace(/^FOREX:/, '').replace(/^US:/, '');
+              result[cleanId] = quoteObj;
+              result[`US:${cleanId}`] = quoteObj;
+              result[`FOREX:${cleanId}`] = quoteObj;
             });
           }
         }
@@ -235,14 +253,18 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
     const dbRequestIds: string[] = [];
     const cryptoRequestIds: string[] = [];
     const forexRequestIds: string[] = [];
+    const usRequestIds: string[] = [];
 
-    // Separate Crypto symbols, Forex symbols, direct Kite IDs (NSE:RELIANCE), and DB IDs
+    // Separate Crypto symbols, Forex symbols, US symbols, direct Kite IDs (NSE:RELIANCE), and DB IDs
     for (const id of instruments) {
       if (isCryptoSymbol(id)) {
         cryptoRequestIds.push(id);
         realToRequestedMap[id] = id;
       } else if (isForexSymbol(id)) {
         forexRequestIds.push(id);
+        realToRequestedMap[id] = id;
+      } else if (isUsSymbol(id)) {
+        usRequestIds.push(id);
         realToRequestedMap[id] = id;
       } else if (id.includes(':')) {
         directKiteIds.push(id);
@@ -270,6 +292,10 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
             forexRequestIds.push(row.id);
             realToRequestedMap[row.id] = row.id;
             realToRequestedMap[row.tradingsymbol] = row.id;
+          } else if (isUsSymbol(row.tradingsymbol) || isUsSymbol(row.id)) {
+            usRequestIds.push(row.id);
+            realToRequestedMap[row.id] = row.id;
+            realToRequestedMap[row.tradingsymbol] = row.id;
           } else {
             realToRequestedMap[kiteId] = kiteId;
             realToRequestedMap[row.id] = kiteId;
@@ -287,6 +313,9 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
             realToRequestedMap[id] = id;
           } else if (isForexSymbol(id)) {
             forexRequestIds.push(id);
+            realToRequestedMap[id] = id;
+          } else if (isUsSymbol(id)) {
+            usRequestIds.push(id);
             realToRequestedMap[id] = id;
           } else {
             const clean = id.trim().toUpperCase();
@@ -316,7 +345,7 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
       const { getRedisClient } = await import('@/lib/redis');
       const redis = getRedisClient();
 
-      const allSearchIds = [...directKiteIds, ...cryptoRequestIds, ...forexRequestIds];
+      const allSearchIds = [...directKiteIds, ...cryptoRequestIds, ...forexRequestIds, ...usRequestIds];
       await Promise.all(allSearchIds.map(async (searchId) => {
         const cached = await redis.hget('market:quotes', searchId);
         if (cached) {
@@ -367,23 +396,24 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
       }
     }
 
-    // 3. Fetch missing Forex symbols directly from Yahoo Finance API
-    const missingForexIds = forexRequestIds.filter(id => !foundKiteIds.has(id));
-    if (missingForexIds.length > 0) {
-      const yahooQuotes = await fetchYahooQuotesBatch(missingForexIds);
-      for (const reqId of missingForexIds) {
-        if (yahooQuotes[reqId]) {
-          const q = yahooQuotes[reqId];
+    // 3. Fetch missing Forex & US symbols directly from Yahoo Finance API
+    const missingYahooIds = [...forexRequestIds, ...usRequestIds].filter(id => !foundKiteIds.has(id));
+    if (missingYahooIds.length > 0) {
+      const yahooQuotes = await fetchYahooQuotesBatch(missingYahooIds);
+      for (const reqId of missingYahooIds) {
+        const q = yahooQuotes[reqId] || yahooQuotes[reqId.replace(/^US:/, '')] || yahooQuotes[reqId.replace(/^FOREX:/, '')];
+        if (q) {
           finalMappedData[reqId] = q;
-          const clean = reqId.replace(/^FOREX:/, '');
+          const clean = reqId.replace(/^FOREX:/, '').replace(/^US:/, '');
           finalMappedData[clean] = q;
+          finalMappedData[`US:${clean}`] = q;
           finalMappedData[`FOREX:${clean}`] = q;
           foundKiteIds.add(reqId);
         }
       }
     }
 
-    // 3. Fallback to Ticker Daemon in-memory quotes API for remaining stock symbols
+    // 4. Fallback to Ticker Daemon in-memory quotes API for remaining stock symbols
     const remainingKiteIds = directKiteIds.filter(id => !foundKiteIds.has(id));
     if (remainingKiteIds.length > 0) {
       try {
@@ -428,7 +458,7 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
       }
     }
 
-    // 4. Fallback: Fetch missing Indian stock instruments from Kite REST API on-demand
+    // 5. Fallback: Fetch missing Indian stock instruments from Kite REST API on-demand
     const missingKiteIds = directKiteIds.filter(id => !foundKiteIds.has(id));
     if (missingKiteIds.length > 0) {
       let accessToken = request.cookies.get('kite_access_token')?.value;
@@ -481,7 +511,7 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
       }
     }
 
-    // 5. Guaranteed Fallback: ensure every requested instrument has a valid non-zero quote
+    // 6. Guaranteed Fallback: ensure every requested instrument has a valid non-zero quote
     for (const reqId of instruments) {
       if (!reqId) continue;
       const cleanSym = reqId.includes(':') ? reqId.split(':')[1] : reqId;
