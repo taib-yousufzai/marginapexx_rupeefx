@@ -18,6 +18,7 @@
 import { requireAuth } from '../../../../lib/api-middleware';
 import { getRole } from '../../../../lib/auth'; // trigger recompile
 import { auditLog } from '../../../../lib/audit';
+import { getDescendantUserIds } from '../../../../lib/hierarchy';
 
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -30,17 +31,26 @@ export async function GET(request: Request): Promise<Response> {
     const isDemo = demoParam === 'true';
     const fetchAll = demoParam === 'all' || demoParam === null;
 
-    // 1. Fetch profiles (filtered by parent_id if broker)
+    // 1. Fetch profiles (filtered by hierarchy for admin and broker)
     const callerRole = getRole(authResult.callerUser);
-    const isBroker = callerRole === 'broker';
+    const callerId = authResult.callerUser.id;
 
     let pQuery = adminClient
       .from('profiles')
       .select('id, client_id, email, full_name, phone, role, parent_id, segments, active, read_only, demo_user, intraday_sq_off, auto_sqoff, showcase_auto_sqoff, sqoff_method, balance, settlement_amount, created_at, scheduled_delete_at, trading_mode, mode_locked_until, template_id, history_reset_at');
     
-    if (isBroker) {
-      pQuery = pQuery.eq('parent_id', authResult.callerUser.id);
+    if (callerRole === 'broker') {
+      pQuery = pQuery.eq('parent_id', callerId);
+    } else if (callerRole === 'admin') {
+      const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
+      if (descendantIds !== null) {
+        if (descendantIds.length === 0) {
+          return Response.json([], { status: 200 });
+        }
+        pQuery = pQuery.in('id', descendantIds);
+      }
     }
+
     if (!fetchAll) {
       pQuery = pQuery.eq('demo_user', isDemo);
     }
@@ -196,6 +206,11 @@ export async function POST(request: Request): Promise<Response> {
         profileFields[field] = body[field];
       }
     }
+
+    if (!profileFields.parent_id && (callerRole === 'admin' || callerRole === 'broker')) {
+      profileFields.parent_id = callerUser.id;
+    }
+
 
     // Generate a unique 6-character uppercase alphanumeric client_id
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';

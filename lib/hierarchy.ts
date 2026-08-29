@@ -72,3 +72,35 @@ export async function isUserInHierarchy(
 
   return false;
 }
+
+/**
+ * Returns the list of accessible descendant user/profile IDs for a given actor according to hierarchy.
+ * Returns null if the actor is super_admin (meaning unrestricted access to all users).
+ */
+export async function getDescendantUserIds(
+  supabase: SupabaseClient,
+  actorId: string,
+  actorRole: string
+): Promise<string[] | null> {
+  if (actorRole === 'super_admin') {
+    return null; // Unrestricted access across system
+  }
+
+  const { data: allProfiles, error } = await supabase
+    .from('profiles')
+    .select('id, parent_id');
+
+  if (error || !allProfiles) {
+    console.error('Error fetching hierarchy profiles:', error);
+    return [];
+  }
+
+  const getChildren = (parentId: string): string[] => {
+    const directChildren = allProfiles.filter(p => p.parent_id === parentId).map(p => p.id);
+    const indirectChildren = directChildren.flatMap(childId => getChildren(childId));
+    return [...directChildren, ...indirectChildren];
+  };
+
+  return getChildren(actorId);
+}
+
