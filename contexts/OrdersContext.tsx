@@ -62,6 +62,8 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
     const handleOrderPlaced = () => fetchOrders();
     window.addEventListener('order_placed', handleOrderPlaced);
     window.addEventListener('position-closed', handleOrderPlaced);
+    window.addEventListener('position_closed', handleOrderPlaced);
+    window.addEventListener('order_executed', handleOrderPlaced);
 
     async function init() {
       // Wait for a valid session before fetching — prevents a 401 flash on
@@ -75,7 +77,7 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       await fetchOrders();
       if (cancelled) return;
       intervalRef.current = setInterval(() => {
-        if (!isSubscribed) fetchOrders();
+        fetchOrders();
       }, refreshInterval);
     }
 
@@ -87,6 +89,8 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       supabase.removeChannel(channel);
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('position-closed', handleOrderPlaced);
+      window.removeEventListener('position_closed', handleOrderPlaced);
+      window.removeEventListener('order_executed', handleOrderPlaced);
     };
   }, [fetchOrders, refreshInterval]);
 

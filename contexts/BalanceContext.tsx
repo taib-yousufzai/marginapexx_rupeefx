@@ -96,6 +96,8 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       if (!cancelled) fetchBalance();
     };
     window.addEventListener('order_placed', handleOrderPlaced);
+    window.addEventListener('position-closed', handleOrderPlaced);
+    window.addEventListener('position_closed', handleOrderPlaced);
 
     // Auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -117,11 +119,20 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       }
     });
 
+    // Active balance polling fallback: fetch balance every 10 seconds to ensure
+    // accurate account balance under any network/realtime latency.
+    const timer = setInterval(() => {
+      if (!cancelled) fetchBalance();
+    }, 10000);
+
     return () => {
       cancelled = true;
+      clearInterval(timer);
       subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
       window.removeEventListener('order_placed', handleOrderPlaced);
+      window.removeEventListener('position-closed', handleOrderPlaced);
+      window.removeEventListener('position_closed', handleOrderPlaced);
     };
   }, [fetchBalance]);
 

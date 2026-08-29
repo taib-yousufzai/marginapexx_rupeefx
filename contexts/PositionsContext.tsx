@@ -198,7 +198,22 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         }
       });
 
-      setRawPositions(newPositions);
+      setRawPositions(prev => {
+        const prevOpenIds = new Set(prev.map(p => p.id));
+        let posClosedOnBackend = false;
+        for (const id of prevOpenIds) {
+          if (!serverIds.has(id) && !optimisticallyRemovedIds.current.has(id)) {
+            posClosedOnBackend = true;
+            break;
+          }
+        }
+        if (posClosedOnBackend) {
+          setTimeout(() => {
+            window.dispatchEvent(new Event('position-closed'));
+          }, 0);
+        }
+        return newPositions;
+      });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return;
       setError(err instanceof Error ? err.message : "Unknown error");
@@ -258,10 +273,17 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     window.addEventListener('order_placed', handleOrderPlaced);
     window.addEventListener('order_placed_with_data', handleOrderPlacedWithData);
     window.addEventListener('order_failed', handleOrderFailed);
+    window.addEventListener('position-closed', handleOrderPlaced);
+    window.addEventListener('position_closed', handleOrderPlaced);
+    window.addEventListener('position_updated', handleOrderPlaced);
+    window.addEventListener('order_executed', handleOrderPlaced);
 
+    // Active polling fallback: even when subscribed to realtime channels,
+    // poll every refreshInterval (default 5s) to guarantee zero latency on backend liquidations.
+    const pollTime = Math.min(refreshInterval, 5000);
     const timer = setInterval(() => {
-      if (!isSubscribed) fetchPositions();
-    }, 15000);
+      fetchPositions();
+    }, pollTime);
 
     return () => {
       clearInterval(timer);
@@ -269,8 +291,12 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('order_placed_with_data', handleOrderPlacedWithData);
       window.removeEventListener('order_failed', handleOrderFailed);
+      window.removeEventListener('position-closed', handleOrderPlaced);
+      window.removeEventListener('position_closed', handleOrderPlaced);
+      window.removeEventListener('position_updated', handleOrderPlaced);
+      window.removeEventListener('order_executed', handleOrderPlaced);
     };
-  }, [fetchPositions]);
+  }, [fetchPositions, refreshInterval]);
 
   const { kiteKeys, binanceKeys, comexKeys } = useMemo(() => {
     const kite: string[] = [];
