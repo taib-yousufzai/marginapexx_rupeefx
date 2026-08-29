@@ -310,11 +310,15 @@ export default function ChartContainer({
         try {
           tvWidgetRef.current.save((state: any) => {
             if (state) {
-              localStorage.setItem('marginapexx_tv_layout', JSON.stringify(state));
+              try {
+                localStorage.setItem('marginapexx_tv_layout', JSON.stringify(state));
+              } catch (storageErr) {
+                // Quietly handle QuotaExceededError when browser localStorage capacity is reached
+              }
             }
           });
         } catch (e) {
-          console.error('Failed to save chart layout:', e);
+          // Ignore save state errors
         }
       };
 
