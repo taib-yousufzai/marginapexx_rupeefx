@@ -204,6 +204,25 @@ const BASE_TRADING_SEGMENTS: Segment[] = [
       { name: 'GBP/INR', symbol: 'GBPINR_FUT', segment: 'CDS - Futures' },
       { name: 'JPY/INR', symbol: 'JPYINR_FUT', segment: 'CDS - Futures' }
     ]
+  },
+  {
+    name: 'US-EQ',
+    icon: 'fa-flag-usa',
+    count: 12,
+    instruments: [
+      { name: 'Apple Inc.', symbol: 'US:AAPL', segment: 'US - Equity' },
+      { name: 'Tesla Inc.', symbol: 'US:TSLA', segment: 'US - Equity' },
+      { name: 'Nvidia Corp.', symbol: 'US:NVDA', segment: 'US - Equity' },
+      { name: 'Microsoft Corp.', symbol: 'US:MSFT', segment: 'US - Equity' },
+      { name: 'Amazon.com Inc.', symbol: 'US:AMZN', segment: 'US - Equity' },
+      { name: 'Alphabet Inc.', symbol: 'US:GOOGL', segment: 'US - Equity' },
+      { name: 'Meta Platforms', symbol: 'US:META', segment: 'US - Equity' },
+      { name: 'Netflix Inc.', symbol: 'US:NFLX', segment: 'US - Equity' },
+      { name: 'AMD', symbol: 'US:AMD', segment: 'US - Equity' },
+      { name: 'Intel Corp.', symbol: 'US:INTC', segment: 'US - Equity' },
+      { name: 'SPDR S&P 500 ETF', symbol: 'US:SPY', segment: 'US - Equity' },
+      { name: 'Invesco QQQ Trust', symbol: 'US:QQQ', segment: 'US - Equity' }
+    ]
   }
 ];
 
@@ -220,6 +239,8 @@ const DISPLAY_NAME_MAP: Record<string, { name: string; icon: string }> = {
   'CRYPTO': { name: 'CRYPTO', icon: 'fa-bitcoin-sign' },
   'COMEX': { name: 'Comex', icon: 'fa-gem' },
   'FOREX': { name: 'Forex', icon: 'fa-globe' },
+  'US-EQ': { name: 'US-EQ', icon: 'fa-flag-usa' },
+  'US Equity': { name: 'US-EQ', icon: 'fa-flag-usa' },
 };
 
 interface TradingSegmentsDrawerProps {
@@ -398,12 +419,20 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
     'CRYPTO': 'CRYPTO',
     'Comex': 'COMEX',
     'Forex': 'FOREX',
+    'US-EQ': 'US-EQ',
+    'Us-eq': 'US-EQ',
+    'US Equity': 'US-EQ',
   };
 
   const visibleSegments = tradingSegments.filter(seg => {
     if (allowedSegments.length === 0) return true;
     const dbKey = SEGMENT_NAME_TO_DB_KEY[seg.name] ?? seg.name.toUpperCase();
-    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || ((seg.name === 'Stocks' || seg.name === 'STOCKS' || seg.name === 'Equity' || seg.name.toUpperCase() === 'EQUITY') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks')));
+    return (
+      allowedSegments.includes(dbKey) ||
+      allowedSegments.includes(seg.name) ||
+      ((seg.name === 'Stocks' || seg.name === 'STOCKS' || seg.name === 'Equity' || seg.name.toUpperCase() === 'EQUITY') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks'))) ||
+      (dbKey === 'US-EQ' && (allowedSegments.includes('US-EQ') || allowedSegments.includes('US Equity') || allowedSegments.includes('NSE-EQ') || allowedSegments.length >= 8))
+    );
   });
 
   return (

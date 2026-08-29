@@ -4,7 +4,7 @@ import { apiCall, Toast, ToastState } from '../AdminUtils';
 import { AccountTemplate } from '../TemplatesPage';
 import { SegmentSettingsType, SegmentRow, defaultSeg, SegmentBlock } from './TemplateSegmentBlock';
 
-const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX'];
+const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
 
 type FormTab = 'profile' | 'segments' | 'scalper';
 
@@ -341,7 +341,7 @@ function ProfileTab({
   carryRolloverDay: string; setCarryRolloverDay: (v: string) => void;
   carryRolloverTime: string; setCarryRolloverTime: (v: string) => void;
 }) {
-  const ALL_SEGS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX'];
+  const ALL_SEGS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
 
   return (
     <div style={{ maxWidth: 560, display: 'flex', flexDirection: 'column', gap: 16 }}>

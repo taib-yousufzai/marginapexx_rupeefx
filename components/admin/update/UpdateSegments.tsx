@@ -4,7 +4,7 @@ import { signOut } from '@/lib/auth';
 import { apiCall, Toast, ToastState, UserListItem } from '../AdminUtils';
 import AnimatedLoader from '@/components/AnimatedLoader';
 
-const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX'];
+const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
 
 export type SegmentSettingsType = {
   commissionType: string; commissionValue: string;

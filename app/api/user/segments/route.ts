@@ -5,7 +5,7 @@ import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 
 const ALL_SEGMENTS = [
   'INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT',
-  'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX'
+  'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'
 ];
 
 export async function GET(request: NextRequest) {

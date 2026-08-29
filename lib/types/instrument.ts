@@ -39,7 +39,8 @@ export type Segment =
   | 'BSE-EQ'
   | 'CRYPTO'
   | 'FOREX'
-  | 'COMEX';
+  | 'COMEX'
+  | 'US-EQ';
 
 // ─── Data feed ────────────────────────────────────────────────────────────────
 

@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { apiCall, Toast, ToastState } from './AdminUtils';
 
-const SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX'];
+const SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
 
 export default function CreateUserForm({ onBack, onCreated, isDemoMode, callerRole }: { onBack: () => void; onCreated: (id: string, role: string) => void; isDemoMode?: boolean; callerRole?: string }) {
   const [username, setUsername] = useState('');

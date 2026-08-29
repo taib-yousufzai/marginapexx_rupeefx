@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { apiCall, Toast, ToastState } from '../AdminUtils';
 import { SegmentSettingsType } from './UpdateSegments';
 
-const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX'];
+const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
 
 const defaultSeg = (): SegmentSettingsType => ({
   commissionType: 'Per Crore', commissionValue: '4500',
@@ -20,6 +20,7 @@ const defaultSeg = (): SegmentSettingsType => ({
   topLimit: '0',
   minLimit: '0',
   useCustomCalc: false,
+  exitPriceMode: 'BID_ASK',
 });
 
 export default function UpdateMultipleSettings({ selectedUser: _selectedUser }: { selectedUser?: { id: string } }) {

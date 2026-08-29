@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { signOut } from '@/lib/auth';
 import { apiCall, Toast, ToastState, UserListItem } from '../AdminUtils';
 
-const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX'];
+const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
 
 export default function UpdateProfile({ selectedUser, isBroker = false }: { selectedUser: { id: string; role: string }, isBroker?: boolean }) {
   const uid = selectedUser.id;

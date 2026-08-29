@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiCall, Toast, ToastState } from '../AdminUtils';
 
-const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX'];
+const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
 
 export default function UpdateBlockScripts({ selectedUser }: { selectedUser: { id: string } }) {
   const uid = selectedUser.id;

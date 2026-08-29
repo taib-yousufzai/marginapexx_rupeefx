@@ -59,6 +59,10 @@ const SEGMENT_MAP: Record<string, Segment> = {
   'COMEX - Futures':     'COMEX',
   'COMEX - Options':     'COMEX',
   'COI':                 'COMEX',
+  'US - Equity':         'US-EQ',
+  'US-EQ':               'US-EQ',
+  'US Equity':           'US-EQ',
+  'US':                  'US-EQ',
   // Legacy pass-throughs
   'INDEX-FUT':           'INDEX-FUT',
   'INDEX-OPT':           'INDEX-OPT',
@@ -98,8 +102,9 @@ export function mapSegmentWithSymbol(segment: string, symbol: string = ''): Segm
   const seg = segment.trim().toUpperCase();
   const sym = symbol.toUpperCase();
 
-  // Symbol-first: forex & crypto symbols check
+  // Symbol-first: US, forex & crypto symbols check
   if (sym) {
+    if (sym.startsWith('US:') || sym.startsWith('US-EQ:')) return 'US-EQ';
     if (sym.startsWith('FOREX:')) return 'FOREX';
     const cleanSym = sym.includes(':') ? sym.split(':')[1] : sym;
     const FOREX_PAIRS = ['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'];
@@ -134,6 +139,7 @@ export function mapSegmentWithSymbol(segment: string, symbol: string = ''): Segm
  */
 export function mapSymbolToSegment(symbol: string): Segment {
   const n = symbol.toUpperCase();
+  if (n.startsWith('US:') || n.startsWith('US-EQ:')) return 'US-EQ';
   if (n.includes('GOLD') || n.includes('SILVER') || n.includes('CRUDE') || n.includes('NATGAS') || n.includes('NATURALGAS')) {
     if (n.endsWith('CE') || n.endsWith('PE')) return 'MCX-OPT';
     return 'MCX-FUT';
