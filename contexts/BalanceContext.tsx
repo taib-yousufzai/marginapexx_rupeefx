@@ -119,11 +119,11 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       }
     });
 
-    // Active balance polling fallback: fetch balance every 10 seconds to ensure
+    // Active balance polling fallback: fetch balance every 5 seconds to ensure
     // accurate account balance under any network/realtime latency.
     const timer = setInterval(() => {
       if (!cancelled) fetchBalance();
-    }, 10000);
+    }, 5000);
 
     return () => {
       cancelled = true;

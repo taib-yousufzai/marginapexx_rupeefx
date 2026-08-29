@@ -97,6 +97,128 @@ async function fetchLtp(symbol: string, settlement: string): Promise<number | nu
   return null;
 }
 
+async function runLiquidationCheckPass() {
+  const admin = getAdmin();
+  const { data: positions, error: posErr } = await admin
+    .from('positions')
+    .select('id, user_id, symbol, side, qty_open, entry_price, ltp, settlement, product_type, created_at, entry_time')
+    .eq('status', 'open')
+    .gt('qty_open', 0);
+
+  if (posErr) throw posErr;
+  if (!positions || positions.length === 0) {
+    return { openPositionsCount: 0, checked: 0, liquidated: 0, skipped: 0 };
+  }
+
+  const userIds = Array.from(new Set(positions.map(p => p.user_id)));
+
+  const [profilesRes, segSettingsRes] = await Promise.all([
+    admin
+      .from('profiles')
+      .select('id, balance, auto_sqoff, trading_mode, parent_id')
+      .in('id', userIds),
+    admin
+      .from('segment_settings')
+      .select('user_id, segment, side, exit_buffer, bid_buffer, carry_commission_type, carry_commission_value, commission_type, commission_value')
+      .in('user_id', userIds),
+  ]);
+
+  const profileMap = new Map((profilesRes.data ?? []).map(p => [p.id, p]));
+
+  const exitBuffers = new Map<string, {
+    exit_buffer: number; bid_buffer: number;
+    carry_commission_type?: string | null;
+    carry_commission_value?: number | null;
+    commission_type?: string | null;
+    commission_value?: number | null;
+  }>();
+  for (const s of segSettingsRes.data ?? []) {
+    exitBuffers.set(`${s.user_id}|${s.segment}|${s.side}`, {
+      exit_buffer: Number(s.exit_buffer ?? 0.17),
+      bid_buffer: Number(s.bid_buffer ?? 0.3),
+      carry_commission_type: s.carry_commission_type ?? null,
+      carry_commission_value: s.carry_commission_value != null ? Number(s.carry_commission_value) : null,
+      commission_type: s.commission_type ?? null,
+      commission_value: s.commission_value != null ? Number(s.commission_value) : null,
+    });
+  }
+
+  const byUser = new Map<string, typeof positions>();
+  for (const pos of positions) {
+    if (!byUser.has(pos.user_id)) byUser.set(pos.user_id, []);
+    byUser.get(pos.user_id)!.push(pos);
+  }
+
+  const uniqueSymbols = Array.from(
+    new Map(positions.map(p => [`${p.symbol}|${p.settlement}`, p])).values()
+  );
+  const ltpResults = await Promise.all(
+    uniqueSymbols.map(async p => ({
+      key: `${p.symbol}|${p.settlement}`,
+      ltp: await fetchLtp(p.symbol, p.settlement),
+    }))
+  );
+  const ltpMap = new Map(ltpResults.map(r => [r.key, r.ltp]));
+
+  let liquidated = 0;
+  let skipped = 0;
+  let checked = 0;
+
+  for (const [userId, userPositions] of byUser) {
+    const profile = profileMap.get(userId);
+    if (!profile) { skipped++; continue; }
+
+    const balance = Number(profile.balance ?? 0);
+    const autoSqoffPercent = Number(profile.auto_sqoff ?? 90);
+    if (autoSqoffPercent <= 0) { skipped++; continue; }
+
+    const threshold = -(balance * (autoSqoffPercent / 100));
+
+    let totalFloatingPnl = 0;
+    const positionsWithLtp = userPositions.map(pos => {
+      const ltp = ltpMap.get(`${pos.symbol}|${pos.settlement}`)
+        ?? Number(pos.ltp ?? pos.entry_price);
+
+      const bufKey = `${userId}|${pos.settlement}|${pos.side}`;
+      const exitBufferPct = exitBuffers.get(bufKey)?.exit_buffer ?? 0.17;
+
+      const pnl = calculateFloatingPnl({
+        side: pos.side,
+        ltp,
+        entryPrice: Number(pos.entry_price),
+        qty: Number(pos.qty_open),
+        exitBufferPct,
+      });
+
+      totalFloatingPnl += pnl;
+      return { ...pos, ltp };
+    });
+
+    checked++;
+
+    if (totalFloatingPnl > threshold) continue;
+
+    console.log(
+      `[LiquidationCron] Threshold breached for user ${userId}: ` +
+      `PnL=₹${totalFloatingPnl.toFixed(2)}, threshold=₹${threshold.toFixed(2)}`
+    );
+
+    const result = await checkAndExecuteAccountLiquidation(
+      userId,
+      balance,
+      autoSqoffPercent,
+      positionsWithLtp,
+      totalFloatingPnl,
+      exitBuffers,
+      admin,
+    );
+
+    if (result.liquidated) liquidated++;
+  }
+
+  return { openPositionsCount: positions.length, checked, liquidated, skipped };
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 export async function GET(request: Request) {
@@ -108,146 +230,38 @@ export async function GET(request: Request) {
   const startTime = Date.now();
 
   try {
-    // 1. Fetch all open positions with user profile data in one query
-    const { data: positions, error: posErr } = await getAdmin()
-      .from('positions')
-      .select('id, user_id, symbol, side, qty_open, entry_price, ltp, settlement, product_type, created_at, entry_time')
-      .eq('status', 'open')
-      .gt('qty_open', 0);
+    const PASSES = 5;
+    const INTERVAL_MS = 8000;
+    let totalChecked = 0;
+    let totalLiquidated = 0;
+    let totalSkipped = 0;
+    let passCount = 0;
 
-    if (posErr) throw posErr;
-    if (!positions || positions.length === 0) {
-      return NextResponse.json({ success: true, message: 'No open positions', checked: 0 });
-    }
-
-    // 2. Get unique user IDs
-    const userIds = Array.from(new Set(positions.map(p => p.user_id)));
-
-    // 3. Batch fetch all profiles + segment settings for those users
-    const [profilesRes, segSettingsRes] = await Promise.all([
-      getAdmin()
-        .from('profiles')
-        .select('id, balance, auto_sqoff, trading_mode, parent_id')
-        .in('id', userIds),
-      getAdmin()
-        .from('segment_settings')
-        .select('user_id, segment, side, exit_buffer, bid_buffer, carry_commission_type, carry_commission_value, commission_type, commission_value')
-        .in('user_id', userIds),
-    ]);
-
-    const profileMap = new Map(
-      (profilesRes.data ?? []).map(p => [p.id, p])
-    );
-
-    // Build exitBuffers map keyed as `userId|segment|side`
-    const exitBuffers = new Map<string, {
-      exit_buffer: number; bid_buffer: number;
-      carry_commission_type?: string | null;
-      carry_commission_value?: number | null;
-      commission_type?: string | null;
-      commission_value?: number | null;
-    }>();
-    for (const s of segSettingsRes.data ?? []) {
-      exitBuffers.set(`${s.user_id}|${s.segment}|${s.side}`, {
-        exit_buffer: Number(s.exit_buffer ?? 0.17),
-        bid_buffer: Number(s.bid_buffer ?? 0.3),
-        carry_commission_type: s.carry_commission_type ?? null,
-        carry_commission_value: s.carry_commission_value != null ? Number(s.carry_commission_value) : null,
-        commission_type: s.commission_type ?? null,
-        commission_value: s.commission_value != null ? Number(s.commission_value) : null,
-      });
-    }
-
-    // 4. Group positions by user
-    const byUser = new Map<string, typeof positions>();
-    for (const pos of positions) {
-      if (!byUser.has(pos.user_id)) byUser.set(pos.user_id, []);
-      byUser.get(pos.user_id)!.push(pos);
-    }
-
-    // 5. Fetch LTPs in parallel for all unique symbols
-    const uniqueSymbols = Array.from(
-      new Map(positions.map(p => [`${p.symbol}|${p.settlement}`, p])).values()
-    );
-    const ltpResults = await Promise.all(
-      uniqueSymbols.map(async p => ({
-        key: `${p.symbol}|${p.settlement}`,
-        ltp: await fetchLtp(p.symbol, p.settlement),
-      }))
-    );
-    const ltpMap = new Map(ltpResults.map(r => [r.key, r.ltp]));
-
-    // 6. Check each user
-    let liquidated = 0;
-    let skipped = 0;
-    let checked = 0;
-
-    for (const [userId, userPositions] of byUser) {
-      const profile = profileMap.get(userId);
-      if (!profile) { skipped++; continue; }
-
-      const balance = Number(profile.balance ?? 0);
-      const autoSqoffPercent = Number(profile.auto_sqoff ?? 90);
-      if (autoSqoffPercent <= 0) { skipped++; continue; }
-
-      const threshold = -(balance * (autoSqoffPercent / 100));
-
-      // Compute total floating PnL for this user
-      let totalFloatingPnl = 0;
-      const positionsWithLtp = userPositions.map(pos => {
-        const ltp = ltpMap.get(`${pos.symbol}|${pos.settlement}`)
-          ?? Number(pos.ltp ?? pos.entry_price);
-
-        const bufKey = `${userId}|${pos.settlement}|${pos.side}`;
-        const exitBufferPct = exitBuffers.get(bufKey)?.exit_buffer ?? 0.17;
-
-        const pnl = calculateFloatingPnl({
-          side: pos.side,
-          ltp,
-          entryPrice: Number(pos.entry_price),
-          qty: Number(pos.qty_open),
-          exitBufferPct,
-        });
-
-        totalFloatingPnl += pnl;
-        return { ...pos, ltp };
-      });
-
-      checked++;
-
-      // Only proceed if threshold is breached — saves DB calls for healthy accounts
-      if (totalFloatingPnl > threshold) continue;
-
-      console.log(
-        `[LiquidationCron] Threshold breached for user ${userId}: ` +
-        `PnL=₹${totalFloatingPnl.toFixed(2)}, threshold=₹${threshold.toFixed(2)}`
-      );
-
-      const result = await checkAndExecuteAccountLiquidation(
-        userId,
-        balance,
-        autoSqoffPercent,
-        positionsWithLtp,
-        totalFloatingPnl,
-        exitBuffers,
-        getAdmin(),
-      );
-
-      if (result.liquidated) liquidated++;
+    for (let pass = 0; pass < PASSES; pass++) {
+      if (pass > 0) {
+        await new Promise((r) => setTimeout(r, INTERVAL_MS));
+      }
+      passCount++;
+      const res = await runLiquidationCheckPass();
+      totalChecked += res.checked;
+      totalLiquidated += res.liquidated;
+      totalSkipped += res.skipped;
+      if (res.openPositionsCount === 0) break;
     }
 
     const elapsed = Date.now() - startTime;
     console.log(
-      `[LiquidationCron] Done in ${elapsed}ms — ` +
-      `checked=${checked}, liquidated=${liquidated}, skipped=${skipped}`
+      `[LiquidationCron] Sub-cycle completed ${passCount} passes in ${elapsed}ms — ` +
+      `checked=${totalChecked}, liquidated=${totalLiquidated}, skipped=${totalSkipped}`
     );
 
     return NextResponse.json({
       success: true,
+      passes: passCount,
       elapsed_ms: elapsed,
-      users_checked: checked,
-      users_liquidated: liquidated,
-      users_skipped: skipped,
+      users_checked: totalChecked,
+      users_liquidated: totalLiquidated,
+      users_skipped: totalSkipped,
     });
 
   } catch (err: any) {
