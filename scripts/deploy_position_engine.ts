@@ -15,6 +15,9 @@ const SQL_FILES = [
   'supabase/migrations/20260802_engine_releases.sql',
   'supabase/migrations/20260802_schema_snapshots.sql',
   'supabase/migrations/20260802_add_fee_transaction_type.sql',
+  'supabase/migrations/20260829_fix_process_executed_position_info.sql',
+  'supabase/migrations/20260829_fix_settlement_rebaseline_positive_debt.sql',
+  'supabase/migrations/20260830_enable_realtime_and_polling_sync.sql',
   // ── Position Engine functions (internal helpers first) ────────────────────
   'database_v2/functions/create_position_internal.sql',
   'database_v2/functions/increase_position_internal.sql',

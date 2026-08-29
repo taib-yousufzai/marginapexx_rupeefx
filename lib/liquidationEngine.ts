@@ -271,10 +271,16 @@ export async function checkAndExecuteAccountLiquidation(
   let incrementalSettlement = 0;
   if (positionsClosed > 0) {
     const closedIds = liquidatedPositions.map(p => p.id);
+    const targetRefIds = Array.from(new Set([
+      ...closedIds,
+      ...closedIds.map(id => `PNL_${id}`),
+      ...closedIds.map(id => `CLOSE_PNL_${id}`),
+    ]));
+
     const { data: pnlTxs } = await admin
       .from('transactions')
       .select('amount, type, ref_id')
-      .in('ref_id', closedIds)
+      .in('ref_id', targetRefIds)
       .eq('type', 'PNL_DEBIT')
       .eq('status', 'APPROVED');
 
@@ -283,12 +289,25 @@ export async function checkAndExecuteAccountLiquidation(
     const { data: pnlCredits } = await admin
       .from('transactions')
       .select('amount')
-      .in('ref_id', closedIds)
+      .in('ref_id', targetRefIds)
       .eq('type', 'PNL_CREDIT')
       .eq('status', 'APPROVED');
 
     const totalPnlCredit = (pnlCredits || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
-    const netLoss = totalPnlDebit - totalPnlCredit;
+    let netLoss = totalPnlDebit - totalPnlCredit;
+
+    // Fallback: If transaction query produced 0 netLoss, derive directly from liquidatedPositions PnL
+    if (netLoss <= 0 && liquidatedPositions.length > 0) {
+      const directLossSum = liquidatedPositions.reduce((sum, p) => {
+        const pnl = typeof p.pnl === 'number' ? p.pnl : 0;
+        return sum + (pnl < 0 ? Math.abs(pnl) : 0);
+      }, 0);
+      const directProfitSum = liquidatedPositions.reduce((sum, p) => {
+        const pnl = typeof p.pnl === 'number' ? p.pnl : 0;
+        return sum + (pnl > 0 ? pnl : 0);
+      }, 0);
+      netLoss = directLossSum - directProfitSum;
+    }
 
     // Settlement is the unabsorbed deficit when net loss exceeds available positive balance
     const previousPositiveBalance = Math.max(0, previousBalance);
