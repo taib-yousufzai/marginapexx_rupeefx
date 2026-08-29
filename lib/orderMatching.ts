@@ -2,6 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { getAdminClient } from './adminClient.ts';
 import { resolveEffectivePrices } from './trading/marketPriceResolver.ts';
 import { checkAndExecuteAccountLiquidation, PositionForLiquidation } from './liquidationEngine.ts';
+import { calculateFloatingPnl } from './floatingPnl.ts';
 
 export interface Quote {
   id: string; // e.g. "NSE:INFY"
@@ -421,13 +422,15 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
         const ltp = priceObj.ltp;
         const entryPrice = Number(pos.entry_price ?? pos.avg_price);
         const qty = Number(pos.qty_open ?? 0);
-        const buyExitBuffer = exitBufferMap.get(`${pos.settlement}|BUY`) ?? 0;
-        const sellExitBuffer = exitBufferMap.get(`${pos.settlement}|SELL`) ?? 0;
-        const pnl = pos.side === 'BUY'
-          // Closing BUY (selling) → BID - exitBuffer
-          ? ((priceObj.bid * (1 - buyExitBuffer)) - entryPrice) * qty
-          // Closing SELL (buying back) → ASK + exitBuffer
-          : (entryPrice - (priceObj.ask * (1 + sellExitBuffer))) * qty;
+        const rawExitBuffer = exitBufferMap.get(`${pos.settlement}|${pos.side}`) ?? 0.17;
+        const exitBufferPct = rawExitBuffer > 0.005 ? rawExitBuffer / 100 : rawExitBuffer;
+        const pnl = calculateFloatingPnl({
+          side: pos.side,
+          ltp,
+          entryPrice,
+          qty,
+          exitBufferPct,
+        });
 
         totalUnrealised += pnl;
 
