@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
     // Admins can restrict specific segments later via the UpdateSegments admin panel.
     const DEFAULT_SEGMENTS = [
       'INDEX-FUT', 'INDEX-OPT', 'STOCK-FUT', 'STOCK-OPT',
-      'NSE-EQ', 'MCX-FUT', 'MCX-OPT', 'CRYPTO', 'FOREX', 'COMEX',
+      'NSE-EQ', 'MCX-FUT', 'MCX-OPT', 'CRYPTO', 'FOREX', 'COMEX', 'US-EQ',
     ];
 
     // Generate a unique 6-character uppercase alphanumeric client_id

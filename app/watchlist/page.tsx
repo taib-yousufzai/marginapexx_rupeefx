@@ -2511,9 +2511,11 @@ function WatchlistContent() {
                     'CRYPTO': 'CRYPTO',
                     'COMEX': 'COMEX',
                     'FOREX': 'FOREX',
+                    'US-EQ': 'US-EQ',
+                    'US Equity': 'US-EQ',
                   };
                   // Define the desired display order
-                  const SEGMENT_ORDER = ['INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'Equity', 'NSE-EQ', 'CRYPTO', 'COMEX', 'FOREX'];
+                  const SEGMENT_ORDER = ['INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'Equity', 'NSE-EQ', 'CRYPTO', 'COMEX', 'FOREX', 'US-EQ', 'US Equity'];
                   const sortedSegments = [...tradingSegments].sort((a, b) => {
                     const ai = SEGMENT_ORDER.indexOf(a.name);
                     const bi = SEGMENT_ORDER.indexOf(b.name);
@@ -2526,7 +2528,12 @@ function WatchlistContent() {
                     if (allowedSegments === null) return true; // still loading — show all initially
                     if (allowedSegments.length === 0) return true;
                     const dbKey = DRAWER_SEG_TO_DB_KEY[seg.name] ?? seg.name.toUpperCase();
-                    return allowedSegments.includes(dbKey) || allowedSegments.includes(seg.name) || ((seg.name.toUpperCase() === 'EQUITY' || seg.name.toUpperCase() === 'STOCKS') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks')));
+                    return (
+                      allowedSegments.includes(dbKey) ||
+                      allowedSegments.includes(seg.name) ||
+                      ((seg.name.toUpperCase() === 'EQUITY' || seg.name.toUpperCase() === 'STOCKS') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks'))) ||
+                      (dbKey === 'US-EQ' && (allowedSegments.includes('US-EQ') || allowedSegments.includes('US Equity') || allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.length >= 7))
+                    );
                   });
                   return visibleSegments.map((seg) => {
                     // Filter out blocked symbols from this segment's instruments
