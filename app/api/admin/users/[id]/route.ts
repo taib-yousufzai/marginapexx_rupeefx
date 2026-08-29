@@ -234,10 +234,10 @@ export async function PATCH(
 
       await Promise.all([
         defaultSettingsRows.length > 0
-          ? adminClient.from('segment_settings').insert(defaultSettingsRows)
+          ? adminClient.from('segment_settings').upsert(defaultSettingsRows, { onConflict: 'user_id,segment,side' })
           : Promise.resolve(),
         defaultScalperSettingsRows.length > 0
-          ? adminClient.from('scalper_segment_settings').insert(defaultScalperSettingsRows)
+          ? adminClient.from('scalper_segment_settings').upsert(defaultScalperSettingsRows, { onConflict: 'user_id,segment,side' })
           : Promise.resolve(),
       ]);
     }

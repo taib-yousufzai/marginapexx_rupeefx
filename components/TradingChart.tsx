@@ -936,7 +936,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
     // Optimistic UI: Immediately close panel and show processing state
     setIsSubmitting(true);
-    positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
+    positionSnapshotRef.current = `${orderSymbol}:${currentInstrumentPosition ? currentInstrumentPosition.id : '__none__'}:${currentInstrumentPosition ? currentInstrumentPosition.qty_open : 0}`;
     if (modifyOrderId) {
       setModifyOrderId(null);
     }
@@ -1427,25 +1427,27 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   useEffect(() => {
     if (!isSubmitting || positionSnapshotRef.current === null) return;
 
-    const snapshotId = positionSnapshotRef.current.split(':')[0];
+    const parts = positionSnapshotRef.current.split(':');
+    const snapSymbol = parts.length >= 3 ? parts[0] : symbol;
+    const snapId = parts.length >= 3 ? parts[1] : parts[0];
+    const snapQtyStr = parts.length >= 3 ? parts[2] : (parts[1] || '0');
 
     let changed = false;
 
-    if (snapshotId === '__none__') {
+    if (snapId === '__none__') {
       // New position case: we had no open position before the order.
-      // Clear isSubmitting as soon as ANY open/active position for this symbol appears.
+      // Clear isSubmitting as soon as ANY open/active position for this symbol/orderSymbol appears.
       const hasNewPos = positions.some(
-        p => p.symbol === symbol && (p.status === 'open' || p.status === 'active')
+        p => (p.symbol === snapSymbol || p.symbol === symbol) && (p.status === 'open' || p.status === 'active')
       );
       changed = hasNewPos;
     } else {
       // Existing position case: qty changed or position closed
       const targetPos = positions.find(
-        p => p.id === snapshotId && (p.status === 'open' || p.status === 'active')
+        p => (p.id === snapId || p.symbol === snapSymbol) && (p.status === 'open' || p.status === 'active')
       );
-      const snapshotQty = Number(positionSnapshotRef.current.split(':')[1]);
-      const currentKey = targetPos ? `${targetPos.id}:${targetPos.qty_open}` : '__none__';
-      changed = currentKey !== positionSnapshotRef.current || (targetPos?.qty_open !== snapshotQty);
+      const snapshotQty = Number(snapQtyStr);
+      changed = !targetPos || (targetPos.qty_open !== snapshotQty);
     }
 
     if (changed) {

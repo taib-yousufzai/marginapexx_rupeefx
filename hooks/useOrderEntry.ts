@@ -38,7 +38,7 @@ export function useOrderEntry() {
     setError(null);
 
     try {
-      const result = await api.post<{ id: string }>('/api/orders', state);
+      const result = await api.post<{ id: string }>('/api/orders', state, { timeout: 12000 });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
@@ -57,7 +57,11 @@ export function useOrderEntry() {
           message = `ApiError ${err.status}`;
         }
       } else if (err instanceof Error) {
-        message = err.message;
+        if (err.name === 'AbortError') {
+          message = 'Order submission timed out. Please try again.';
+        } else {
+          message = err.message;
+        }
       }
       console.warn('[useOrderEntry] Order placement failed:', message);
       setError(message);
@@ -77,7 +81,7 @@ export function useOrderEntry() {
         symbol,
         settlement,
         side
-      });
+      }, { timeout: 12000 });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
@@ -101,7 +105,7 @@ export function useOrderEntry() {
     setError(null);
 
     try {
-      const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds });
+      const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 12000 });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));

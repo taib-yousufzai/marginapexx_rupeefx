@@ -88,11 +88,12 @@ async function apiCall<T>(
   let timeoutController: AbortController | undefined;
   let timerId: ReturnType<typeof setTimeout> | undefined;
 
-  const { signal: callerSignal, timeout } = options ?? {};
+  const { signal: callerSignal } = options ?? {};
+  const effectiveTimeout = options?.timeout ?? 15000;
 
-  if (timeout !== undefined) {
+  if (effectiveTimeout > 0) {
     timeoutController = new AbortController();
-    timerId = setTimeout(() => timeoutController!.abort(), timeout);
+    timerId = setTimeout(() => timeoutController!.abort(), effectiveTimeout);
   }
 
   if (callerSignal && timeoutController) {

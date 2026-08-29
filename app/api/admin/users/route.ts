@@ -310,8 +310,8 @@ export async function POST(request: Request): Promise<Response> {
 
       if (defaultSettingsRows.length > 0) {
         const [segInitRes, scalperInitRes] = await Promise.all([
-          adminClient.from('segment_settings').insert(defaultSettingsRows),
-          adminClient.from('scalper_segment_settings').insert(defaultScalperSettingsRows)
+          adminClient.from('segment_settings').upsert(defaultSettingsRows, { onConflict: 'user_id,segment,side' }),
+          adminClient.from('scalper_segment_settings').upsert(defaultScalperSettingsRows, { onConflict: 'user_id,segment,side' })
         ]);
 
         if (segInitRes.error || scalperInitRes.error) {
@@ -367,7 +367,7 @@ export async function POST(request: Request): Promise<Response> {
               const { id: _id, template_id: _tid, ...rest } = s;
               return { ...rest, user_id: newUser.id };
             });
-            await adminClient.from('segment_settings').insert(rows);
+            await adminClient.from('segment_settings').upsert(rows, { onConflict: 'user_id,segment,side' });
           }
 
           if (scalperRows.data && scalperRows.data.length > 0) {
@@ -375,7 +375,7 @@ export async function POST(request: Request): Promise<Response> {
               const { id: _id, template_id: _tid, ...rest } = s;
               return { ...rest, user_id: newUser.id };
             });
-            await adminClient.from('scalper_segment_settings').insert(rows);
+            await adminClient.from('scalper_segment_settings').upsert(rows, { onConflict: 'user_id,segment,side' });
           }
         }
       } catch (templateErr) {
