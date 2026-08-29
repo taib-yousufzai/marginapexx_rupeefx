@@ -8,6 +8,8 @@
  */
 
 import { requireAdmin } from '../_auth';
+import { getRole } from '../../../../lib/auth';
+import { getDescendantUserIds } from '../../../../lib/hierarchy';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,7 +39,7 @@ export async function GET(request: Request): Promise<Response> {
     // Step 1: Authenticate and authorize the caller
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerUser } = authResult;
 
     // Step 2: Parse query params
     const url = new URL(request.url);
@@ -51,8 +53,24 @@ export async function GET(request: Request): Promise<Response> {
     const demoParam = url.searchParams.get('demo');
     const isDemo = demoParam === 'true';
 
-    // Fetch all profiles to build a lookup map for user names and client_ids
-    const { data: profiles } = await adminClient.from('profiles').select('id, email, full_name, client_id, bank_name').eq('demo_user', isDemo);
+    const callerRole = getRole(callerUser);
+    const callerId = callerUser.id;
+
+    // Fetch allowed profiles based on caller's hierarchy
+    let pQuery = adminClient.from('profiles').select('id, email, full_name, client_id, bank_name').eq('demo_user', isDemo);
+    if (callerRole === 'broker') {
+      pQuery = pQuery.eq('parent_id', callerId);
+    } else if (callerRole === 'admin') {
+      const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
+      if (descendantIds !== null) {
+        if (descendantIds.length === 0) {
+          return Response.json([], { status: 200 });
+        }
+        pQuery = pQuery.in('id', descendantIds);
+      }
+    }
+    const { data: profiles } = await pQuery;
+
     const profileMap: Record<string, { full_name: string; email: string; client_id: string; bank_name: string }> = {};
     (profiles ?? []).forEach((p: any) => { profileMap[p.id] = p; });
 

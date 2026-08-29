@@ -32,14 +32,26 @@ export async function GET(req: NextRequest) {
     .eq('id', user.id)
     .single();
 
-  if (!profile || !['admin', 'broker'].includes(profile.role)) {
+  if (!profile || !['admin', 'broker', 'super_admin'].includes(profile.role)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
+
+  const { getDescendantUserIds } = await import('@/lib/hierarchy');
+  const descendantIds = await getDescendantUserIds(admin, user.id, profile.role);
 
   const { searchParams } = new URL(req.url);
   const userId = searchParams.get('user_id');
   const limit = parseInt(searchParams.get('limit') || '50', 10);
   const offset = parseInt(searchParams.get('offset') || '0', 10);
+
+  if (descendantIds !== null && descendantIds.length === 0) {
+    return NextResponse.json({
+      settlements: [],
+      total: 0,
+      limit,
+      offset,
+    });
+  }
 
   let query = admin
     .from('settlement_records')
@@ -58,9 +70,14 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
 
+  if (descendantIds !== null) {
+    query = query.in('user_id', descendantIds);
+  }
+
   if (userId) {
     query = query.eq('user_id', userId);
   }
+
 
   const { data, error, count } = await query;
 
