@@ -111,7 +111,7 @@ export async function GET(request: Request) {
     // 1. Fetch all open positions with user profile data in one query
     const { data: positions, error: posErr } = await getAdmin()
       .from('positions')
-      .select('id, user_id, symbol, side, qty_open, entry_price, ltp, settlement, product_type')
+      .select('id, user_id, symbol, side, qty_open, entry_price, ltp, settlement, product_type, created_at, entry_time')
       .eq('status', 'open')
       .gt('qty_open', 0);
 

@@ -1,6 +1,7 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { getAdminClient } from './adminClient.ts';
 import { resolveEffectivePrices } from './trading/marketPriceResolver.ts';
+import { checkAndExecuteAccountLiquidation, PositionForLiquidation } from './liquidationEngine.ts';
 
 export interface Quote {
   id: string; // e.g. "NSE:INFY"
@@ -440,39 +441,35 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
 
       // 4. Check if user hit drawdown limit
       if (totalUnrealised <= drawdownLimit && userPositions.length > 0) {
-        console.log(`[Order Matching] DRAWDOWN TRIGGERED for user ${userId}. Total Unrealised: ${totalUnrealised}, Limit: ${drawdownLimit} (${autoSqoffPercent}% of ${balance}). Closing all positions.`);
+        console.log(`[Order Matching] DRAWDOWN TRIGGERED for user ${userId}. Total Unrealised: ${totalUnrealised}, Limit: ${drawdownLimit} (${autoSqoffPercent}% of ${balance}). Delegating to sequential liquidation engine.`);
 
-        for (const item of resolvedPositions) {
-          const pos = item.pos;
-          const ltp = item.ltp;
-          const priceObj = item.priceObj;
+        // Convert user positions for checkAndExecuteAccountLiquidation
+        const positionsForLiquidation: PositionForLiquidation[] = resolvedPositions.map(item => ({
+          ...item.pos,
+          ltp: item.ltp,
+          entry_price: Number(item.pos.entry_price ?? item.pos.avg_price),
+          qty_open: Number(item.pos.qty_open ?? 0),
+        }));
 
-          // Calculate exit price
-          let exitPrice = ltp;
-          if (pos.side === 'BUY') {
-            // Closing BUY (selling) → BID - exitBuffer
-            const exitBuffer = exitBufferMap.get(`${pos.settlement}|BUY`) ?? 0;
-            exitPrice = priceObj.bid * (1 - exitBuffer);
-          } else {
-            // Closing SELL (buying back) → ASK + exitBuffer
-            const exitBuffer = exitBufferMap.get(`${pos.settlement}|SELL`) ?? 0;
-            exitPrice = priceObj.ask * (1 + exitBuffer);
-          }
-          exitPrice = Math.round(exitPrice * 10000) / 10000;
+        // Convert exitBufferMap for liquidationEngine
+        const exitBuffers = new Map<string, { exit_buffer: number; bid_buffer: number }>();
+        for (const [key, val] of exitBufferMap.entries()) {
+          const fullKey = `${userId}|${key}`;
+          exitBuffers.set(fullKey, { exit_buffer: val, bid_buffer: val });
+        }
 
-          console.log(`[Order Matching] Liquidation Close for position ${pos.id} (${pos.symbol}). LTP: ${ltp}, Exit Price: ${exitPrice}`);
+        const result = await checkAndExecuteAccountLiquidation(
+          userId,
+          balance,
+          autoSqoffPercent,
+          positionsForLiquidation,
+          totalUnrealised,
+          exitBuffers,
+          admin,
+        );
 
-          const { error: closeRpcErr } = await admin.rpc('close_position', {
-            p_position_id: pos.id,
-            p_user_id: pos.user_id,
-            p_ltp: ltp,
-            p_exit_price: exitPrice,
-            p_closed_by: 'AUTO_SQOFF',
-          });
-
-          if (closeRpcErr) {
-            console.error(`[Order Matching] Failed to close position ${pos.id} via close_position RPC during drawdown:`, closeRpcErr);
-          } else {
+        if (result.liquidated) {
+          for (const pos of userPositions) {
             closedPositionIds.add(pos.id);
           }
         }

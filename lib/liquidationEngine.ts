@@ -22,8 +22,10 @@ export interface PositionForLiquidation {
   ltp?: number;
   bid?: number;
   ask?: number;
+  pnl?: number;
+  entry_time?: string;
+  created_at?: string;
 }
-
 
 export function computeLiquidationThreshold(
   walletBalance: number,
@@ -33,7 +35,6 @@ export function computeLiquidationThreshold(
   return -(walletBalance * (liquidationPercentage / 100));
 }
 
-
 export function computeFreeMargin(
   walletBalance: number,
   totalLockedMargin: number,
@@ -42,14 +43,15 @@ export function computeFreeMargin(
 }
 
 /**
- *
- *
- * every tick batch.
+ * Checks if an account meets the liquidation criteria and liquidates positions
+ * strictly in sequential execution/opening order (oldest first). Re-evaluates
+ * account state after each trade liquidation and stops if the threshold is no longer breached.
  *
  * @param userId - The user ID to check
  * @param balance - Current wallet balance (already post-brokerage)
  * @param autoSqoffPercent - Liquidation percentage (from profiles.auto_sqoff, default 90)
  * @param positions - All open positions with their current PnL
+ * @param totalFloatingPnl - Total floating PnL across all open positions
  * @param exitBuffers - Map of `userId|settlement|side` → exit_buffer for computing exit prices
  * @param admin - Supabase admin client
  */
@@ -66,20 +68,12 @@ export async function checkAndExecuteAccountLiquidation(
     return { liquidated: false, positionsClosed: 0, totalPnl: 0, settlementAmount: 0 };
   }
 
+  const initialThreshold = computeLiquidationThreshold(balance, autoSqoffPercent);
 
-  const threshold = computeLiquidationThreshold(balance, autoSqoffPercent);
-
-  // Not yet at liquidation level — return early, nothing to do
-  if (totalFloatingPnl > threshold) {
-    // Removed to avoid rate limit console spam
-    // console.log(
-    //   `[LiquidationEngine] SKIP user ${userId}: ` +
-    //   `PnL=₹${totalFloatingPnl.toFixed(2)} > threshold=₹${threshold.toFixed(2)} ` +
-    //   `(balance=₹${balance.toFixed(2)}, sqoff=${autoSqoffPercent}%, positions=${positions.length})`,
-    // );
+  // Not yet at liquidation level — return early
+  if (totalFloatingPnl > initialThreshold) {
     return { liquidated: false, positionsClosed: 0, totalPnl: totalFloatingPnl, settlementAmount: 0 };
   }
-
 
   let confirmedBalance = balance;
   let confirmedAutoSqoff = autoSqoffPercent;
@@ -92,11 +86,12 @@ export async function checkAndExecuteAccountLiquidation(
 
     if (liveProfile) {
       confirmedBalance = Number(liveProfile.balance ?? balance);
-      confirmedAutoSqoff = Number(liveProfile.auto_sqoff ?? autoSqoffPercent);
+      if (liveProfile.auto_sqoff && Number(liveProfile.auto_sqoff) > 0) {
+        confirmedAutoSqoff = Number(liveProfile.auto_sqoff);
+      }
       const confirmedThreshold = computeLiquidationThreshold(confirmedBalance, confirmedAutoSqoff);
 
       if (totalFloatingPnl > confirmedThreshold) {
-        // Deposit just arrived — account is actually fine now
         console.log(
           `[LiquidationEngine] SKIP (confirmed) user ${userId}: ` +
           `PnL=₹${totalFloatingPnl.toFixed(2)} > confirmed threshold=₹${confirmedThreshold.toFixed(2)} ` +
@@ -106,23 +101,22 @@ export async function checkAndExecuteAccountLiquidation(
       }
     }
   } catch {
-    // DB error — proceed with the original balance; better to fire than miss
+    // DB query error — proceed with caller parameters
   }
 
   // ─── LIQUIDATION CONFIRMED ───────────────────────────────────────────────
   const confirmedThreshold = computeLiquidationThreshold(confirmedBalance, confirmedAutoSqoff);
   console.warn(
-    `[LiquidationEngine]   LIQUIDATION TRIGGERED for user ${userId}. ` +
+    `[LiquidationEngine] LIQUIDATION TRIGGERED for user ${userId}. ` +
     `Balance: ₹${confirmedBalance.toFixed(2)}, ` +
     `FloatingPnL: ₹${totalFloatingPnl.toFixed(2)}, ` +
     `Threshold: ₹${confirmedThreshold.toFixed(2)} (${confirmedAutoSqoff}%). ` +
-    `Closing ${positions.length} position(s) immediately.`,
+    `Evaluating ${positions.length} open position(s) sequentially.`,
   );
 
   const previousBalance = confirmedBalance;
-  let positionsClosed = 0;
 
-
+  // ─── STEP 1: Cancel all pending orders first ──────────────────────────────
   const { error: cancelErr } = await admin
     .from('orders')
     .update({ status: 'CANCELLED', info: 'AUTO_LIQUIDATION' })
@@ -133,25 +127,37 @@ export async function checkAndExecuteAccountLiquidation(
     console.error(`[LiquidationEngine] Failed to cancel pending orders for user ${userId}:`, cancelErr.message);
   }
 
+  // ─── STEP 2: Sort positions strictly by creation/opening order ─────────────
+  const sortedPositions = [...positions].sort((a, b) => {
+    const tA = new Date(a.entry_time || a.created_at || 0).getTime();
+    const tB = new Date(b.entry_time || b.created_at || 0).getTime();
+    if (tA !== tB) return tA - tB;
+    return (a.id || '').localeCompare(b.id || '');
+  });
 
-  // Close all positions in parallel — serial closes add ~100-200ms per position
-  const closeResults = await Promise.all(positions.map(async (pos) => {
+  // ─── STEP 3: Sequential Position Closure Loop with Re-evaluation ───────────
+  let currentBalance = confirmedBalance;
+  let positionsClosed = 0;
+  const liquidatedPositions: PositionForLiquidation[] = [];
+  const closeResults: boolean[] = [];
+
+  for (let i = 0; i < sortedPositions.length; i++) {
+    const pos = sortedPositions[i];
+
     const ltp = Number(pos.ltp || pos.entry_price);
     const exitBufferKey = `${userId}|${pos.settlement}|${pos.side}`;
     const bufferSettings = exitBuffers.get(exitBufferKey);
     const exitBufferPct = bufferSettings?.exit_buffer ?? 0.17;
     const bidBufferPct = bufferSettings?.bid_buffer ?? 0.3;
-    // For liquidation exit price, use the correct market side:
-    //   BUY position exits via SELL → BID
-    //   SELL position exits via BUY  → ASK
-    // If bid/ask is unavailable, fall back to ltp — this is forced liquidation
-    // and we must close regardless; the LTP fallback is explicit here, not silent.
+
     const exitBase = pos.side === 'BUY'
       ? (pos.bid && pos.bid > 0 ? pos.bid : ltp)
       : (pos.ask && pos.ask > 0 ? pos.ask : ltp);
+
     if (exitBase === ltp) {
       console.warn(`[LiquidationEngine] ${pos.side === 'BUY' ? 'bid' : 'ask'} unavailable for ${pos.symbol}; using ltp=${ltp} for liquidation exit.`);
     }
+
     const exitPrice = calculateExitPrice({ side: pos.side, ltp: exitBase, exitBufferPct, bidBufferPct });
 
     const carryBrokerage = calculateCarryBrokerage({
@@ -164,36 +170,88 @@ export async function checkAndExecuteAccountLiquidation(
       commissionValue: bufferSettings?.commission_value,
     });
 
-    // Attempt close with one retry
+    let closedThisPos = false;
+
+    // Attempt close with retry & graceful exception handling
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const { error: closeErr } = await admin.rpc('close_position_v2', {
-        p_position_id:        pos.id,
-        p_close_qty:          Number(pos.qty_open),
-        p_close_price:        exitPrice,
-        p_closed_by:          'LIQUIDATION',
-        p_expected_brokerage: carryBrokerage,
-      });
+      try {
+        const { error: closeErr } = await admin.rpc('close_position_v2', {
+          p_position_id:        pos.id,
+          p_close_qty:          Number(pos.qty_open),
+          p_close_price:        exitPrice,
+          p_closed_by:          'LIQUIDATION',
+          p_expected_brokerage: carryBrokerage,
+        });
 
-      if (!closeErr) return true;
+        if (!closeErr) {
+          closedThisPos = true;
+          break;
+        }
 
-      if (attempt === 1) {
-        console.warn(`[LiquidationEngine] close_position failed for ${pos.id} (attempt 1): ${closeErr.message}. Retrying in 200ms...`);
-        await new Promise(r => setTimeout(r, 200));
-      } else {
-        console.error(`[LiquidationEngine] close_position FAILED for ${pos.id} after 2 attempts: ${closeErr.message}. Position may remain open!`);
+        if (attempt === 1) {
+          await new Promise(r => setTimeout(r, 200));
+        } else {
+          console.error(`[LiquidationEngine] close_position FAILED for ${pos.id}: ${closeErr.message}`);
+        }
+      } catch (err: any) {
+        if (attempt === 2) {
+          console.warn(`[LiquidationEngine] close_position_v2 exception for ${pos.id}:`, err?.message);
+        }
       }
     }
-    return false;
-  }));
 
-  positionsClosed = closeResults.filter(Boolean).length;
+    closeResults.push(closedThisPos);
 
-  // ── Notify user about liquidation ────────────────────────────────────────
-  // Send one notification per closed position so the user knows exactly
-  // which instruments were liquidated and at what threshold.
+    if (closedThisPos) {
+      positionsClosed++;
+      liquidatedPositions.push(pos);
+
+      // Re-read live wallet balance from profiles
+      try {
+        const { data: updatedProfile } = await admin
+          .from('profiles')
+          .select('balance')
+          .eq('id', userId)
+          .single();
+        if (updatedProfile) {
+          currentBalance = Number(updatedProfile.balance ?? 0);
+        }
+      } catch {
+        // Keep current balance estimate
+      }
+
+      // Re-evaluate floating PnL of remaining open positions
+      const remainingPositions = sortedPositions.slice(i + 1);
+      if (remainingPositions.length > 0) {
+        let remainingFloatingPnl = 0;
+        for (const remPos of remainingPositions) {
+          if (typeof remPos.pnl === 'number') {
+            remainingFloatingPnl += remPos.pnl;
+          } else {
+            const remLtp = Number(remPos.ltp || remPos.entry_price);
+            const remPnl = remPos.side === 'BUY'
+              ? (remLtp - Number(remPos.entry_price)) * Number(remPos.qty_open)
+              : (Number(remPos.entry_price) - remLtp) * Number(remPos.qty_open);
+            remainingFloatingPnl += remPnl;
+          }
+        }
+
+        const updatedThreshold = computeLiquidationThreshold(currentBalance, confirmedAutoSqoff);
+        if (remainingFloatingPnl > updatedThreshold) {
+          console.log(
+            `[LiquidationEngine] STOPPING sequential liquidation for user ${userId}: ` +
+            `Remaining floating PnL=₹${remainingFloatingPnl.toFixed(2)} > threshold=₹${updatedThreshold.toFixed(2)} ` +
+            `(Balance=₹${currentBalance.toFixed(2)})`
+          );
+          break;
+        }
+      }
+    }
+  }
+
+  // ─── STEP 4: Notifications for closed positions ────────────────────────────
   if (positionsClosed > 0) {
-    const closedPositions = positions.filter((_, i) => closeResults[i]);
-    const notifRows = closedPositions.map(pos => ({
+    const notifRows = liquidatedPositions.map(pos => ({
       user_id: userId,
       type: 'GENERAL',
       title: `⚠️ Auto Liquidation — ${pos.symbol}`,
@@ -209,23 +267,19 @@ export async function checkAndExecuteAccountLiquidation(
     await admin.from('notifications').insert(notifRows);
   }
 
-  //  determine settlement amount — computed directly, not read-back from profile
-  // Sum up the actual PNL_DEBIT amounts for all positions we just closed.
-  // This avoids a race condition where profiles.settlement_amount may not yet
-  // reflect the trigger updates when we read it back immediately after closing.
+  // ─── STEP 5: Settlement Loss Calculation & Accounting ──────────────────────
   let incrementalSettlement = 0;
   if (positionsClosed > 0) {
-    const closedIds = positions.map(p => p.id);
+    const closedIds = liquidatedPositions.map(p => p.id);
     const { data: pnlTxs } = await admin
       .from('transactions')
-      .select('amount, type')
+      .select('amount, type, ref_id')
       .in('ref_id', closedIds)
       .eq('type', 'PNL_DEBIT')
       .eq('status', 'APPROVED');
 
     const totalPnlDebit = (pnlTxs || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
 
-    // Net loss from this liquidation = total PnL debits minus any PnL credits
     const { data: pnlCredits } = await admin
       .from('transactions')
       .select('amount')
@@ -236,36 +290,29 @@ export async function checkAndExecuteAccountLiquidation(
     const totalPnlCredit = (pnlCredits || []).reduce((sum, tx) => sum + Number(tx.amount), 0);
     const netLoss = totalPnlDebit - totalPnlCredit;
 
-    // Settlement is the amount by which balance went below zero.
-    // = max(0, netLoss - previousBalance)
-    // (If balance was ₹1000 and net loss is ₹1200, deficit = ₹200)
+    // Settlement is the unabsorbed deficit when net loss exceeds available positive balance
     const previousPositiveBalance = Math.max(0, previousBalance);
     incrementalSettlement = Math.max(0, Math.round((netLoss - previousPositiveBalance) * 100) / 100);
   }
 
   const finalLoss = Math.abs(totalFloatingPnl);
 
-  // Stamp settlement_amount onto every position that was just liquidated
-  // so users can see it on their individual position history cards.
-  //
-  // We distribute the incremental settlement debt proportionally by each position's
-  // share of the total floating loss.
+  // Distribute settlement debt to positions
   if (incrementalSettlement > 0 && positionsClosed > 0) {
-    const liquidatedIds = positions.map(p => p.id);
+    const liquidatedIds = liquidatedPositions.map(p => p.id);
 
-    // Compute each position's floating loss contribution
-    const posLosses = positions.map(p => {
+    const posLosses = liquidatedPositions.map(p => {
+      if (typeof p.pnl === 'number') return { id: p.id, loss: Math.max(0, -p.pnl) };
       const ltp = Number(p.ltp || p.entry_price);
       const pnl = p.side === 'BUY'
         ? (ltp - Number(p.entry_price)) * p.qty_open
         : (Number(p.entry_price) - ltp) * p.qty_open;
-      return { id: p.id, loss: Math.max(0, -pnl) }; // only count losses, clamp to 0
+      return { id: p.id, loss: Math.max(0, -pnl) };
     });
 
     const totalLoss = posLosses.reduce((sum, p) => sum + p.loss, 0);
 
     if (totalLoss > 0) {
-      // Proportional distribution — update each position individually
       await Promise.all(
         posLosses.map(({ id, loss }) => {
           const share = (loss / totalLoss) * incrementalSettlement;
@@ -276,7 +323,6 @@ export async function checkAndExecuteAccountLiquidation(
         }),
       );
     } else {
-      // All positions broke even or were profitable — split equally
       const equalShare = Math.round((incrementalSettlement / liquidatedIds.length) * 100) / 100;
       await admin
         .from('positions')
@@ -285,7 +331,7 @@ export async function checkAndExecuteAccountLiquidation(
     }
   }
 
-  //  if balance went negative
+  // Insert settlement record if balance deficit was incurred
   if (incrementalSettlement > 0) {
     await admin.from('settlement_records').insert({
       user_id: userId,
@@ -301,9 +347,7 @@ export async function checkAndExecuteAccountLiquidation(
     });
   }
 
-
-
-  // ── Step 7: Audit log ────────────────────────────────────────────────────
+  // ─── STEP 6: Audit Log Entry ──────────────────────────────────────────────
   await admin.from('act_logs').insert({
     type: 'AUTO_SQUARE_OFF',
     user_id: userId,
