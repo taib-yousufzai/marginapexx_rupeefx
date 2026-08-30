@@ -216,6 +216,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     currentChangePercent = comexQuotes[item.comexSymbol].changePercent;
   }
 
+  if (currentLtp === 0 && initialOrder) {
+    const rawPrice = initialOrder.client_price || initialOrder.trigger_price || initialOrder.target || initialOrder.stop_loss;
+    if (rawPrice) {
+      currentLtp = typeof rawPrice === 'string' ? parseFloat(rawPrice) || 0 : rawPrice;
+    }
+  }
+
   const activeSide: 'BUY' | 'SELL' = (side === 'SELL' || side === 'BUY') ? side : 'BUY';
   const buySetting = dbSeg ? getSegment(dbSeg, 'BUY') : undefined;
   const sellSetting = dbSeg ? getSegment(dbSeg, 'SELL') : undefined;
@@ -543,50 +550,22 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   }
 
   const formattedLtp = `${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const formattedMin = `${currencySymbol}${minAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const formattedMax = `${currencySymbol}${maxAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   let priceRangeText = '';
   if (orderType === 'TARGET') {
-    if (side === 'SELL') {
-      priceRangeText = maxAllowedPrice !== Infinity
-        ? `Allowed price: more than ${formattedLtp} to ${formattedMax}`
-        : `Allowed price: more than ${formattedLtp}`;
-    } else {
-      priceRangeText = minAllowedPrice > 0
-        ? `Allowed price: ${formattedMin} to less than ${formattedLtp}`
-        : `Allowed price: less than ${formattedLtp}`;
-    }
+    priceRangeText = activeSide === 'BUY'
+      ? `more than ${formattedLtp}`
+      : `less than ${formattedLtp}`;
   } else if (orderType === 'LIMIT') {
-    if (side === 'BUY') {
-      priceRangeText = minAllowedPrice > 0
-        ? `Allowed price: ${formattedMin} to less than ${formattedLtp}`
-        : `Allowed price: less than ${formattedLtp}`;
-    } else {
-      priceRangeText = maxAllowedPrice !== Infinity
-        ? `Allowed price: more than ${formattedLtp} to ${formattedMax}`
-        : `Allowed price: more than ${formattedLtp}`;
-    }
+    priceRangeText = activeSide === 'BUY'
+      ? `less than ${formattedLtp}`
+      : `more than ${formattedLtp}`;
   } else if (orderType === 'SL' || orderType === 'SLM') {
-    if (side === 'BUY') {
-      priceRangeText = maxAllowedPrice !== Infinity
-        ? `Allowed price: more than ${formattedLtp} to ${formattedMax}`
-        : `Allowed price: more than ${formattedLtp}`;
-    } else {
-      priceRangeText = minAllowedPrice > 0
-        ? `Allowed price: ${formattedMin} to less than ${formattedLtp}`
-        : `Allowed price: less than ${formattedLtp}`;
-    }
+    priceRangeText = activeSide === 'BUY'
+      ? `more than ${formattedLtp}`
+      : `less than ${formattedLtp}`;
   } else {
-    if (minAllowedPrice > 0 && maxAllowedPrice !== Infinity) {
-      priceRangeText = `Allowed price: ${formattedMin} to ${formattedMax}`;
-    } else if (minAllowedPrice > 0) {
-      priceRangeText = `Allowed price: more than ${formattedMin}`;
-    } else if (maxAllowedPrice !== Infinity) {
-      priceRangeText = `Allowed price: up to ${formattedMax}`;
-    } else {
-      priceRangeText = `Allowed price: Market price`;
-    }
+    priceRangeText = `Market price`;
   }
 
   const priceRangeHelp = currentLtp > 0 ? (
@@ -1677,8 +1656,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                             {currentLtp > 0 && (
                               <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary, #6B7280)', marginTop: 4, fontWeight: 600 }}>
                                 {activeSide === 'BUY'
-                                  ? `Below ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : `Above ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                  ? `less than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : `more than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                               </div>
                             )}
                           </div>
@@ -1694,8 +1673,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                             {currentLtp > 0 && (
                               <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary, #6B7280)', marginTop: 4, fontWeight: 600 }}>
                                 {activeSide === 'BUY'
-                                  ? `Above ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : `Below ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                  ? `more than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : `less than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                               </div>
                             )}
                           </div>
@@ -1717,8 +1696,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                             {currentLtp > 0 && (
                               <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary, #6B7280)', marginTop: 4, fontWeight: 600 }}>
                                 {activeSide === 'BUY'
-                                  ? `Below ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : `Above ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                  ? `less than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : `more than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                               </div>
                             )}
                           </div>
@@ -1734,8 +1713,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                             {currentLtp > 0 && (
                               <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary, #6B7280)', marginTop: 4, fontWeight: 600 }}>
                                 {activeSide === 'BUY'
-                                  ? `Above ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : `Below ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                  ? `more than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                  : `less than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
                               </div>
                             )}
                           </div>
