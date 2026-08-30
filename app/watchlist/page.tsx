@@ -328,6 +328,7 @@ export function getExchangeBadge(segment: string, name?: string, symbol?: string
   const segUpper = (segment || '').toUpperCase();
   const comb = `${name || ''} ${symbol || ''} ${segment || ''}`.toUpperCase();
 
+  if (segUpper.includes('US-EQ') || segUpper.includes('US EQUITY') || segUpper.includes('US - EQUITY') || (symbol || '').startsWith('US:')) return 'US-EQ';
   if (segUpper === 'STOCK-OPT' || segUpper.includes('STOCK OPTIONS') || segUpper.includes('STOCK OPT')) return 'STOCK-OPT';
   if (segUpper === 'STOCK-FUT' || segUpper.includes('STOCK FUTURES') || segUpper.includes('STOCK FUT')) return 'STOCK-FUT';
   if (segUpper === 'INDEX-OPT' || segUpper.includes('INDEX OPTIONS') || segUpper.includes('INDEX OPT')) return 'INDEX-OPT';
