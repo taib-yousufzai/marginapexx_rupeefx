@@ -247,9 +247,10 @@ interface TradingSegmentsDrawerProps {
   isOpen: boolean;
   onClose: () => void;
   onSelect?: (item: any) => void;
+  addedSymbols?: Set<string>;
 }
 
-export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: TradingSegmentsDrawerProps) {
+export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, addedSymbols }: TradingSegmentsDrawerProps) {
   const [mounted, setMounted] = React.useState(false);
   const [expandedSegment, setExpandedSegment] = useState<string | null>(null);
   const [expandedSubcategories, setExpandedSubcategories] = useState<Record<string, boolean>>({});
@@ -469,12 +470,20 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
 
               {expandedSegment === seg.name && (
                 <div className="lib-seg-children">
-                  {seg.instruments?.map((inst, idx) => (
-                    <div key={`${inst.kiteSymbol || inst.symbol}-${idx}`} className="lib-inst-item" onClick={() => onSelect?.(inst)}>
-                      <span className="lib-inst-name">{inst.name}</span>
-                      <button className="lib-add-btn">+ Add</button>
-                    </div>
-                  ))}
+                  {seg.instruments?.map((inst, idx) => {
+                    const isAdded = addedSymbols?.has(inst.symbol);
+                    return (
+                      <div key={`${inst.kiteSymbol || inst.symbol}-${idx}`} className="lib-inst-item" onClick={() => onSelect?.(inst)}>
+                        <span className="lib-inst-name">{inst.name}</span>
+                        <button
+                          className="lib-add-btn"
+                          style={isAdded ? { background: '#2C8E5A', color: '#fff', borderColor: '#2C8E5A' } : undefined}
+                        >
+                          {isAdded ? 'Added ✓' : '+ Add'}
+                        </button>
+                      </div>
+                    );
+                  })}
                   {seg.subCategories?.map(sub => {
                     const isSubOpen = !!expandedSubcategories[sub.name];
                     return (
@@ -493,12 +502,20 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect }: Tra
                           <span className="lib-subcat-title">{sub.name}</span>
                           <span className="lib-subcat-count">{sub.instruments?.length || 0}</span>
                         </div>
-                        {isSubOpen && sub.instruments?.map((inst, idx) => (
-                          <div key={`${inst.kiteSymbol || inst.symbol}-${idx}`} className="lib-inst-item" onClick={() => onSelect?.(inst)}>
-                            <span className="lib-inst-name">{inst.name}</span>
-                            <button className="lib-add-btn">+ Add</button>
-                          </div>
-                        ))}
+                        {isSubOpen && sub.instruments?.map((inst, idx) => {
+                          const isAdded = addedSymbols?.has(inst.symbol);
+                          return (
+                            <div key={`${inst.kiteSymbol || inst.symbol}-${idx}`} className="lib-inst-item" onClick={() => onSelect?.(inst)}>
+                              <span className="lib-inst-name">{inst.name}</span>
+                              <button
+                                className="lib-add-btn"
+                                style={isAdded ? { background: '#2C8E5A', color: '#fff', borderColor: '#2C8E5A' } : undefined}
+                              >
+                                {isAdded ? 'Added ✓' : '+ Add'}
+                              </button>
+                            </div>
+                          );
+                        })}
                       </div>
                     );
                   })}

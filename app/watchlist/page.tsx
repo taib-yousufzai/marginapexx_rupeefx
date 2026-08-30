@@ -1052,6 +1052,7 @@ function WatchlistContent() {
   // (local copy removed)
 
   const filteredItems = filterBySearch(filterByTab(watchlistItems, activeTab), searchText);
+  const addedSymbolsSet = useMemo(() => new Set(watchlistItems.map(i => i.symbol)), [watchlistItems]);
   const scriptMountedRef = useRef(false);
   const deepLinkHandledRef = useRef(false);
   const watchlistItemsRef = useRef<WatchlistItem[]>([]);
@@ -2554,17 +2555,38 @@ function WatchlistContent() {
                         </div>
                         {isOpen && (
                           <div className="children-container" style={{ display: 'block' }}>
-                            {filteredSeg.instruments?.map((inst) => (
-                              <div key={inst.symbol} className="script-item">
-                                <span>{inst.name}</span>
-                                <button className="add-script-btn" onClick={() => {
-                                  if (typeof window.__addToWatchlistCallback === 'function') {
-                                    window.__addToWatchlistCallback(inst as WatchlistItem);
-                                    showToast('Added to watchlist', false);
-                                  }
-                                }}>+ Add</button>
-                              </div>
-                            ))}
+                            {filteredSeg.instruments?.map((inst) => {
+                              const isAdded = addedSymbolsSet.has(inst.symbol);
+                              return (
+                                <div key={inst.symbol} className="script-item">
+                                  <span>{inst.name}</span>
+                                  <button
+                                    className="add-script-btn"
+                                    style={isAdded ? { background: '#2C8E5A', color: '#fff', border: 'none', opacity: 0.9, cursor: 'pointer' } : undefined}
+                                    onClick={() => {
+                                      if (isAdded) {
+                                        setWatchlistItems(prev => {
+                                          const next = prev.filter(i => i.symbol !== inst.symbol);
+                                          saveWatchlistToStorage(next, userId);
+                                          if (typeof (window as any).__syncWatchlistSymbols === 'function') {
+                                            (window as any).__syncWatchlistSymbols(next.map((i: WatchlistItem) => i.symbol));
+                                          }
+                                          return next;
+                                        });
+                                        showToast('Removed from watchlist', false);
+                                      } else {
+                                        if (typeof window.__addToWatchlistCallback === 'function') {
+                                          window.__addToWatchlistCallback(inst as WatchlistItem);
+                                          showToast('Added to watchlist', false);
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    {isAdded ? 'Added ✓' : '+ Add'}
+                                  </button>
+                                </div>
+                              );
+                            })}
                             {filteredSeg.subCategories?.map((sub) => {
                               const subKey = `${seg.name}__${sub.name}`;
                               const subOpen = !!expandedSegments[subKey];
@@ -2581,17 +2603,38 @@ function WatchlistContent() {
                                   </div>
                                   {subOpen && (
                                     <div className="children-container" style={{ display: 'block' }}>
-                                      {sub.instruments.map((inst: any) => (
-                                        <div key={inst.symbol} className="script-item">
-                                          <span>{inst.name}</span>
-                                          <button className="add-script-btn" onClick={() => {
-                                            if (typeof window.__addToWatchlistCallback === 'function') {
-                                              window.__addToWatchlistCallback(inst as WatchlistItem);
-                                              showToast('Added to watchlist', false);
-                                            }
-                                          }}>+ Add</button>
-                                        </div>
-                                      ))}
+                                      {sub.instruments.map((inst: any) => {
+                                        const isAdded = addedSymbolsSet.has(inst.symbol);
+                                        return (
+                                          <div key={inst.symbol} className="script-item">
+                                            <span>{inst.name}</span>
+                                            <button
+                                              className="add-script-btn"
+                                              style={isAdded ? { background: '#2C8E5A', color: '#fff', border: 'none', opacity: 0.9, cursor: 'pointer' } : undefined}
+                                              onClick={() => {
+                                                if (isAdded) {
+                                                  setWatchlistItems(prev => {
+                                                    const next = prev.filter(i => i.symbol !== inst.symbol);
+                                                    saveWatchlistToStorage(next, userId);
+                                                    if (typeof (window as any).__syncWatchlistSymbols === 'function') {
+                                                      (window as any).__syncWatchlistSymbols(next.map((i: WatchlistItem) => i.symbol));
+                                                    }
+                                                    return next;
+                                                  });
+                                                  showToast('Removed from watchlist', false);
+                                                } else {
+                                                  if (typeof window.__addToWatchlistCallback === 'function') {
+                                                    window.__addToWatchlistCallback(inst as WatchlistItem);
+                                                    showToast('Added to watchlist', false);
+                                                  }
+                                                }
+                                              }}
+                                            >
+                                              {isAdded ? 'Added ✓' : '+ Add'}
+                                            </button>
+                                          </div>
+                                        );
+                                      })}
                                     </div>
                                   )}
                                 </div>
