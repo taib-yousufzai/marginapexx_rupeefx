@@ -483,12 +483,17 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
 
   const isLoading = ltp === 0;
 
-  const handleLeftClick = () => {
-    if (basketMode) return;
-    onDetail({ ...item, preferredView: priceView } as any);
-  };
-
-  const handleRightClick = () => {
+  const handleCardClick = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (
+      target.closest('.wc-action-btn') ||
+      target.closest('.instrument-delete-btn') ||
+      target.closest('.mcx-comex-switch') ||
+      target.closest('.wc-basket-actions') ||
+      target.closest('button')
+    ) {
+      return;
+    }
     if (basketMode) return;
     onDetail({ ...item, preferredView: priceView } as any);
   };
@@ -509,8 +514,8 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
           <i className="fas fa-trash-alt"></i>
         </button>
       </div>
-      <div className="wc-content instr-row__content">
-        <div className="instr-row__left" onClick={handleLeftClick} style={{ cursor: 'pointer' }}>
+      <div className="wc-content instr-row__content" onClick={handleCardClick} style={{ cursor: 'pointer' }}>
+        <div className="instr-row__left">
           <div className="instr-row__name-line">
             <span className="instr-row__name">{item.name}</span>
             <span className="exchange-badge" style={
@@ -549,7 +554,7 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
             </div>
           )}
         </div>
-        <div className="instr-row__right" onClick={handleRightClick} style={{ cursor: 'pointer' }}>
+        <div className="instr-row__right">
           {isLoading ? (
             <div className="instr-row__ltp" style={{ color: '#9CA3AF' }}>Loading…</div>
           ) : (
@@ -833,6 +838,8 @@ function WatchlistContent() {
   const [slPrice, setSlPrice] = useState('');
   const [tpPrice, setTpPrice] = useState('');
   const openDetailSheet = (item: any) => {
+    isOpeningTradeSheetRef.current = false;
+    setDetailOpeningSide(null);
     setSelectedItem(item);
     setIsTradeSheetOpen(false); // ensure TradeSheet is closed when detail opens
   };
@@ -1574,6 +1581,7 @@ function WatchlistContent() {
   }, [watchlistItems, activeTab, userId]);
 
   const closeDetailSheet = () => {
+    isOpeningTradeSheetRef.current = false;
     setSelectedItem(null);
     setDetailOpeningSide(null);
     const ids = ['detailSheet', 'detailSheetOverlay'];
@@ -1587,6 +1595,8 @@ function WatchlistContent() {
   };
 
   const closeChartSheet = () => {
+    isOpeningTradeSheetRef.current = false;
+    setDetailOpeningSide(null);
     setChartItem(null);
     setIsBenchmarkChart(false);
     const ids = ['chartSheet', 'chartSheetOverlay'];
@@ -2557,6 +2567,8 @@ function WatchlistContent() {
                                   <span>{inst.name}</span>
                                   <button
                                     className="add-script-btn"
+                                    data-watch-symbol={inst.symbol}
+                                    data-watch-item={JSON.stringify(inst)}
                                     style={isAdded ? { background: '#2C8E5A', color: '#fff', border: 'none', opacity: 0.9, cursor: 'pointer' } : undefined}
                                     onClick={() => {
                                       if (isAdded) {
@@ -2605,6 +2617,8 @@ function WatchlistContent() {
                                             <span>{inst.name}</span>
                                             <button
                                               className="add-script-btn"
+                                              data-watch-symbol={inst.symbol}
+                                              data-watch-item={JSON.stringify(inst)}
                                               style={isAdded ? { background: '#2C8E5A', color: '#fff', border: 'none', opacity: 0.9, cursor: 'pointer' } : undefined}
                                               onClick={() => {
                                                 if (isAdded) {
@@ -2951,6 +2965,16 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
       // script always has the latest set.
       window.__syncWatchlistSymbols = function(symbols) {
         watchlistSymbols = new Set(symbols);
+        document.querySelectorAll('.add-script-btn[data-watch-symbol]').forEach(function(btn) {
+          var sym = btn.getAttribute('data-watch-symbol');
+          if (sym) {
+            if (watchlistSymbols.has(sym)) {
+              setButtonAdded(btn);
+            } else {
+              setButtonRemoved(btn);
+            }
+          }
+        });
       };
 
       function setButtonAdded(btn) {
