@@ -104,21 +104,19 @@ export default function OrderPage() {
       trigger_price: order.trigger_price,
       stop_loss: order.stop_loss,
       target: order.target,
-      is_exit: order.is_exit,
     });
   };
 
   const handleTradeAgain = (order: any) => {
     setIsSheetOpen(false);
     setSelectedOrder(null);
-    const symToUse = order.kite_instrument || order.symbol;
     setTimeout(() => {
-      router.push(`/watchlist?symbol=${encodeURIComponent(symToUse)}&action=detail`);
+      router.push(`/watchlist?symbol=${encodeURIComponent(order.symbol)}&action=detail`);
     }, 80);
   };
 
-  const openOrders = orders.filter(o => o.status?.toUpperCase() === 'PENDING' || o.status?.toUpperCase() === 'TRIGGER_PENDING');
-  const closedOrders = orders.filter(o => o.status?.toUpperCase() !== 'PENDING' && o.status?.toUpperCase() !== 'TRIGGER_PENDING');
+  const openOrders = orders.filter(o => o.status === 'PENDING');
+  const closedOrders = orders.filter(o => o.status !== 'PENDING');
 
   const activeList = tab === 'open' ? openOrders : closedOrders;
   const filtered = activeList.filter(o =>
@@ -279,7 +277,7 @@ export default function OrderPage() {
                         <span className="ord-symbol">{order.symbol}</span>
                         <span className={`ord-badge ${order.is_exit ? 'short' : (isBuy ? 'long' : 'short')}`}>
                           <i className={`fas fa-arrow-${order.is_exit ? 'up' : 'down'}`} />
-                          {order.is_exit ? `${order.side} EXIT` : (isBuy ? 'BUY' : 'SELL')}
+                          {order.is_exit ? (isBuy ? 'SELL EXIT' : 'BUY EXIT') : (isBuy ? 'BUY' : 'SELL')}
                         </span>
                       </div>
                       <div className="ord-row ord-row-price">
@@ -559,10 +557,28 @@ export default function OrderPage() {
               initialOrder={tradeSheetInitialOrder}
               isModify={!!modifyingOrderId}
               modifyingOrderId={modifyingOrderId}
-              exitMode={tradeSheetInitialOrder?.is_exit || (modifyingOrderId ? (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-')) : false)}
+              exitMode={modifyingOrderId ? (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-')) : false}
               onSuccess={() => {
                 refresh();
                 if (modifyingOrderId) {
+                  // Only cancel the old order if it is not a virtual position order
+                  if (!modifyingOrderId.startsWith('pos-sl-') && !modifyingOrderId.startsWith('pos-target-') && !modifyingOrderId.startsWith('pos-gtt-')) {
+                    cancelOrder(modifyingOrderId);
+                  } else {
+                    const positionId = modifyingOrderId.replace('pos-sl-', '').replace('pos-target-', '').replace('pos-gtt-', '');
+                    const isSl = modifyingOrderId.startsWith('pos-sl-');
+                    const isTarget = modifyingOrderId.startsWith('pos-target-');
+                    const isGtt = modifyingOrderId.startsWith('pos-gtt-');
+
+                    let clearData: any = {};
+                    if (isSl) clearData = { stop_loss: null };
+                    else if (isTarget) clearData = { target: null };
+                    else if (isGtt) clearData = { stop_loss: null, target: null };
+
+                    api.patch(`/api/positions/${positionId}`, clearData).then(() => {
+                      refresh();
+                    });
+                  }
                   showToast('Order modified successfully');
                   setModifyingOrderId(null);
                 }

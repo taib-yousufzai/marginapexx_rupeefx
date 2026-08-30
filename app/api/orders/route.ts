@@ -28,7 +28,6 @@ import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { mapSymbolToSegment } from '@/lib/trading/SymbolMapping';
 import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
 import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
-import { getLotSizeFallback, extractUnderlyingName } from '@/lib/lotSize';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -64,8 +63,8 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
 
     // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel
     const [bookRes, priceRes] = await Promise.all([
-      fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(3000) }).catch(() => null),
-      fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(3000) }).catch(() => null),
+      fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store' }).catch(() => null),
+      fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store' }).catch(() => null),
     ]);
 
     const isForexUsd = ['GBPUSD', 'EURUSD'].includes(cleanSym.replace('USDT', ''));
@@ -122,7 +121,7 @@ async function fetchKiteQuotes(instruments: string[]): Promise<Record<string, Se
     try {
       const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || 'http://localhost:8080';
       const params = new URLSearchParams({ symbols: instruments.join(',') });
-      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store' });
       if (resTicker.ok) {
         const json = await resTicker.json();
         if (json.success && json.data) {
@@ -163,7 +162,6 @@ async function fetchKiteQuotes(instruments: string[]): Promise<Record<string, Se
           Authorization: `token ${apiKey}:${session.accessToken}`,
         },
         cache: 'no-store',
-        signal: AbortSignal.timeout(3500),
       });
 
       if (!res.ok) return result;
@@ -238,33 +236,18 @@ function mapSegmentToDbSegment(s: string): string {
   return trimmed;
 }
 
-function getLotSize(
-  symbol: string,
-  dbSettings?: { symbol: string; lot_size: number }[],
-  dbInstruments?: { tradingsymbol?: string; name?: string; lot_size: number }[]
-): number {
-  const n = symbol.toUpperCase().replace(/^(NFO:|BFO:|MCX:|NSE:|BSE:|CDS:)/, '');
-  const underlying = extractUnderlyingName(n);
-
-  if (dbInstruments && Array.isArray(dbInstruments)) {
-    const exactMatch = dbInstruments.find(i => i.tradingsymbol && i.tradingsymbol.toUpperCase() === n);
-    if (exactMatch && Number(exactMatch.lot_size) > 0) return Number(exactMatch.lot_size);
-
-    const exactNameMatch = dbInstruments.find(i => i.name && i.name.toUpperCase() === underlying);
-    if (exactNameMatch && Number(exactNameMatch.lot_size) > 0) return Number(exactNameMatch.lot_size);
-
-    const sortedInst = [...dbInstruments].sort((a, b) => (b.name || '').length - (a.name || '').length);
-    const prefixMatch = sortedInst.find(i => i.name && n.startsWith(i.name.toUpperCase()));
-    if (prefixMatch && Number(prefixMatch.lot_size) > 0) return Number(prefixMatch.lot_size);
-  }
-
+function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[]): number {
+  const n = symbol.toUpperCase();
   if (dbSettings && Array.isArray(dbSettings)) {
-    const sorted = [...dbSettings].sort((a, b) => (b.symbol || '').length - (a.symbol || '').length);
-    const match = sorted.find(s => s.symbol && (n === s.symbol.toUpperCase() || n.startsWith(s.symbol.toUpperCase())));
-    if (match && Number(match.lot_size) > 0) return Number(match.lot_size);
+    const match = dbSettings.find(s => n.includes(s.symbol.toUpperCase()) || s.symbol.toUpperCase().includes(n));
+    if (match) return Number(match.lot_size);
   }
-
-  return getLotSizeFallback(symbol, dbSettings);
+  if (n.includes('BANKNIFTY') || n.includes('BANKEX')) return 15;
+  if (n.includes('FINNIFTY')) return 40;
+  if (n.includes('MIDCP') || n.includes('MIDCAP')) return 75;
+  if (n.includes('SENSEX')) return 10;
+  if (n.includes('NIFTY')) return 25;
+  return 1;
 }
 
 
@@ -321,30 +304,35 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const openPositions = posRes.data ?? [];
 
     const orders: MyOrder[] = dbOrders.map((r: Record<string, unknown>) => ({
-      id:                 r.id as string,
-      symbol:             r.symbol as string,
-      kite_instrument:    (r.kite_instrument as string) ?? (r.symbol as string),
-      linked_position_id: (r.linked_position_id as string) ?? (r.info as string) ?? undefined,
-      segment:            (r.segment as string) ?? '',
-      side:               r.side as 'BUY' | 'SELL',
-      status:             r.status as MyOrder['status'],
-      qty:                Number(r.qty),
-      lots:               Number(r.lots ?? 0),
-      fill_price:         Number(r.fill_price ?? r.price),
-      ltp_at_entry:       Number(r.ltp_at_entry ?? 0),
-      order_type:         (r.order_type as MyOrder['order_type']) ?? 'MARKET',
-      product_type:       (r.product_type as MyOrder['product_type']) ?? 'INTRADAY',
-      info:               (r.info as string) ?? null,
-      brokerage:          Number(r.brokerage ?? 0),
-      client_price:       r.client_price !== null ? Number(r.client_price) : undefined,
-      trigger_price:      r.trigger_price !== null ? Number(r.trigger_price) : undefined,
-      stop_loss:          r.stop_loss !== null ? Number(r.stop_loss) : undefined,
-      target:             r.target !== null ? Number(r.target) : undefined,
-      is_exit:            r.is_exit !== undefined ? Boolean(r.is_exit) : false,
-      created_at:         r.created_at as string,
+      id:           r.id as string,
+      symbol:       r.symbol as string,
+      segment:      (r.segment as string) ?? '',
+      side:         r.side as 'BUY' | 'SELL',
+      status:       r.status as MyOrder['status'],
+      qty:          Number(r.qty),
+      lots:         Number(r.lots ?? 0),
+      fill_price:   Number(r.fill_price ?? r.price),
+      ltp_at_entry: Number(r.ltp_at_entry ?? 0),
+      order_type:   (r.order_type as MyOrder['order_type']) ?? 'MARKET',
+      product_type: (r.product_type as MyOrder['product_type']) ?? 'INTRADAY',
+      info:         (r.info as string) ?? null,
+      brokerage:    Number(r.brokerage ?? 0),
+      client_price: r.client_price !== null ? Number(r.client_price) : undefined,
+      trigger_price: r.trigger_price !== null ? Number(r.trigger_price) : undefined,
+      stop_loss:    r.stop_loss !== null ? Number(r.stop_loss) : undefined,
+      target:       r.target !== null ? Number(r.target) : undefined,
+      is_exit:      r.is_exit !== undefined ? Boolean(r.is_exit) : false,
+      created_at:   r.created_at as string,
     }));
 
-    // (Removed flawed realExitOrderKeys check that hid virtual orders if ANY past exit order existed)
+    // Build a set of "symbol|exitSide" from real EXECUTED exit orders.
+    // If a real exit order already exists for a given symbol+exitSide, we skip generating
+    // a virtual SL/Target order for the same open position.
+    const realExitOrderKeys = new Set<string>(
+      dbOrders
+        .filter((o: any) => o.is_exit === true && o.status === 'EXECUTED')
+        .map((o: any) => `${o.symbol}|${o.side}`)
+    );
 
     // Also build a set of position IDs that are fully closed to skip virtual orders
     const closedPosRes = await admin
@@ -361,6 +349,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       if (closedPosIds.has(pos.id)) continue;
 
       const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
+      const exitKey = `${pos.symbol}|${exitSide}`;
+
+      // Skip if a real executed exit order already exists for this symbol+exitSide
+      if (realExitOrderKeys.has(exitKey)) continue;
 
       const stopLoss = pos.stop_loss ? Number(pos.stop_loss) : (pos.sl ? Number(pos.sl) : null);
       const target = pos.target ? Number(pos.target) : (pos.tp ? Number(pos.tp) : null);
@@ -438,8 +430,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
-    const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, is_exit: isExitInput, linked_position_id, orderAttemptId } = body;
-    let is_exit = Boolean(isExitInput);
+    const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, is_exit, linked_position_id, orderAttemptId } = body;
 
     // 2b. Idempotency pre-check using Redis
     let attemptRedisKey: string | null = null;
@@ -528,7 +519,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 4-6 + 8-9: Run all independent DB queries AND the Kite LTP fetch in parallel.
     // This is the key optimization — previously these were sequential (~4 round-trips).
-    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult, instrumentsResult] = await Promise.all([
+    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult] = await Promise.all([
       // Profile
       admin.from('profiles')
         .select('id, active, read_only, segments, parent_id, balance, trading_mode')
@@ -572,12 +563,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Fetch script settings for dynamic lot size
       admin.from('script_settings')
         .select('symbol, lot_size'),
-
-      // Fetch instruments table for targeted symbol & underlying (prevents 1000 row truncation cap)
-      admin.from('instruments')
-        .select('tradingsymbol, name, lot_size')
-        .gt('lot_size', 0)
-        .or(`tradingsymbol.eq.${symbol.toUpperCase().replace(/^(NFO:|BFO:|MCX:|NSE:|BSE:|CDS:)/, '')},name.eq.${extractUnderlyingName(symbol)}`),
     ]);
 
     const t4_backendQuoteRead = Date.now();
@@ -586,32 +571,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const rawQuote = quotesMap[kiteInst];
     const kiteLtp = typeof rawQuote === 'number' ? rawQuote : (rawQuote?.last_price ?? null);
     const dbScriptSettings = (scriptSettingsResult?.data as any[]) ?? [];
-    let dbInstruments = (instrumentsResult?.data as any[]) ?? [];
-
-    // Ensure instruments table records exist for all open positions & pending orders symbols
-    const openPositionsForInst = positionsResult?.data ?? [];
-    const pendingOrdersForInst = pendingOrdersResult?.data ?? [];
-    const extraSymbolsToLookup = Array.from(new Set([
-      ...openPositionsForInst.map((p: any) => p.symbol),
-      ...pendingOrdersForInst.map((po: any) => po.symbol)
-    ].filter(Boolean))).map(s => s.toUpperCase().replace(/^(NFO:|BFO:|MCX:|NSE:|BSE:|CDS:)/, ''));
-
-    const missingSymbols = extraSymbolsToLookup.filter(s =>
-      !dbInstruments.some(i => (i.tradingsymbol && i.tradingsymbol.toUpperCase() === s) || (i.name && s.startsWith(i.name.toUpperCase())))
-    );
-
-    if (missingSymbols.length > 0) {
-      const missingUnderlyings = Array.from(new Set(missingSymbols.map(s => extractUnderlyingName(s))));
-      const { data: extraInst } = await admin
-        .from('instruments')
-        .select('tradingsymbol, name, lot_size')
-        .gt('lot_size', 0)
-        .or(`tradingsymbol.in.("${missingSymbols.join('","')}"),name.in.("${missingUnderlyings.join('","')}")`);
-
-      if (extraInst && extraInst.length > 0) {
-        dbInstruments = [...dbInstruments, ...extraInst];
-      }
-    }
 
     // 4. Profile checks
     if (profileErr || !profile) {
@@ -713,35 +672,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const segSetting = side === 'BUY' ? buySetting : sellSetting;
 
-    const openPositions = positionsResult?.data ?? [];
-    let activePosition = openPositions.find((p: any) => p.symbol === symbol && p.product_type === (product_type || 'INTRADAY'));
-    if (activePosition && activePosition.side !== side) {
-      is_exit = true;
-    }
-
     // 7. Validate lot / qty limits & Strike Range
     if (!segSetting.trade_allowed) {
       return NextResponse.json({ error: `${side} orders not allowed in ${segment}` }, { status: 403 });
     }
 
-    const symbolLotSize = lots > 0 ? (qty / lots) : getLotSize(symbol, dbScriptSettings, dbInstruments);
+    const symbolLotSize = lots > 0 ? (qty / lots) : getLotSize(symbol, dbScriptSettings);
     const maxQty = (segSetting.max_order_lot as number) * symbolLotSize;
-    if (!is_exit && qty > maxQty) {
+    if (qty > maxQty) {
       return NextResponse.json({
-        error: `Order exceeds maximum allowed limit of ${segSetting.max_order_lot} lots (${maxQty} qty) per order.`,
+        error: `The maximum you can exit in a single order is ${segSetting.max_order_lot} lots or ${maxQty} qty. Please execute your position in multiple orders, or use the Exit All button available on the top right.`,
       }, { status: 400 });
     }
 
     // Verify cumulative segment limits (max_lot) across open positions and pending orders
-    let openPositionsLots = 0;
-    let pendingOrdersLots = 0;
-
+    let totalOpenLots = 0;
+    const openPositions = positionsResult?.data ?? [];
     if (openPositions.length > 0) {
       for (const pos of openPositions) {
         const posSegment = mapSymbolToSegment(pos.symbol);
         if (posSegment === dbSegment) {
-          const size = getLotSize(pos.symbol, dbScriptSettings, dbInstruments);
-          if (size > 0) openPositionsLots += Number(pos.qty_open) / size;
+          const size = getLotSize(pos.symbol, dbScriptSettings);
+          if (size > 0) totalOpenLots += Number(pos.qty_open) / size;
         }
       }
     }
@@ -752,9 +704,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (!po.is_exit) {
           const poSegment = mapSymbolToSegment(po.symbol);
           if (poSegment === dbSegment) {
-            const poSize = getLotSize(po.symbol, dbScriptSettings, dbInstruments);
+            const poSize = getLotSize(po.symbol, dbScriptSettings);
             if (poSize > 0) {
-              pendingOrdersLots += Number(po.lots) > 0
+              totalOpenLots += Number(po.lots) > 0
                 ? Number(po.lots)
                 : (Number(po.qty) / poSize);
             }
@@ -763,14 +715,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const totalOpenLots = openPositionsLots + pendingOrdersLots;
     const newOrderLots = lots > 0 ? lots : (qty / symbolLotSize);
     if (!is_exit && (totalOpenLots + newOrderLots) > (segSetting.max_lot as number)) {
-      const breakdownMsg = pendingOrdersLots > 0
-        ? `(${openPositionsLots.toFixed(2)} open positions + ${pendingOrdersLots.toFixed(2)} pending orders)`
-        : `(${totalOpenLots.toFixed(2)} in open positions)`;
       return NextResponse.json({
-        error: `Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current segment exposure: ${totalOpenLots.toFixed(2)} lots ${breakdownMsg}.`,
+        error: `Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current open positions: ${totalOpenLots.toFixed(2)} lots.`,
       }, { status: 400 });
     }
 
@@ -851,12 +799,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             return NextResponse.json({ error: 'Stop loss trigger price must be below the current market price for long exits.' }, { status: 400 });
           }
         } else {
-          // Entry mode (!is_exit): trigger_price is the entry breakout condition
-          if (side === 'BUY' && trigPrice <= baseLtp) {
-            return NextResponse.json({ error: 'Trigger price must be above the current market price for stop buy.' }, { status: 400 });
-          }
-          if (side === 'SELL' && trigPrice >= baseLtp) {
-            return NextResponse.json({ error: 'Trigger price must be below the current market price for stop sell.' }, { status: 400 });
+          if (order_type === 'SLM') {
+            if (side === 'BUY' && trigPrice >= baseLtp) {
+              return NextResponse.json({ error: 'Stop loss price must be below the current market price.' }, { status: 400 });
+            }
+            if (side === 'SELL' && trigPrice <= baseLtp) {
+              return NextResponse.json({ error: 'Stop loss price must be above the current market price.' }, { status: 400 });
+            }
+          } else { // SL order type
+            if (side === 'BUY' && trigPrice <= baseLtp) {
+              return NextResponse.json({ error: 'Trigger price must be above the current market price for stop limit buy.' }, { status: 400 });
+            }
+            if (side === 'SELL' && trigPrice >= baseLtp) {
+              return NextResponse.json({ error: 'Trigger price must be below the current market price for stop limit sell.' }, { status: 400 });
+            }
           }
         }
       }
@@ -868,11 +824,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const refPrice = ['LIMIT', 'SL', 'GTT'].includes(order_type ?? 'MARKET') ? client_price : baseLtp;
 
     // Resolve reference entry price and position side (Long vs Short)
-    if (!activePosition) {
-      activePosition = openPositions.find(
-        (p: any) => p.symbol === symbol && p.product_type === targetProductType
-      );
-    }
+    const activePosition = openPositions.find(
+      (p: any) => p.symbol === symbol && p.product_type === targetProductType
+    );
 
     const refEntry = (is_exit && activePosition) ? Number(activePosition.entry_price) : refPrice;
     const isLong = (is_exit && activePosition) ? (activePosition.side === 'BUY') : (side === 'BUY');
@@ -954,33 +908,49 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Segment Price Limits validation (top_limit and min_limit)
     const topLimit = Number(segSetting.top_limit ?? 0);
     const minLimit = Number(segSetting.min_limit ?? 0);
-    const orderPriceToCheck = (order_type === 'SL' || order_type === 'SLM')
-      ? (trigger_price ? parseFloat(trigger_price.toString()) : client_price)
-      : client_price;
-
-    if (['LIMIT', 'SL', 'SLM', 'GTT'].includes(order_type ?? 'MARKET')) {
-      if (topLimit > 0) {
-        const maxAllowed = baseLtp * (1 + topLimit / 100);
-        if (orderPriceToCheck > maxAllowed) {
-          return NextResponse.json({
-            error: `Maximum price allowed is ₹${maxAllowed.toFixed(2)}`
-          }, { status: 400 });
+    if (['LIMIT', 'SL', 'GTT'].includes(order_type ?? 'MARKET')) {
+      if (side === 'BUY') {
+        if (topLimit > 0) {
+          const maxAllowed = baseLtp * (1 + topLimit / 100);
+          if (client_price > maxAllowed) {
+            return NextResponse.json({
+              error: `Maximum price allowed is ₹${maxAllowed.toFixed(2)}`
+            }, { status: 400 });
+          }
         }
-      }
 
-      if (minLimit > 0) {
-        const minAllowed = baseLtp * (1 - minLimit / 100);
-        if (orderPriceToCheck < minAllowed) {
-          return NextResponse.json({
-            error: `Minimum price allowed is ₹${minAllowed.toFixed(2)}`
-          }, { status: 400 });
+        if (minLimit > 0) {
+          const minAllowed = baseLtp * (1 - minLimit / 100);
+          if (client_price < minAllowed) {
+            return NextResponse.json({
+              error: `Minimum price allowed is ₹${minAllowed.toFixed(2)}`
+            }, { status: 400 });
+          }
+        }
+      } else { // SELL side
+        if (topLimit > 0) {
+          const maxAllowed = baseLtp * (1 + topLimit / 100);
+          if (client_price > maxAllowed) {
+            return NextResponse.json({
+              error: `Maximum price allowed is ₹${maxAllowed.toFixed(2)}`
+            }, { status: 400 });
+          }
+        }
+
+        if (minLimit > 0) {
+          const minAllowed = baseLtp * (1 - minLimit / 100);
+          if (client_price < minAllowed) {
+            return NextResponse.json({
+              error: `Minimum price allowed is ₹${minAllowed.toFixed(2)}`
+            }, { status: 400 });
+          }
         }
       }
     }
 
     // 10. Compute fill price (LTP ± buffer from segment_settings)
     let fillPrice: number;
-    const isImmediate = (order_type ?? 'MARKET') === 'MARKET';
+    const isImmediate = (order_type ?? 'MARKET') === 'MARKET' || order_type === 'SLM';
 
     let rawBid = typeof rawQuote === 'object' ? (rawQuote?.bid ?? null) : null;
     let rawAsk = typeof rawQuote === 'object' ? (rawQuote?.ask ?? null) : null;
@@ -1003,63 +973,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const symbolExchange = (symbol.includes(':') ? symbol.split(':')[0] : '').toUpperCase();
 
-    const isCommodity = symbolExchange === 'MCX' || symbolExchange === 'NCO' ||
-      symbol.startsWith('MCX:') || symbol.startsWith('MCX-') ||
-      dbSegment.includes('MCX') ||
-      ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => symbol.toUpperCase().includes(c));
+    const isIndianMarket = ['NSE', 'NFO', 'MCX', 'BSE', 'BFO', 'NCO'].includes(symbolExchange) ||
+      symbol.startsWith('NSE:') || symbol.startsWith('NFO:') || symbol.startsWith('MCX:') || symbol.startsWith('MCX-');
 
-    const isIndianNonCommodity = (['NSE', 'NFO', 'BSE', 'BFO'].includes(symbolExchange) ||
-      symbol.startsWith('NSE:') || symbol.startsWith('NFO:') || symbol.startsWith('BSE:') || symbol.startsWith('BFO:')) && !isCommodity;
+    const askBuf = isIndianMarket ? 0 : (buySetting?.entry_buffer ?? buySetting?.bid_buffer ?? 0);
+    const bidBuf = isIndianMarket ? 0 : (sellSetting?.entry_buffer ?? sellSetting?.bid_buffer ?? 0);
 
-    // bid_buffer controls the displayed spread (Layer 1 — same formula as TradeSheet/DetailSheet).
-    // entry/exit buffer is added on top at execution time (Layer 2 — hidden from user).
-    const bidBufRaw = isIndianNonCommodity ? 0 : Number(buySetting?.bid_buffer ?? sellSetting?.bid_buffer ?? 0);
-    const bidBufDecimal = Math.abs(bidBufRaw) > 0.005 ? bidBufRaw / 100 : bidBufRaw;
-    const bidBufAmount = baseLtp * bidBufDecimal; // always LTP-based
-
-    let displayedAsk: number = baseLtp;
-    let displayedBid: number = baseLtp;
+    const effective = resolveEffectivePrices({
+      ltp: baseLtp,
+      rawBid,
+      rawAsk,
+      hasRealBidAsk,
+      askBuffer: askBuf,
+      bidBuffer: bidBuf,
+    });
 
     if (order_type === 'LIMIT' || order_type === 'SL' || order_type === 'GTT') {
       fillPrice = client_price;
     } else {
       const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
-      const execMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
+      const exitPriceMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
 
-      const isExecutingBuy = side === 'BUY';
-      const useLtpMode = execMode === 'LTP' || isCommodity || !hasRealBidAsk;
-
-      // Layer 1: compute displayed Ask/Bid (same formula as TradeSheet)
-      if (useLtpMode) {
-        displayedAsk = baseLtp + bidBufAmount;
-        displayedBid = baseLtp - bidBufAmount;
+      let basePrice: number;
+      if (exitPriceMode === 'LTP') {
+        basePrice = baseLtp;
       } else {
-        displayedAsk = (rawAsk ?? baseLtp) + bidBufAmount;
-        displayedBid = (rawBid ?? baseLtp) - bidBufAmount;
-      }
-      if (displayedAsk <= 0) displayedAsk = baseLtp;
-      if (displayedBid <= 0) displayedBid = baseLtp;
-
-      // Use frontend-sent price as fallback if server couldn't resolve a price
-      const rawDisplayed = isExecutingBuy ? displayedAsk : displayedBid;
-      const safeDisplayed = (rawDisplayed > 0) ? rawDisplayed : (client_price > 0 ? client_price : 0);
-
-      if (!safeDisplayed || safeDisplayed <= 0) {
-        return NextResponse.json(
-          { error: 'Could not fetch live market price. Please wait a moment and try again.' },
-          { status: 503 }
-        );
+        const isExecutingBuy = side === 'BUY';
+        basePrice = isExecutingBuy ? effective.effectiveAsk : effective.effectiveBid;
       }
 
-      // Layer 2: apply entry/exit buffer on top (hidden from user), LTP used as buffer base
       fillPrice = calculateBufferedPrice({
         side: side as 'BUY' | 'SELL',
         isExit: is_exit ?? false,
-        basePrice: safeDisplayed,           // displayed Ask (BUY) or Bid (SELL)
-        ltp: baseLtp,                        // LTP used for buffer amount
+        basePrice,
         buySetting,
         sellSetting,
-        isBasePriceRealBidAsk: true,         // tells calculator bid_buffer already applied
+        exitPriceModeOverride: exitPriceMode,
       });
     }
 
@@ -1084,8 +1033,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         backendBid: rawBid,
         backendAsk: rawAsk,
 
-        executionBid: displayedBid,
-        executionAsk: displayedAsk,
+        executionBid: effective.effectiveBid,
+        executionAsk: effective.effectiveAsk,
 
         depthBestAsk: typeof rawQuote === 'object' ? (rawQuote?.depth?.sell?.[0]?.price ?? rawAsk) : rawAsk,
         depthBestAskQuantity: typeof rawQuote === 'object' ? (rawQuote?.depth?.sell?.[0]?.quantity ?? null) : null,
@@ -1094,8 +1043,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         bidBuffer: sellSetting?.entry_buffer ?? sellSetting?.bid_buffer ?? 0,
         normalBuffer: segSetting?.entry_buffer ?? 0,
 
-        effectiveBid: displayedBid,
-        effectiveAsk: displayedAsk,
+        effectiveBid: effective.effectiveBid,
+        effectiveAsk: effective.effectiveAsk,
 
         finalFillPrice: fillPrice,
 
@@ -1114,10 +1063,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 11. Atomic write via Postgres RPC
     const targetOrderType = order_type ?? 'MARKET';
-    const rpcOrderType = targetOrderType;
+    
+    // To make SLM execute immediately and create a position, we tell the DB it's a MARKET order
+    const rpcOrderType = targetOrderType === 'SLM' ? 'MARKET' : targetOrderType;
 
     let resolvedTriggerPrice = trigger_price ? parseFloat(trigger_price.toString()) : null;
     let resolvedStopLoss = stop_loss ? parseFloat(stop_loss.toString()) : null;
+
+    // For SLM, the UI sends the Stop Loss price in the trigger_price field.
+    if (targetOrderType === 'SLM') {
+      if (resolvedTriggerPrice !== null) {
+        resolvedStopLoss = resolvedTriggerPrice;
+        resolvedTriggerPrice = null; // Clear trigger price since it's a market order now
+      }
+    }
 
     const executeDbCall = async () => {
       const { data: oId, error: rpcErr } = await admin.rpc('place_order_v2', {
@@ -1138,7 +1097,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         p_trigger_price: resolvedTriggerPrice,
         p_stop_loss:    resolvedStopLoss,
         p_target:       target ? parseFloat(target.toString()) : null,
-        p_info:         linked_position_id ?? null,
+        p_info:         null,
         p_expected_margin: requiredMargin,
         p_expected_brokerage: expectedBrokerage,
         p_idempotency_key: null,
@@ -1162,8 +1121,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: err.message || 'Order execution failed. Please try again.' }, { status: 400 });
     }
 
-    // Update order_type to 'SLM' in the database if it was an exit SLM order asynchronously
-    if (targetOrderType === 'SLM' && is_exit && orderId) {
+    // Update order_type to 'SLM' in the database if it was an SLM order asynchronously
+    if (targetOrderType === 'SLM' && orderId) {
       admin
         .from('orders')
         .update({ order_type: 'SLM' })

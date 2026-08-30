@@ -38,7 +38,7 @@ export function useOrderEntry() {
     setError(null);
 
     try {
-      const result = await api.post<{ id: string }>('/api/orders', state, { timeout: 12000 });
+      const result = await api.post<{ id: string }>('/api/orders', state, { timeout: 20000 });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
@@ -56,11 +56,15 @@ export function useOrderEntry() {
         } else {
           message = `ApiError ${err.status}`;
         }
-      } else if (err instanceof Error) {
-        if (err.name === 'AbortError') {
+      } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
+        const errName = (err as any).name;
+        const errMessage = (err as any).message || String(err);
+        if (errName === 'AbortError' || errMessage.includes('abort')) {
           message = 'Order submission timed out. Please try again.';
+        } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
+          message = 'Network connection error. Please try again.';
         } else {
-          message = err.message;
+          message = errMessage;
         }
       }
       console.warn('[useOrderEntry] Order placement failed:', message);
@@ -81,7 +85,7 @@ export function useOrderEntry() {
         symbol,
         settlement,
         side
-      }, { timeout: 12000 });
+      }, { timeout: 20000 });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
@@ -90,9 +94,20 @@ export function useOrderEntry() {
 
       return { success: true, ...result };
     } catch (err) {
-      const message = err instanceof ApiError
-        ? ((err.details as { error?: string } | null)?.error ?? err.message ?? `ApiError ${err.status}`)
-        : err instanceof Error ? err.message : 'Unknown error';
+      let message = 'Unknown error';
+      if (err instanceof ApiError) {
+        message = (err.details as { error?: string } | null)?.error ?? err.message ?? `ApiError ${err.status}`;
+      } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
+        const errName = (err as any).name;
+        const errMessage = (err as any).message || String(err);
+        if (errName === 'AbortError' || errMessage.includes('abort')) {
+          message = 'Position exit timed out. Please try again.';
+        } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
+          message = 'Network connection error. Please try again.';
+        } else {
+          message = errMessage;
+        }
+      }
       setError(message);
       return { success: false, error: message };
     } finally {
@@ -105,7 +120,7 @@ export function useOrderEntry() {
     setError(null);
 
     try {
-      const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 12000 });
+      const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 20000 });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
@@ -114,9 +129,20 @@ export function useOrderEntry() {
 
       return { success: true, ...result };
     } catch (err) {
-      const message = err instanceof ApiError
-        ? ((err.details as { error?: string } | null)?.error ?? `ApiError ${err.status}`)
-        : err instanceof Error ? err.message : 'Unknown error';
+      let message = 'Unknown error';
+      if (err instanceof ApiError) {
+        message = (err.details as { error?: string } | null)?.error ?? `ApiError ${err.status}`;
+      } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
+        const errName = (err as any).name;
+        const errMessage = (err as any).message || String(err);
+        if (errName === 'AbortError' || errMessage.includes('abort')) {
+          message = 'Batch position exit timed out. Please try again.';
+        } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
+          message = 'Network connection error. Please try again.';
+        } else {
+          message = errMessage;
+        }
+      }
       setError(message);
       return { success: false, error: message };
     } finally {

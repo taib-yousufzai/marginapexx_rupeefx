@@ -49,17 +49,16 @@ const getUnderlyingSymbol = (sym: string) => {
 }
 
 function getAppTheme(): 'dark' | 'black' | 'light' {
-  if (typeof document === 'undefined') return 'light';
+  if (typeof document === 'undefined') return 'dark';
   if (document.documentElement.classList.contains('black') || document.body.classList.contains('black')) return 'black';
   if (document.documentElement.classList.contains('dark') || document.body.classList.contains('dark')) return 'dark';
   if (document.documentElement.classList.contains('light') || document.body.classList.contains('light')) return 'light';
   try {
     const saved = localStorage.getItem('marginApexTheme');
     if (saved === 'black') return 'black';
-    if (saved === 'dark') return 'dark';
     if (saved === 'light') return 'light';
   } catch (e) {}
-  return 'light';
+  return 'dark';
 }
 
 interface TradingChartProps {
@@ -936,7 +935,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
     // Optimistic UI: Immediately close panel and show processing state
     setIsSubmitting(true);
-    positionSnapshotRef.current = `${orderSymbol}:${currentInstrumentPosition ? currentInstrumentPosition.id : '__none__'}:${currentInstrumentPosition ? currentInstrumentPosition.qty_open : 0}`;
+    positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
     if (modifyOrderId) {
       setModifyOrderId(null);
     }
@@ -977,17 +976,14 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         showToast(modifyOrderId ? 'Order Modified Successfully!' : `${orderSide} Order Placed Successfully!`);
         refreshOrders();
         refreshBalance();
+        refreshPositions();
         window.dispatchEvent(new CustomEvent('position-closed'));
-        // isSubmitting stays true — cleared by useEffect when positions refresh
-        // Safety fallback in case positions never update
-        submittingTimeoutRef.current = setTimeout(() => { setIsSubmitting(false); positionSnapshotRef.current = null; }, 2500);
       } else {
         showToast(res.error || 'Failed to place order', true);
-        setIsSubmitting(false);
-        positionSnapshotRef.current = null;
       }
     }).catch(err => {
       showToast(err?.message || 'Failed to place order', true);
+    }).finally(() => {
       setIsSubmitting(false);
       positionSnapshotRef.current = null;
     });
@@ -1133,62 +1129,61 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     exitingPosIds.current.add(pos.id);
     setForceRender(prev => prev + 1);
 
-    const posLotSize = getLotSize(pos.symbol);
-    const selectedQtyRaw = parseFloat(String(qtyValue)) || 0;
-    const selectedQty = useLots ? selectedQtyRaw * posLotSize : selectedQtyRaw;
-    const finalQty = selectedQty > 0 ? Math.min(pos.qty_open, selectedQty) : pos.qty_open;
+    try {
+      const posLotSize = getLotSize(pos.symbol);
+      const selectedQtyRaw = parseFloat(String(qtyValue)) || 0;
+      const selectedQty = useLots ? selectedQtyRaw * posLotSize : selectedQtyRaw;
+      const finalQty = selectedQty > 0 ? Math.min(pos.qty_open, selectedQty) : pos.qty_open;
 
-    if (finalQty <= 0) {
+      if (finalQty <= 0) {
+        return;
+      }
+
+      const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
+      const effectiveLots = finalQty / posLotSize;
+
+      showToast(`Placing quick exit order...`);
+      const res = await placeOrder({
+        symbol: pos.symbol,
+        kite_instrument: pos.kite_instrument || pos.symbol,
+        segment: pos.settlement || segment,
+        side: exitSide,
+        qty: finalQty,
+        lots: effectiveLots,
+        order_type: 'MARKET',
+        product_type: pos.product_type || 'INTRADAY',
+        client_price: pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
+        is_exit: true,
+        linked_position_id: positionViewMode === 'detailed' ? pos.id : undefined
+      });
+
+      if (res.success) {
+        showToast(`Quick exit order placed`);
+        refreshOrders();
+        refreshBalance();
+        refreshPositions();
+        window.dispatchEvent(new CustomEvent('position-closed'));
+
+        // Reset transient quantity state to 1 lot (configured default) upon exit completion
+        setQtyValue(1);
+        setUseLots(true);
+        setIsExitFlow(false);
+        setIsAddMoreFlow(false);
+      } else {
+        showToast(res.error || 'Exit failed', true);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Exit failed', true);
+    } finally {
       quickExitLock.current = false;
       exitingPosIds.current.delete(pos.id);
-      setForceRender(prev => prev + 1);
-      return;
-    }
-
-    const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
-    const effectiveLots = finalQty / posLotSize;
-
-    showToast(`Placing quick exit order...`);
-    const res = await placeOrder({
-      symbol: pos.symbol,
-      kite_instrument: pos.kite_instrument || pos.symbol,
-      segment: pos.settlement || segment,
-      side: exitSide,
-      qty: finalQty,
-      lots: effectiveLots,
-      order_type: 'MARKET',
-      product_type: pos.product_type || 'INTRADAY',
-      client_price: pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
-      is_exit: true,
-      linked_position_id: positionViewMode === 'detailed' ? pos.id : undefined
-    });
-
-    if (res.success) {
-      showToast(`Quick exit order placed`);
-      refreshOrders();
-      refreshBalance();
-      refreshPositions();
-      window.dispatchEvent(new CustomEvent('position-closed'));
-      quickExitLock.current = false;
-
-      // Reset transient quantity state to 1 lot (configured default) upon exit completion
-      setQtyValue(1);
-      setUseLots(true);
-      setIsExitFlow(false);
-      setIsAddMoreFlow(false);
-
-      exitingPosIds.current.delete(pos.id);
-      setForceRender(prev => prev + 1);
-    } else {
-      showToast(res.error || 'Exit failed', true);
-      quickExitLock.current = false;
-      exitingPosIds.current.delete(pos.id);
+      setIsSubmitting(false);
       setForceRender(prev => prev + 1);
     }
   };
 
   // Add more to a position (may be a different symbol from the current chart)
-  const handleAddMorePosition = (pos: EnrichedPosition) => {
+  const handleAddMorePosition = async (pos: EnrichedPosition) => {
     if (isSubmitting) return;
     if (!isTradeOnChartActive) {
       if (isLandscape || isCssLandscape) setIsInfoPanelCollapsed(true);
@@ -1227,48 +1222,38 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       submitStartTimeRef.current = Date.now();
       positionSnapshotRef.current = `${pos.id}:${pos.qty_open}`;
 
-      placeOrder({
-        symbol: pos.symbol,
-        kite_instrument: pos.kite_instrument || pos.symbol,
-        segment: pos.settlement || segment,
-        side: pos.side,
-        qty: qVal,
-        lots: 1,
-        order_type: 'MARKET',
-        product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
-        client_price: 0,
-        is_exit: false
-      }).then(res => {
+      try {
+        const res = await placeOrder({
+          symbol: pos.symbol,
+          kite_instrument: pos.kite_instrument || pos.symbol,
+          segment: pos.settlement || segment,
+          side: pos.side,
+          qty: qVal,
+          lots: 1,
+          order_type: 'MARKET',
+          product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
+          client_price: 0,
+          is_exit: false
+        });
+
         if (res.success) {
           showToast(`Successfully added ${qVal} to position!`);
           refreshOrders();
           refreshPositions();
           refreshBalance();
-          refreshBalance();
           window.dispatchEvent(new Event('order_placed'));
           window.dispatchEvent(new CustomEvent('position-closed'));
-          
-          // Safety timeout to clear isSubmitting / loader
-          submittingTimeoutRef.current = setTimeout(() => {
-            setIsSubmitting(false);
-            setAddingPosId(null);
-            positionSnapshotRef.current = null;
-            window.dispatchEvent(new Event('global-loader-end'));
-          }, 8000);
         } else {
           showToast(res.error || 'Failed to add to position', true);
-          setIsSubmitting(false);
-          setAddingPosId(null);
-          positionSnapshotRef.current = null;
-          window.dispatchEvent(new Event('global-loader-end'));
         }
-      }).catch(err => {
+      } catch (err: any) {
         showToast(err?.message || 'Failed to add to position', true);
+      } finally {
         setIsSubmitting(false);
         setAddingPosId(null);
         positionSnapshotRef.current = null;
         window.dispatchEvent(new Event('global-loader-end'));
-      });
+      }
       return;
     }
 
@@ -1286,168 +1271,183 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
     setOrderSide(side);
 
-    // Guard against stale exit/add-more quantity when placing a new order (Bug #2)
-    let qVal = Number(qtyValue) || 1;
-    if (isExitFlow || isAddMoreFlow || !currentInstrumentPosition || qVal <= 0) {
-      qVal = 1;
-      setQtyValue(1);
-      setUseLots(true);
-      setIsExitFlow(false);
-      setIsAddMoreFlow(false);
-    }
-
-    if (qVal <= 0) {
-      showToast("Invalid quantity", true);
-      quickEntryLock.current = false;
-      setIsSubmitting(false);
-      return;
-    }
-    const isScalper = tradingMode === 'scalper';
-    const effectiveUseLots = isScalper ? true : useLots;
-
-    // In scalp mode qtyValue is always in lots. Guard against a stale exit-qty
-    // (e.g. 1500 units from a previous exit flow) being treated as lot count,
-    // which would multiply by lotSize again and blow past max_order_lot.
-    const dbSeg = mapSegmentWithSymbol(segment, symbol);
-    const segSetting = getSegment(dbSeg, side);
-    const maxOrderLot = segSetting?.max_order_lot ?? segSetting?.max_lot ?? 50;
-
-    // If qty exceeds max, show error, correct input to max, and abort — don't silently clamp.
-    if (effectiveUseLots && maxOrderLot > 0 && qVal > maxOrderLot) {
-      showToast(`Max allowed: ${maxOrderLot} lots (${maxOrderLot * lotSize} qty). Corrected to maximum.`, true);
-      setQtyValue(String(maxOrderLot));
-      quickEntryLock.current = false;
-      setIsSubmitting(false);
-      return;
-    }
-
-    const finalQty = effectiveUseLots ? (isCrypto ? qVal * lotSize : Math.round(qVal * lotSize)) : (isCrypto ? qVal : Math.round(qVal));
-    const intradayLeverage = segSetting?.intraday_leverage ?? 10;
-    const intradayType = segSetting?.intraday_type ?? 'Multiplier';
-    const required = Math.round(intradayType === '%' ? (currentPrice * finalQty) * (intradayLeverage / 100) : (intradayType === 'Fixed' ? (finalQty / lotSize) * intradayLeverage : (currentPrice * finalQty) / intradayLeverage));
-
-    if (required > balance) {
-      showToast(`Insufficient margin! Need ₹${required.toLocaleString('en-IN')}`, true);
-      quickEntryLock.current = false;
-      setIsSubmitting(false);
-      return;
-    }
-
-    showToast(`Placing quick ${side} order...`);
-    const res = await placeOrder({
-      symbol: symbol,
-      kite_instrument: symbol,
-      segment: segment,
-      side: side,
-      qty: finalQty,
-      lots: effectiveUseLots ? qVal : (finalQty / lotSize),
-      order_type: 'MARKET',
-      product_type: 'INTRADAY',
-      client_price: currentPrice,
-      is_exit: false
-    });
-
-    if (res.success) {
-      showToast(`Quick ${side} Order Placed Successfully!`);
-      // Flash the button
-      const btn = document.getElementById(side === 'BUY' ? 'buyButton' : 'sellButton');
-      if (btn) {
-        btn.classList.remove('quick-flash');
-        void btn.offsetWidth; // force reflow
-        btn.classList.add('quick-flash');
+    try {
+      // Guard against stale exit/add-more quantity when placing a new order (Bug #2)
+      let qVal = Number(qtyValue) || 1;
+      if (isExitFlow || isAddMoreFlow || !currentInstrumentPosition || qVal <= 0) {
+        qVal = 1;
+        setQtyValue(1);
+        setUseLots(true);
+        setIsExitFlow(false);
+        setIsAddMoreFlow(false);
       }
-      refreshOrders();
-      refreshBalance();
-      refreshBalance();
-      refreshPositions();
-      window.dispatchEvent(new CustomEvent('position-closed'));
-    } else {
-      showToast(res.error || 'Failed to place quick order', true);
-      // On failure, release immediately
+
+      if (qVal <= 0) {
+        showToast("Invalid quantity", true);
+        return;
+      }
+      const isScalper = tradingMode === 'scalper';
+      const effectiveUseLots = isScalper ? true : useLots;
+
+      const dbSeg = mapSegmentWithSymbol(segment, symbol);
+      const segSetting = getSegment(dbSeg, side);
+      const maxOrderLot = segSetting?.max_order_lot ?? segSetting?.max_lot ?? 50;
+
+      // If qty exceeds max, show error, correct input to max, and abort — don't silently clamp.
+      if (effectiveUseLots && maxOrderLot > 0 && qVal > maxOrderLot) {
+        showToast(`Max allowed: ${maxOrderLot} lots (${maxOrderLot * lotSize} qty). Corrected to maximum.`, true);
+        setQtyValue(String(maxOrderLot));
+        return;
+      }
+
+      const finalQty = effectiveUseLots ? (isCrypto ? qVal * lotSize : Math.round(qVal * lotSize)) : (isCrypto ? qVal : Math.round(qVal));
+      const intradayLeverage = segSetting?.intraday_leverage ?? 10;
+      const intradayType = segSetting?.intraday_type ?? 'Multiplier';
+      const required = Math.round(intradayType === '%' ? (currentPrice * finalQty) * (intradayLeverage / 100) : (intradayType === 'Fixed' ? (finalQty / lotSize) * intradayLeverage : (currentPrice * finalQty) / intradayLeverage));
+
+      if (required > balance) {
+        showToast(`Insufficient margin! Need ₹${required.toLocaleString('en-IN')}`, true);
+        return;
+      }
+
+      showToast(`Placing quick ${side} order...`);
+      const res = await placeOrder({
+        symbol: symbol,
+        kite_instrument: symbol,
+        segment: segment,
+        side: side,
+        qty: finalQty,
+        lots: effectiveUseLots ? qVal : (finalQty / lotSize),
+        order_type: 'MARKET',
+        product_type: 'INTRADAY',
+        client_price: currentPrice,
+        is_exit: false
+      });
+
+      if (res.success) {
+        showToast(`Quick ${side} Order Placed Successfully!`);
+        // Flash the button
+        const btn = document.getElementById(side === 'BUY' ? 'buyButton' : 'sellButton');
+        if (btn) {
+          btn.classList.remove('quick-flash');
+          void btn.offsetWidth; // force reflow
+          btn.classList.add('quick-flash');
+        }
+        refreshOrders();
+        refreshBalance();
+        refreshPositions();
+        window.dispatchEvent(new CustomEvent('position-closed'));
+      } else {
+        showToast(res.error || 'Failed to place quick order', true);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Quick order failed', true);
+    } finally {
+      setTimeout(() => { quickEntryLock.current = false; }, 200);
       setIsSubmitting(false);
       positionSnapshotRef.current = null;
-    }
-    
-    // Release click lock after debounce
-    setTimeout(() => { quickEntryLock.current = false; }, 500);
-    // isSubmitting stays true on success — cleared by useEffect when positions refresh
-    // Safety fallback in case positions never update
-    if (res.success) {
-      submittingTimeoutRef.current = setTimeout(() => { setIsSubmitting(false); positionSnapshotRef.current = null; }, 1500);
+      window.dispatchEvent(new Event('global-loader-end'));
     }
   };
 
   const handleQuickAddPosition = async (pos: EnrichedPosition) => {
-    if (quickEntryLock.current) return;
+    if (quickEntryLock.current || isSubmitting) return;
     quickEntryLock.current = true;
+    setIsSubmitting(true);
+    setAddingPosId(pos.id);
 
-    const addQty = pos.qty_open;
-    const dbSeg = mapSegmentWithSymbol(segment, symbol);
-    const segSetting = getSegment(dbSeg, pos.side);
-    const leverage = pos.product_type === 'CARRY' ? (segSetting?.holding_leverage ?? 10) : (segSetting?.intraday_leverage ?? 10);
-    const levType = pos.product_type === 'CARRY' ? (segSetting?.holding_type ?? 'Multiplier') : (segSetting?.intraday_type ?? 'Multiplier');
-    const required = Math.round(levType === '%' ? (currentPrice * addQty) * (leverage / 100) : (levType === 'Fixed' ? (addQty / lotSize) * leverage : (currentPrice * addQty) / leverage));
+    try {
+      const addQty = pos.qty_open;
+      const dbSeg = mapSegmentWithSymbol(segment, symbol);
+      const segSetting = getSegment(dbSeg, pos.side);
+      const leverage = pos.product_type === 'CARRY' ? (segSetting?.holding_leverage ?? 10) : (segSetting?.intraday_leverage ?? 10);
+      const levType = pos.product_type === 'CARRY' ? (segSetting?.holding_type ?? 'Multiplier') : (segSetting?.intraday_type ?? 'Multiplier');
+      const required = Math.round(levType === '%' ? (currentPrice * addQty) * (leverage / 100) : (levType === 'Fixed' ? (addQty / lotSize) * leverage : (currentPrice * addQty) / leverage));
 
-    if (required > balance) {
-      showToast(`Insufficient margin! Need ₹${required.toLocaleString('en-IN')}`, true);
-      quickEntryLock.current = false;
-      return;
+      if (required > balance) {
+        showToast(`Insufficient margin! Need ₹${required.toLocaleString('en-IN')}`, true);
+        return;
+      }
+
+      showToast(`Adding ${addQty} to ${pos.side} position...`);
+      const res = await placeOrder({
+        symbol: symbol,
+        kite_instrument: symbol,
+        segment: segment,
+        side: pos.side,
+        qty: addQty,
+        lots: 0,
+        order_type: 'MARKET',
+        product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
+        client_price: 0,
+        is_exit: false
+      });
+
+      if (res.success) {
+        showToast(`Successfully added ${addQty} to position!`);
+        refreshOrders();
+        refreshBalance();
+        refreshPositions();
+        window.dispatchEvent(new CustomEvent('position-closed'));
+      } else {
+        showToast(res.error || 'Failed to add to position', true);
+      }
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to add to position', true);
+    } finally {
+      setTimeout(() => { quickEntryLock.current = false; }, 200);
+      setIsSubmitting(false);
+      setAddingPosId(null);
+      positionSnapshotRef.current = null;
+      window.dispatchEvent(new Event('global-loader-end'));
     }
-
-    showToast(`Adding ${addQty} to ${pos.side} position...`);
-    const res = await placeOrder({
-      symbol: symbol,
-      kite_instrument: symbol,
-      segment: segment,
-      side: pos.side,
-      qty: addQty,
-      lots: 0,
-      order_type: 'MARKET',
-      product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
-      client_price: 0,
-      is_exit: false
-    });
-
-    if (res.success) {
-      showToast(`Successfully added ${addQty} to position!`);
-      refreshOrders();
-      refreshBalance();
-      refreshBalance();
-      window.dispatchEvent(new CustomEvent('position-closed'));
-    } else {
-      showToast(res.error || 'Failed to add to position', true);
-    }
-    
-    // Release entry lock after a short debounce to prevent mouse-bounces
-    setTimeout(() => { quickEntryLock.current = false; }, 500);
   };
+
+  // ── Safety Watchdog to prevent permanent button lockups ──
+  useEffect(() => {
+    if (!isSubmitting && exitingPosIds.current.size === 0) return;
+
+    const timer = setTimeout(() => {
+      if (isSubmitting || exitingPosIds.current.size > 0) {
+        console.warn('[TradingChart Watchdog] Auto-clearing stuck submitting/exiting state');
+        setIsSubmitting(false);
+        setAddingPosId(null);
+        positionSnapshotRef.current = null;
+        exitingPosIds.current.clear();
+        quickEntryLock.current = false;
+        quickExitLock.current = false;
+        setForceRender(prev => prev + 1);
+        window.dispatchEvent(new Event('global-loader-end'));
+      }
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [isSubmitting]);
 
   // ── Watch for position changes while submitting ──
   // Keep buttons in loading state until positions actually refresh and the UI changes
   useEffect(() => {
     if (!isSubmitting || positionSnapshotRef.current === null) return;
 
-    const parts = positionSnapshotRef.current.split(':');
-    const snapSymbol = parts.length >= 3 ? parts[0] : symbol;
-    const snapId = parts.length >= 3 ? parts[1] : parts[0];
-    const snapQtyStr = parts.length >= 3 ? parts[2] : (parts[1] || '0');
+    const snapshotId = positionSnapshotRef.current.split(':')[0];
 
     let changed = false;
 
-    if (snapId === '__none__') {
+    if (snapshotId === '__none__') {
       // New position case: we had no open position before the order.
-      // Clear isSubmitting as soon as ANY open/active position for this symbol/orderSymbol appears.
+      // Clear isSubmitting as soon as ANY open/active position for this symbol appears.
       const hasNewPos = positions.some(
-        p => (p.symbol === snapSymbol || p.symbol === symbol) && (p.status === 'open' || p.status === 'active')
+        p => p.symbol === symbol && (p.status === 'open' || p.status === 'active')
       );
       changed = hasNewPos;
     } else {
       // Existing position case: qty changed or position closed
       const targetPos = positions.find(
-        p => (p.id === snapId || p.symbol === snapSymbol) && (p.status === 'open' || p.status === 'active')
+        p => p.id === snapshotId && (p.status === 'open' || p.status === 'active')
       );
-      const snapshotQty = Number(snapQtyStr);
-      changed = !targetPos || (targetPos.qty_open !== snapshotQty);
+      const snapshotQty = Number(positionSnapshotRef.current.split(':')[1]);
+      const currentKey = targetPos ? `${targetPos.id}:${targetPos.qty_open}` : '__none__';
+      changed = currentKey !== positionSnapshotRef.current || (targetPos?.qty_open !== snapshotQty);
     }
 
     if (changed) {
@@ -2243,10 +2243,44 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <button className="trade-btn sell" onClick={() => showToast('Available soon')} style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'transparent', border: '1.5px solid var(--red, #e53935)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
+                    <button className="trade-btn sell" onClick={() => {
+                      if (!currentInstrumentPosition) {
+                        showToast('No active position for SL', true);
+                        return;
+                      }
+                      if (isLandscape || isCssLandscape) setIsInfoPanelCollapsed(true);
+                      else setIsPanelExpanded(false);
+                      setIsExitFlow(true);
+                      setIsAddMoreFlow(false);
+                      setExitPositionId(currentInstrumentPosition.id);
+                      setOrderSide(currentInstrumentPosition.side === 'BUY' ? 'SELL' : 'BUY');
+                      setQtyValue(currentInstrumentPosition.qty_open);
+                      setUseLots(false);
+                      setOrderType('sl');
+                      setPostOrderSegment('main');
+                      setOrderBlockTitle(`SL Exit · ${currentInstrumentPosition.symbol}`);
+                      setIsOrderBlockVisible(true);
+                    }} style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'transparent', border: '1.5px solid var(--red, #e53935)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
                       <span className="btn-label" style={{ color: 'var(--red, #e53935)', fontSize: '11px', fontWeight: 600 }}>SL</span>
                     </button>
-                    <button className="trade-btn buy" onClick={() => showToast('Available soon')} style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'transparent', border: '1.5px solid var(--green, #1db954)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
+                    <button className="trade-btn buy" onClick={() => {
+                      if (!currentInstrumentPosition) {
+                        showToast('No active position for TP', true);
+                        return;
+                      }
+                      if (isLandscape || isCssLandscape) setIsInfoPanelCollapsed(true);
+                      else setIsPanelExpanded(false);
+                      setIsExitFlow(true);
+                      setIsAddMoreFlow(false);
+                      setExitPositionId(currentInstrumentPosition.id);
+                      setOrderSide(currentInstrumentPosition.side === 'BUY' ? 'SELL' : 'BUY');
+                      setQtyValue(currentInstrumentPosition.qty_open);
+                      setUseLots(false);
+                      setOrderType('limit');
+                      setPostOrderSegment('main');
+                      setOrderBlockTitle(`TP Exit · ${currentInstrumentPosition.symbol}`);
+                      setIsOrderBlockVisible(true);
+                    }} style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'transparent', border: '1.5px solid var(--green, #1db954)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 }}>
                       <span className="btn-label" style={{ color: 'var(--green, #1db954)', fontSize: '11px', fontWeight: 600 }}>TP</span>
                     </button>
                     <div className="pnl-toggle-btn" onClick={() => { setIsTradeOnChartActive(false); localStorage.setItem('isTradeOnChartActive', 'false'); }} style={{ background: 'var(--pill-bg, #1a2432)', color: 'var(--text-primary)', cursor: 'pointer', marginLeft: '4px' }}>
