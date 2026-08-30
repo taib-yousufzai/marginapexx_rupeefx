@@ -1049,6 +1049,17 @@ function WatchlistContent() {
 
     const ids = ['tradeSheet', 'detailSheet', 'chartSheet', 'scriptsFolderDrawer'];
 
+    const attachObservers = () => {
+      ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          try {
+            observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+          } catch {}
+        }
+      });
+    };
+
     const observer = new MutationObserver(() => {
       if (isPopping) return;
 
@@ -1067,16 +1078,18 @@ function WatchlistContent() {
       }
     });
 
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        observer.observe(el, { attributes: true, attributeFilter: ['class'] });
-      }
+    attachObservers();
+
+    // Dynamically observe body child additions so modals rendered later are also tracked
+    const bodyObserver = new MutationObserver(() => {
+      attachObservers();
     });
+    bodyObserver.observe(document.body, { childList: true, subtree: true });
 
     return () => {
       window.removeEventListener('popstate', handlePopState);
       observer.disconnect();
+      bodyObserver.disconnect();
     };
   }, []);
 
@@ -1663,6 +1676,7 @@ function WatchlistContent() {
     try {
       if (isSpotIndex(item)) {
         showToast('Indices cannot be traded directly. Trade their Futures or Options.', true);
+        setDetailOpeningSide(null);
         return;
       }
 
@@ -1713,6 +1727,7 @@ function WatchlistContent() {
     } finally {
       // Lock released only after all async work is done — including the fetch.
       isOpeningTradeSheetRef.current = false;
+      setDetailOpeningSide(null);
     }
   };
 
@@ -1720,11 +1735,24 @@ function WatchlistContent() {
     setIsTradeSheetOpen(false);
     setSelectedItem(null);
     setDetailOpeningSide(null);
+    const ids = ['tradeSheet', 'detailSheet', 'chartSheet', 'tradeSheetOverlay', 'detailSheetOverlay', 'chartSheetOverlay'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.classList.remove('open');
+        el.classList.remove('active');
+      }
+    });
   };
 
+  const blockedSymbolsArr = useMemo(() => Array.from(blockedSymbols).sort(), [blockedSymbols]);
+  const scriptContent = useMemo(() => {
+    if (allowedSegments === null) return '';
+    return buildInlineScript(allowedSegments, segmentSettings, blockedSymbolsArr);
+  }, [allowedSegments, segmentSettings, blockedSymbolsArr]);
+
   useEffect(() => {
-    // Wait until segments have loaded before injecting the inline script
-    if (allowedSegments === null) return;
+    if (!scriptContent) return;
 
     window.__kiteQuotes = window.__kiteQuotes || {};
     window.__watchlistItems = window.__watchlistItems || [];
@@ -1742,7 +1770,7 @@ function WatchlistContent() {
     }
 
     const script = document.createElement('script');
-    script.innerHTML = buildInlineScript(allowedSegments, segmentSettings, Array.from(blockedSymbols));
+    script.innerHTML = scriptContent;
     document.body.appendChild(script);
     scriptMountedRef.current = true;
 
@@ -1768,7 +1796,7 @@ function WatchlistContent() {
       if (drawerOverlay) drawerOverlay.classList.remove('active');
       if (folderDrawer) folderDrawer.classList.remove('open');
     };
-  }, [allowedSegments, segmentSettings, blockedSymbols]);
+  }, [scriptContent]);
 
   return (
     <div className="desktop-layout">
