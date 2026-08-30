@@ -4,6 +4,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { requestPasswordReset } from '@/lib/auth';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import '../login/page.css';
 
 type ForgotPasswordState = 'idle' | 'loading' | 'success' | 'error';
@@ -18,15 +19,10 @@ function ForgotPasswordForm() {
 
   // On mount: apply theme from localStorage
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('marginApexTheme');
-      document.body.classList.remove('dark', 'black', 'blue');
-      if (saved === 'dark' || saved === 'black' || saved === 'blue') {
-        document.body.classList.add(saved);
-      }
-    } catch {
-      // localStorage unavailable — proceed without theme
-    }
+    const sync = () => applyTheme(getSavedTheme());
+    sync();
+    window.addEventListener('themeChanged', sync);
+    return () => window.removeEventListener('themeChanged', sync);
   }, []);
 
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {

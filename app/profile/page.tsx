@@ -7,12 +7,13 @@ import { pageCache } from '@/lib/pageCache';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { api, ApiError } from '@/lib/api';
 import { useBalance } from '@/hooks/useBalance';
+import { getSavedTheme, applyTheme, Theme } from '@/lib/theme';
 import './page.css';
 
 export default function ProfilePage() {
     useAuth();
     const [isDemo, setIsDemo] = useState(false);
-    const [themeName, setThemeName] = useState<'light' | 'dark' | 'black' | 'blue'>('light');
+    const [themeName, setThemeName] = useState<Theme>('light');
     // Balance comes from the global BalanceDataProvider
     const { balance, loading: balanceLoading } = useBalance();
     const [unreadCount, setUnreadCount] = useState<number>(() => pageCache.get<number>('profile:unread') || 0);
@@ -78,11 +79,12 @@ export default function ProfilePage() {
     }, []);
 
     useEffect(() => {
-        const saved = localStorage.getItem('marginApexTheme') as 'light' | 'dark' | 'black' | 'blue' | null;
-        const currentTheme = saved === 'blue' ? 'blue' : saved === 'black' ? 'black' : saved === 'dark' ? 'dark' : 'light';
-        setThemeName(currentTheme);
-        document.body.classList.remove('dark', 'black', 'blue');
-        if (currentTheme !== 'light') document.body.classList.add(currentTheme);
+        const sync = () => {
+            setThemeName(getSavedTheme());
+        };
+        sync();
+        window.addEventListener('themeChanged', sync);
+        return () => window.removeEventListener('themeChanged', sync);
     }, []);
 
     useEffect(() => {
@@ -125,13 +127,9 @@ export default function ProfilePage() {
         || (email ? email.split('@')[0].replace(/[._-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'User');
     const formattedBalance = '₹' + balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-    const setTheme = useCallback((newTheme: 'light' | 'dark' | 'black' | 'blue') => {
+    const setTheme = useCallback((newTheme: Theme) => {
         setThemeName(newTheme);
-        document.body.classList.remove('dark', 'black', 'blue');
-        if (newTheme !== 'light') {
-            document.body.classList.add(newTheme);
-        }
-        localStorage.setItem('marginApexTheme', newTheme);
+        applyTheme(newTheme);
         setThemeDropdownOpen(false);
     }, []);
 

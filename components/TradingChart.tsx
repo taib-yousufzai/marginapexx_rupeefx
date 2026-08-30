@@ -48,16 +48,17 @@ const getUnderlyingSymbol = (sym: string) => {
   return clean;
 }
 
+import { getSavedTheme } from '@/lib/theme';
+
 function getAppTheme(): 'dark' | 'black' | 'light' {
   if (typeof document === 'undefined') return 'dark';
+  const saved = getSavedTheme();
+  if (saved === 'black') return 'black';
+  if (saved === 'light') return 'light';
+  if (saved === 'blue' || saved === 'dark') return 'dark';
   if (document.documentElement.classList.contains('black') || document.body.classList.contains('black')) return 'black';
-  if (document.documentElement.classList.contains('dark') || document.body.classList.contains('dark')) return 'dark';
+  if (document.documentElement.classList.contains('dark') || document.body.classList.contains('dark') || document.documentElement.classList.contains('blue') || document.body.classList.contains('blue')) return 'dark';
   if (document.documentElement.classList.contains('light') || document.body.classList.contains('light')) return 'light';
-  try {
-    const saved = localStorage.getItem('marginApexTheme');
-    if (saved === 'black') return 'black';
-    if (saved === 'light') return 'light';
-  } catch (e) {}
   return 'dark';
 }
 

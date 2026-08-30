@@ -17,6 +17,7 @@ import dynamic from 'next/dynamic';
 import PullToRefresh from '@/components/PullToRefresh';
 import { ErrorModal } from '@/components/ErrorModal';
 import HoldLockCountdown from '@/components/HoldLockCountdown';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import './page.css';
 
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
@@ -38,18 +39,12 @@ export default function PositionPage() {
   }, []);
 
   useEffect(() => {
-    const applyTheme = () => {
-      const saved = localStorage.getItem('marginApexTheme') || 'light';
-      document.documentElement.classList.remove('dark', 'black', 'blue');
-      document.body.classList.remove('dark', 'black', 'blue');
-      if (saved === 'dark' || saved === 'black' || saved === 'blue') {
-        document.documentElement.classList.add(saved);
-        document.body.classList.add(saved);
-      }
+    const sync = () => {
+      applyTheme(getSavedTheme());
     };
-    applyTheme();
-    window.addEventListener('themeChanged', applyTheme);
-    return () => window.removeEventListener('themeChanged', applyTheme);
+    sync();
+    window.addEventListener('themeChanged', sync);
+    return () => window.removeEventListener('themeChanged', sync);
   }, []);
 
   // Preload the TradeSheet dynamic-import chunk on page mount so the first Exit tap

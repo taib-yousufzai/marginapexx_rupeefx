@@ -4,6 +4,7 @@ import Link from 'next/link';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { useAuth } from '@/hooks/useAuth';
 import { api, ApiError } from '@/lib/api';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import '../page.css';
 import './page.css';
 
@@ -63,9 +64,10 @@ export default function ProfileDetailsPage() {
     const [form, setForm] = useState<FormState>(EMPTY);
 
     useEffect(() => {
-        const saved = localStorage.getItem('marginApexTheme');
-        document.body.classList.remove('dark', 'black', 'blue');
-    if (saved === 'dark' || saved === 'black' || saved === 'blue') document.body.classList.add(saved);
+        const sync = () => applyTheme(getSavedTheme());
+        sync();
+        window.addEventListener('themeChanged', sync);
+        return () => window.removeEventListener('themeChanged', sync);
     }, []);
 
     useEffect(() => {

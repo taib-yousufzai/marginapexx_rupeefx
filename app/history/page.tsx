@@ -5,6 +5,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import './page.css';
 
 interface HistoryItem {
@@ -65,10 +66,9 @@ export default function HistoryPage() {
   };
 
   useEffect(() => {
-    // Apply dark mode class from localStorage on mount
-    const saved = localStorage.getItem('marginApexTheme');
-    document.body.classList.remove('dark', 'black', 'blue');
-    if (saved === 'dark' || saved === 'black' || saved === 'blue') document.body.classList.add(saved);
+    const syncTheme = () => applyTheme(getSavedTheme());
+    syncTheme();
+    window.addEventListener('themeChanged', syncTheme);
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       const role = session?.user?.user_metadata?.role;
@@ -76,6 +76,8 @@ export default function HistoryPage() {
         setIsAdmin(true);
       }
     });
+
+    return () => window.removeEventListener('themeChanged', syncTheme);
   }, []);
 
   useEffect(() => {

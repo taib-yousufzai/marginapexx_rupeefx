@@ -1,13 +1,15 @@
 'use client';
 import React, { useEffect } from 'react';
 import Link from 'next/link';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import '../security/page.css'; // Re-use the security page styling for consistency
 
 export default function RulesPage() {
     useEffect(() => {
-        const saved = localStorage.getItem('marginApexTheme');
-        document.body.classList.remove('dark', 'black', 'blue');
-        if (saved === 'dark' || saved === 'black' || saved === 'blue') document.body.classList.add(saved);
+        const sync = () => applyTheme(getSavedTheme());
+        sync();
+        window.addEventListener('themeChanged', sync);
+        return () => window.removeEventListener('themeChanged', sync);
     }, []);
 
     return (

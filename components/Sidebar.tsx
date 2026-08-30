@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import { signOut } from '@/lib/auth';
 import { RequirePermission } from './RequirePermission';
 import { Permission } from '@/lib/permissions';
+import { getSavedTheme, applyTheme, cycleTheme, Theme } from '@/lib/theme';
 import './Sidebar.css';
 
 const navItems: { key: string, label: string, icon: string, path: string, perm?: Permission }[] = [
@@ -23,30 +24,20 @@ const navItems: { key: string, label: string, icon: string, path: string, perm?:
 export default function Sidebar() {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isDark, setIsDark] = useState(false);
+  const [currentTheme, setCurrentTheme] = useState<Theme>('light');
 
   useEffect(() => {
-    const saved = localStorage.getItem('marginApexTheme');
-    setIsDark(saved === 'dark');
+    const updateThemeState = () => {
+      setCurrentTheme(getSavedTheme());
+    };
+    updateThemeState();
+    window.addEventListener('themeChanged', updateThemeState);
+    return () => window.removeEventListener('themeChanged', updateThemeState);
   }, []);
 
-  const toggleTheme = () => {
-    const newDark = !isDark;
-    setIsDark(newDark);
-    document.body.classList.remove('dark', 'black', 'blue');
-    document.documentElement.classList.remove('dark', 'black', 'blue');
-    if (newDark) {
-      document.body.classList.add('dark');
-      document.documentElement.classList.add('dark');
-    } else {
-      const t = localStorage.getItem('marginApexTheme');
-      if (t === 'black') {
-        document.body.classList.add('black');
-        document.documentElement.classList.add('black');
-      }
-    }
-    localStorage.setItem('marginApexTheme', newDark ? 'dark' : 'light');
-    window.dispatchEvent(new Event('themeChanged'));
+  const handleToggleTheme = () => {
+    const next = cycleTheme(currentTheme);
+    applyTheme(next);
   };
 
   return (
@@ -87,11 +78,11 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <button className="sidebar-action-btn" onClick={toggleTheme} title="Toggle Theme">
+        <button className="sidebar-action-btn" onClick={handleToggleTheme} title="Toggle Theme">
           <div className="sidebar-icon">
-            <i className={isDark ? 'fas fa-sun' : 'fas fa-moon'}></i>
+            <i className={currentTheme === 'light' ? 'fas fa-moon' : 'fas fa-sun'}></i>
           </div>
-          {!isCollapsed && <span className="sidebar-label">{isDark ? 'Light Mode' : 'Dark Mode'}</span>}
+          {!isCollapsed && <span className="sidebar-label" style={{ textTransform: 'capitalize' }}>Theme: {currentTheme}</span>}
         </button>
         
         <button className="sidebar-action-btn logout" onClick={() => signOut()} title="Logout">

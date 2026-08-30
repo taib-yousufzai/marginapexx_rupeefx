@@ -4,6 +4,7 @@ import Link from 'next/link';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { useAuth } from '@/hooks/useAuth';
 import { updatePassword, getSession } from '@/lib/auth';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import './page.css';
 
 export default function SecurityPage() {
@@ -20,9 +21,10 @@ export default function SecurityPage() {
     const [lastSignIn, setLastSignIn] = useState('');
 
     useEffect(() => {
-        const saved = localStorage.getItem('marginApexTheme');
-        document.body.classList.remove('dark', 'black', 'blue');
-    if (saved === 'dark' || saved === 'black' || saved === 'blue') document.body.classList.add(saved);
+        const sync = () => applyTheme(getSavedTheme());
+        sync();
+        window.addEventListener('themeChanged', sync);
+        return () => window.removeEventListener('themeChanged', sync);
     }, []);
 
     useEffect(() => {

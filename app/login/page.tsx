@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { signIn, getSession, getRole } from '@/lib/auth';
 import RiskRulesPopup from '@/components/RiskRulesPopup';
 import AnimatedLoader from '@/components/AnimatedLoader';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import './page.css';
 
 export default function LoginPage() {
@@ -12,15 +13,10 @@ export default function LoginPage() {
 
   // Apply active theme on mount — same pattern as all other pages
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem('marginApexTheme');
-      document.body.classList.remove('dark', 'black', 'blue');
-      if (saved === 'dark' || saved === 'black' || saved === 'blue') {
-        document.body.classList.add(saved);
-      }
-    } catch {
-      // localStorage unavailable — proceed without theme
-    }
+    const sync = () => applyTheme(getSavedTheme());
+    sync();
+    window.addEventListener('themeChanged', sync);
+    return () => window.removeEventListener('themeChanged', sync);
   }, []);
 
   // Form state

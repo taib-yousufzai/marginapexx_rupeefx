@@ -22,6 +22,7 @@ import { generateRealisticFallbackQuote } from '@/lib/quoteFallback';
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
 import WatchlistSearch from '@/components/WatchlistSearch';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 
 import { ErrorModal } from '@/components/ErrorModal';
 import './page.css';
@@ -1093,18 +1094,12 @@ function WatchlistContent() {
 
 
   useEffect(() => {
-    const applyTheme = () => {
-      const saved = localStorage.getItem('marginApexTheme') || 'light';
-      document.documentElement.classList.remove('dark', 'black', 'blue');
-      document.body.classList.remove('dark', 'black', 'blue');
-      if (saved === 'dark' || saved === 'black' || saved === 'blue') {
-        document.documentElement.classList.add(saved);
-        document.body.classList.add(saved);
-      }
+    const handleTheme = () => {
+      applyTheme(getSavedTheme());
     };
-    applyTheme();
-    window.addEventListener('themeChanged', applyTheme);
-    return () => window.removeEventListener('themeChanged', applyTheme);
+    handleTheme();
+    window.addEventListener('themeChanged', handleTheme);
+    return () => window.removeEventListener('themeChanged', handleTheme);
   }, []);
 
   // Keep a ref to activePositions so the side-change effect reads the latest

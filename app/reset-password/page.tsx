@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { updatePassword } from '@/lib/auth';
 import { supabase } from '@/lib/supabaseClient';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import '../login/page.css';
 
 type ResetPasswordState = 'verifying' | 'error' | 'ready' | 'loading' | 'success';
@@ -34,15 +35,9 @@ function ResetPasswordForm() {
   // On mount: apply theme and subscribe to auth state changes
   useEffect(() => {
     // Apply theme
-    try {
-      const saved = localStorage.getItem('marginApexTheme');
-      document.body.classList.remove('dark', 'black', 'blue');
-      if (saved === 'dark' || saved === 'black' || saved === 'blue') {
-        document.body.classList.add(saved);
-      }
-    } catch {
-      // localStorage unavailable — proceed without theme
-    }
+    const sync = () => applyTheme(getSavedTheme());
+    sync();
+    window.addEventListener('themeChanged', sync);
 
     // Subscribe to auth state changes to detect PASSWORD_RECOVERY event
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
@@ -62,6 +57,7 @@ function ResetPasswordForm() {
     }, 5000);
 
     return () => {
+      window.removeEventListener('themeChanged', sync);
       subscription.unsubscribe();
       clearTimeout(timeout);
     };

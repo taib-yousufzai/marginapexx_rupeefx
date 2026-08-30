@@ -3,6 +3,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { api, ApiError } from '@/lib/api';
 import { useAuth } from '@/hooks/useAuth';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import './page.css';
 
 interface Order {
@@ -73,9 +74,9 @@ export default function ReportsPage() {
     const [toDate,   setToDate]   = useState('');
 
     useEffect(() => {
-        const saved = localStorage.getItem('marginApexTheme');
-        document.body.classList.remove('dark', 'black', 'blue');
-    if (saved === 'dark' || saved === 'black' || saved === 'blue') document.body.classList.add(saved);
+        const sync = () => applyTheme(getSavedTheme());
+        sync();
+        window.addEventListener('themeChanged', sync);
 
         // Set default dates on client only (avoids SSR hydration mismatch)
         const today     = new Date().toISOString().split('T')[0];
@@ -89,6 +90,8 @@ export default function ReportsPage() {
                 setIsAdmin(true);
             }
         }).catch(() => {});
+
+        return () => window.removeEventListener('themeChanged', sync);
     }, []);
 
     const fetchData = useCallback(async () => {

@@ -5,6 +5,7 @@ import { toUdfResolution, CHART_TYPE_MAP } from '@/lib/datafeed/resolutionUtils'
 import { Candle, Timeframe } from '@/components/chart/types';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
+import { getSavedTheme } from '@/lib/theme';
 
 // ─── Supporting types ────────────────────────────────────────────────────────
 
@@ -45,27 +46,17 @@ let globalWidgetDestroyCount = 0;
 
 function getIsDark(): boolean {
   if (typeof document === 'undefined') return false;
-  if (
+  const saved = getSavedTheme();
+  if (saved === 'dark' || saved === 'black' || saved === 'blue') return true;
+  if (saved === 'light') return false;
+  return (
     document.body.classList.contains('dark') ||
     document.body.classList.contains('black') ||
+    document.body.classList.contains('blue') ||
     document.documentElement.classList.contains('dark') ||
-    document.documentElement.classList.contains('black')
-  ) {
-    return true;
-  }
-  if (
-    document.body.classList.contains('light') ||
-    document.documentElement.classList.contains('light')
-  ) {
-    return false;
-  }
-  try {
-    const saved = localStorage.getItem('marginApexTheme');
-    if (saved === 'dark' || saved === 'black' || saved === 'blue') return true;
-    if (saved === 'light') return false;
-  } catch (e) {}
-
-  return false;
+    document.documentElement.classList.contains('black') ||
+    document.documentElement.classList.contains('blue')
+  );
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
@@ -419,15 +410,27 @@ export default function ChartContainer({
       const dark = getIsDark();
       setIsDark(dark);
       const theme = dark ? 'dark' : 'light';
-      if (!isReadyRef.current) { pendingRef.current.theme = theme; return; }
-      tvWidgetRef.current?.changeTheme(theme);
+      if (!isReadyRef.current) { pendingRef.current.theme = theme; }
+      else {
+        tvWidgetRef.current?.changeTheme(theme);
+      }
+      try {
+        const iframe = containerRef.current?.querySelector('iframe');
+        if (iframe) {
+          const appTheme = getSavedTheme();
+          iframe.setAttribute('data-theme', appTheme);
+          if (iframe.contentDocument && iframe.contentDocument.documentElement) {
+            iframe.contentDocument.documentElement.setAttribute('data-theme', appTheme);
+          }
+        }
+      } catch (e) {}
     };
 
     syncTheme();
 
     const observer = new MutationObserver(syncTheme);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
-    observer.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'data-theme'] });
 
     window.addEventListener('themeChanged', syncTheme);
     window.addEventListener('storage', syncTheme);

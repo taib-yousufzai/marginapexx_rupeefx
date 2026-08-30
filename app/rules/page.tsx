@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import './page.css';
 
 export default function RulesPage() {
@@ -9,12 +10,14 @@ export default function RulesPage() {
   const [theme, setTheme] = useState<'light' | 'dark' | 'black' | 'blue'>('light');
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem('marginApexTheme') as 'light' | 'dark' | 'black' | 'blue' | null;
-    if (savedTheme) {
-      setTheme(savedTheme);
-      document.body.classList.remove('dark', 'black', 'blue');
-      if (savedTheme !== 'light') document.body.classList.add(savedTheme);
-    }
+    const sync = () => {
+      const saved = getSavedTheme();
+      setTheme(saved);
+      applyTheme(saved);
+    };
+    sync();
+    window.addEventListener('themeChanged', sync);
+    return () => window.removeEventListener('themeChanged', sync);
   }, []);
 
   const rules = [

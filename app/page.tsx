@@ -12,6 +12,7 @@ import { useTradeConfig } from '@/contexts/TradeConfigContext';
 
 import AnimatedLoader from '@/components/AnimatedLoader';
 import TickFlash from '@/components/TickFlash';
+import { getSavedTheme, applyTheme, cycleTheme, Theme } from '@/lib/theme';
 import './page.css';
 
 // --- Kite instrument keys for the market overview ---
@@ -431,32 +432,18 @@ export default function Page() {
   const marketRow2 = buildRow(marketRow2Keys);
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem('marginApexTheme') as 'light' | 'dark' | 'black' | 'blue' | null;
-    if (savedTheme) {
-      setTimeout(() => {
-        setTheme(savedTheme);
-        document.documentElement.classList.remove('dark', 'black', 'blue');
-        document.body.classList.remove('dark', 'black', 'blue');
-        if (savedTheme !== 'light') {
-          document.documentElement.classList.add(savedTheme);
-          document.body.classList.add(savedTheme);
-        }
-      }, 0);
-    }
+    const syncThemeState = () => {
+      setTheme(getSavedTheme());
+    };
+    syncThemeState();
+    window.addEventListener('themeChanged', syncThemeState);
+    return () => window.removeEventListener('themeChanged', syncThemeState);
   }, []);
 
   const toggleTheme = () => {
-    // If currently in black/blue, toggling goes to light; if light go to dark
-    const newTheme = (theme === 'light') ? 'dark' : 'light';
-    setTheme(newTheme);
-    document.documentElement.classList.remove('dark', 'black', 'blue');
-    document.body.classList.remove('dark', 'black', 'blue');
-    if (newTheme !== 'light') {
-      document.documentElement.classList.add(newTheme);
-      document.body.classList.add(newTheme);
-    }
-    localStorage.setItem('marginApexTheme', newTheme);
-    window.dispatchEvent(new Event('themeChanged'));
+    const nextTheme = cycleTheme(theme as Theme);
+    setTheme(nextTheme);
+    applyTheme(nextTheme);
   };
 
   const mapOptionChainSymbolToDbSegment = (sym: string): string => {

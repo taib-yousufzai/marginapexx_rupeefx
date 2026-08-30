@@ -7,6 +7,7 @@ import { useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
 import RiskRulesPopup from '@/components/RiskRulesPopup';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 import '../login/page.css';
 
 // ─── OTP Input component — 6 auto-advance boxes ───────────────────────────────
@@ -106,12 +107,9 @@ function RegisterForm() {
   useEffect(() => {
     const ref = searchParams.get('ref');
     if (ref) setBrokerRef(ref);
-    try {
-      const saved = localStorage.getItem('marginApexTheme');
-      document.body.classList.remove('dark', 'black', 'blue');
-    if (saved === 'dark') document.body.classList.add('dark');
-    else { const t = localStorage.getItem('marginApexTheme'); if (t === 'black') document.body.classList.add('black'); }
-    } catch { /* noop */ }
+    const sync = () => applyTheme(getSavedTheme());
+    sync();
+    window.addEventListener('themeChanged', sync);
 
     // Load Cloudflare Turnstile script if site key exists
     if (siteKey && typeof window !== 'undefined') {
@@ -133,6 +131,10 @@ function RegisterForm() {
         document.head.appendChild(script);
       }
     }
+
+    return () => {
+      window.removeEventListener('themeChanged', sync);
+    };
   }, [searchParams, siteKey]);
 
   // Countdown timer for resend

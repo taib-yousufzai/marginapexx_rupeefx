@@ -55,7 +55,7 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700;1,800;1,900&display=swap" rel="stylesheet" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('marginApexTheme');if(t){document.documentElement.classList.add(t);var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.add(t);obs.disconnect();}});o.observe(document.documentElement,{childList:true});}}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
+            __html: `(function(){try{var t=localStorage.getItem('marginApexTheme')||'light';document.documentElement.classList.remove('dark','black','blue','light');document.documentElement.classList.add(t);document.documentElement.setAttribute('data-theme',t);var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);obs.disconnect();}});o.observe(document.documentElement,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
           }}
         />
       </head>
