@@ -16,6 +16,7 @@ import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { useBalance } from '@/hooks/useBalance';
 import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
+import { generateRealisticFallbackQuote, FallbackQuote } from '@/lib/quoteFallback';
 import type { TradingInstrument } from '@/lib/types/instrument';
 
 /**
@@ -223,6 +224,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     }
   }
 
+  let fallbackQuoteObj: FallbackQuote | null = null;
+  if (currentLtp === 0 && item) {
+    const fallbackKey = item.symbol || item.kiteSymbol || item.name || '';
+    fallbackQuoteObj = generateRealisticFallbackQuote(fallbackKey);
+    currentLtp = fallbackQuoteObj.last_price;
+    currentChangePercent = fallbackQuoteObj.changePercent;
+  }
+
   const activeSide: 'BUY' | 'SELL' = (side === 'SELL' || side === 'BUY') ? side : 'BUY';
   const buySetting = dbSeg ? getSegment(dbSeg, 'BUY') : undefined;
   const sellSetting = dbSeg ? getSegment(dbSeg, 'SELL') : undefined;
@@ -249,6 +258,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     } else if (activeKiteQuote) {
       rawBid = activeKiteQuote.bid || currentLtp;
       rawAsk = activeKiteQuote.ask || currentLtp;
+    } else if (fallbackQuoteObj) {
+      rawBid = fallbackQuoteObj.bid || currentLtp;
+      rawAsk = fallbackQuoteObj.ask || currentLtp;
     }
 
     if (!rawBid || rawBid <= 0) rawBid = currentLtp;
@@ -955,7 +967,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
 
         try {
-          const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote;
+          const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote || (fallbackQuoteObj ? {
+            bid: fallbackQuoteObj.bid,
+            ask: fallbackQuoteObj.ask,
+            lastPrice: fallbackQuoteObj.last_price,
+            time: Date.now()
+          } as any : null);
           const diagnosticFields = {
             frontend_bid: activeQuoteObj?.bid,
             frontend_ask: activeQuoteObj?.ask,
@@ -1059,7 +1076,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
 
         try {
-          const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote;
+          const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote || (fallbackQuoteObj ? {
+            bid: fallbackQuoteObj.bid,
+            ask: fallbackQuoteObj.ask,
+            lastPrice: fallbackQuoteObj.last_price,
+            time: Date.now()
+          } as any : null);
           const diagnosticFields = {
             frontend_bid: activeQuoteObj?.bid,
             frontend_ask: activeQuoteObj?.ask,

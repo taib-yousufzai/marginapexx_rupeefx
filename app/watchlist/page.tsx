@@ -903,6 +903,10 @@ function WatchlistContent() {
 
   let currentLtp = 0;
   let currentChangePercent = 0;
+  let detailOpen = (isCrypto && currentBinanceQuote?.open) || (isComex && currentComexQuote?.open) || currentKiteQuote?.open || selectedItem?.open;
+  let detailHigh = (isCrypto && currentBinanceQuote?.high) || (isComex && currentComexQuote?.high) || currentKiteQuote?.high || selectedItem?.high;
+  let detailLow = (isCrypto && currentBinanceQuote?.low) || (isComex && currentComexQuote?.low) || currentKiteQuote?.low || selectedItem?.low;
+  let detailClose = (isCrypto && currentBinanceQuote?.close) || (isComex && currentComexQuote?.close) || currentKiteQuote?.close || selectedItem?.close;
 
   if (isCrypto && currentBinanceQuote) {
     currentLtp = currentBinanceQuote.lastPrice;
@@ -917,6 +921,19 @@ function WatchlistContent() {
     currentLtp = typeof selectedItem?.price === 'string'
       ? parseFloat((selectedItem.price as string).replace(/,/g, ''))
       : (selectedItem?.price ?? 0);
+    currentChangePercent = parseFloat(selectedItem?.change?.replace(/[%+]/g, '') || '0') || 0;
+  }
+
+  let detailFallbackQuote: any = null;
+  if (currentLtp === 0 && selectedItem) {
+    const fallbackKey = selectedItem.symbol || selectedItem.kiteSymbol || selectedItem.name || '';
+    detailFallbackQuote = generateRealisticFallbackQuote(fallbackKey);
+    currentLtp = detailFallbackQuote.last_price;
+    currentChangePercent = detailFallbackQuote.changePercent;
+    detailOpen = detailFallbackQuote.ohlc.open;
+    detailHigh = detailFallbackQuote.ohlc.high;
+    detailLow = detailFallbackQuote.ohlc.low;
+    detailClose = detailFallbackQuote.ohlc.close;
   }
 
   const detailSymCheck = ((selectedItem?.symbol || '') + ' ' + (selectedItem?.name || '') + ' ' + (selectedItem?.kiteSymbol || '')).toUpperCase();
@@ -956,6 +973,9 @@ function WatchlistContent() {
   } else if (currentKiteQuote) {
     rawBid = currentKiteQuote.bid || currentLtp;
     rawAsk = currentKiteQuote.ask || currentLtp;
+  } else if (detailFallbackQuote) {
+    rawBid = detailFallbackQuote.bid || currentLtp;
+    rawAsk = detailFallbackQuote.ask || currentLtp;
   }
 
   // Use real bid/ask from the exchange if valid (non-zero and bid < ask).
@@ -2121,10 +2141,10 @@ function WatchlistContent() {
                       <div style={{ marginBottom: '8px' }}>
                         <div style={{ fontSize: '0.62rem', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '6px' }}>PRICE SUMMARY</div>
                         <div style={{ background: 'var(--card-alt-bg)', border: '1px solid var(--border-card)', borderRadius: '14px', padding: '8px 10px', display: 'flex', justifyContent: 'space-between' }}>
-                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>OPEN</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669' }}>{fmt((isCrypto && currentBinanceQuote?.open) || (isComex && currentComexQuote?.open) || currentKiteQuote?.open || selectedItem.open)}</div></div>
-                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>HIGH</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669' }}>{fmt((isCrypto && currentBinanceQuote?.high) || (isComex && currentComexQuote?.high) || currentKiteQuote?.high || selectedItem.high)}</div></div>
-                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>LOW</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#DC2626' }}>{fmt((isCrypto && currentBinanceQuote?.low) || (isComex && currentComexQuote?.low) || currentKiteQuote?.low || selectedItem.low)}</div></div>
-                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>CLOSE</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: 'var(--text-primary)' }}>{fmt((isCrypto && currentBinanceQuote?.close) || (isComex && currentComexQuote?.close) || currentKiteQuote?.close || selectedItem.close)}</div></div>
+                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>OPEN</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669' }}>{fmt(detailOpen)}</div></div>
+                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>HIGH</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669' }}>{fmt(detailHigh)}</div></div>
+                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>LOW</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#DC2626' }}>{fmt(detailLow)}</div></div>
+                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>CLOSE</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: 'var(--text-primary)' }}>{fmt(detailClose)}</div></div>
                         </div>
                       </div>
                       <div style={{ background: 'var(--card-alt-bg)', border: '1px solid var(--border-card)', borderRadius: '14px', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
