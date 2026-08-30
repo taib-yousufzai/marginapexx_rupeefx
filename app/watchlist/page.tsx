@@ -835,6 +835,8 @@ function WatchlistContent() {
     setIsTradeSheetOpen(false); // ensure TradeSheet is closed when detail opens
   };
   const [isTradeSheetOpen, setIsTradeSheetOpen] = useState(false);
+  const [isBasketSheetOpen, setIsBasketSheetOpen] = useState(false);
+  const [isCheckoutSheetOpen, setIsCheckoutSheetOpen] = useState(false);
   // Tracks which detail-sheet button is in the "tapped, waiting for sheet" state.
   // 'BUY' or 'SELL' while the sheet is opening; null otherwise.
   // Used to show a spinner on the tapped button and dim the other one.
@@ -994,102 +996,39 @@ function WatchlistContent() {
 
   // ── Mobile Back Button Interception ──
   useMobileBack(isFolderDrawerOpen, () => setIsFolderDrawerOpen(false), 'segments');
-  useMobileBack(!!selectedItem, () => {
-    const sheet = document.getElementById('detailSheet');
-    const overlay = document.getElementById('detailSheetOverlay');
-    if (sheet) sheet.classList.remove('open');
-    if (overlay) overlay.classList.remove('active');
-    setTimeout(() => {
-      setSelectedItem(null);
-    }, 380);
+  useMobileBack(!!selectedItem && !isTradeSheetOpen && !chartItem, () => {
+    closeDetailSheet();
   }, 'details');
   useMobileBack(isTradeSheetOpen, () => {
-    const sheet = document.getElementById('tradeSheet');
-    const overlay = document.getElementById('tradeSheetOverlay');
-    if (sheet) sheet.classList.remove('open');
-    if (overlay) overlay.classList.remove('active');
-    setTimeout(() => {
-      setIsTradeSheetOpen(false);
-    }, 380);
+    closeTradeSheet();
   }, 'trade');
   useMobileBack(!!chartItem, () => {
-    const sheet = document.getElementById('chartSheet');
-    const overlay = document.getElementById('chartSheetOverlay');
-    if (sheet) sheet.classList.remove('open');
-    if (overlay) overlay.classList.remove('active');
-    setTimeout(() => {
-      setChartItem(null);
-      setIsBenchmarkChart(false);
-    }, 380);
+    closeChartSheet();
   }, 'chart');
+  useMobileBack(isBasketSheetOpen, () => {
+    setIsBasketSheetOpen(false);
+  }, 'basket');
+  useMobileBack(isCheckoutSheetOpen, () => {
+    setIsCheckoutSheetOpen(false);
+  }, 'checkout');
 
-  // --- Global Modal History Manager ---
   useEffect(() => {
-    let isPopping = false;
-
-    const handlePopState = () => {
-      if (window.location.hash !== '#modal') {
-        isPopping = true;
-        setIsTradeSheetOpen(false);
-        setChartItem(null);
-        setIsFolderDrawerOpen(false);
-
-        const ids = ['tradeSheet', 'detailSheet', 'chartSheet', 'scriptsFolderDrawer', 'tradeSheetOverlay', 'detailSheetOverlay', 'chartSheetOverlay', 'drawerOverlay'];
-        ids.forEach(id => {
-          const el = document.getElementById(id);
-          if (el) {
-            el.classList.remove('open');
-            el.classList.remove('active');
-          }
-        });
-        setTimeout(() => { isPopping = false; }, 50);
-      }
-    };
-    window.addEventListener('popstate', handlePopState);
-
-    const ids = ['tradeSheet', 'detailSheet', 'chartSheet', 'scriptsFolderDrawer'];
-
-    const attachObservers = () => {
+    return () => {
+      document.body.style.overflow = '';
+      document.body.style.overflowY = '';
+      isOpeningTradeSheetRef.current = false;
+      setDetailOpeningSide(null);
+      const ids = [
+        'tradeSheet', 'detailSheet', 'chartSheet', 'basketSheet', 'checkoutSheet', 'scriptsFolderDrawer',
+        'tradeSheetOverlay', 'detailSheetOverlay', 'chartSheetOverlay', 'basketSheetOverlay', 'checkoutSheetOverlay', 'drawerOverlay'
+      ];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) {
-          try {
-            observer.observe(el, { attributes: true, attributeFilter: ['class'] });
-          } catch {}
+          el.classList.remove('open');
+          el.classList.remove('active');
         }
       });
-    };
-
-    const observer = new MutationObserver(() => {
-      if (isPopping) return;
-
-      const isAnyModalOpen = ids.some(id => {
-        const el = document.getElementById(id);
-        return el && el.classList.contains('open');
-      });
-
-      if (isAnyModalOpen && window.location.hash !== '#modal') {
-        window.history.pushState(null, '', window.location.pathname + window.location.search + '#modal');
-      } else if (!isAnyModalOpen && window.location.hash === '#modal') {
-        isPopping = true;
-        // Use replaceState instead of back() to prevent popstate-mutation infinite loops
-        window.history.replaceState(null, '', window.location.pathname + window.location.search);
-        setTimeout(() => { isPopping = false; }, 50);
-      }
-    });
-
-    attachObservers();
-
-    // Dynamically observe body child additions so modals rendered later are also tracked
-    const bodyObserver = new MutationObserver(() => {
-      attachObservers();
-    });
-    bodyObserver.observe(document.body, { childList: true, subtree: true });
-
-    return () => {
-      window.removeEventListener('popstate', handlePopState);
-      observer.disconnect();
-      bodyObserver.disconnect();
     };
   }, []);
 
@@ -1314,10 +1253,6 @@ function WatchlistContent() {
         if (dashboardBenchmarks.includes(deepLinkSymbol) && deepLinkAction !== 'detail') {
           setChartItem(item!);
           setIsBenchmarkChart(true);
-          const chartSheet = document.getElementById('chartSheet');
-          const chartOverlay = document.getElementById('chartSheetOverlay');
-          if (chartSheet) chartSheet.classList.add('open');
-          if (chartOverlay) chartOverlay.classList.add('active');
         } else {
           openDetailSheet(item!);
         }
@@ -1485,10 +1420,6 @@ function WatchlistContent() {
       console.log('[WINDOW HELPER] __reactOpenChartSheet called for:', item?.symbol);
       setChartItem(item);
       setIsBenchmarkChart(false);
-      const sheet = document.getElementById('chartSheet');
-      const overlay = document.getElementById('chartSheetOverlay');
-      if (sheet) sheet.classList.add('open');
-      if (overlay) overlay.classList.add('active');
     };
     (window as any).__reactSetChartItem = (item: WatchlistItem | null) => {
       setChartItem(item);
@@ -1578,10 +1509,7 @@ function WatchlistContent() {
         setOrderUnit('qty');
         setOrderType('MARKET');
         setProductType('INTRADAY');
-        const detailSheet = document.getElementById('detailSheet');
-        const detailOverlay = document.getElementById('detailSheetOverlay');
-        if (detailSheet) detailSheet.classList.remove('open');
-        if (detailOverlay) detailOverlay.classList.remove('active');
+        setSelectedItem(null);
         setIsTradeSheetOpen(true);
       }
     };
@@ -1596,10 +1524,6 @@ function WatchlistContent() {
       setOrderUnit('qty');
       setOrderType('MARKET');
       setProductType('INTRADAY');
-      const detailSheet = document.getElementById('detailSheet');
-      const detailOverlay = document.getElementById('detailSheetOverlay');
-      if (detailSheet) detailSheet.classList.remove('open');
-      if (detailOverlay) detailOverlay.classList.remove('active');
       setIsTradeSheetOpen(true);
     };
 
@@ -1637,32 +1561,64 @@ function WatchlistContent() {
       }
 
       if (item) {
-        // Directly set state - avoid stale closure
+        setIsTradeSheetOpen(false);
         setSelectedItem(item);
-        const tradeSheet = document.getElementById('tradeSheet');
-        const tradeOverlay = document.getElementById('tradeSheetOverlay');
-        if (tradeSheet) tradeSheet.classList.remove('open');
-        if (tradeOverlay) tradeOverlay.classList.remove('active');
-        const detailSheet = document.getElementById('detailSheet');
-        const detailOverlay = document.getElementById('detailSheetOverlay');
-        if (detailSheet) detailSheet.classList.add('open');
-        if (detailOverlay) detailOverlay.classList.add('active');
       }
     };
 
     (window as any).__reactOpenChartSheet = (item: WatchlistItem) => {
       setChartItem(item);
       setIsBenchmarkChart(false);
-      const sheet = document.getElementById('chartSheet');
-      const overlay = document.getElementById('chartSheetOverlay');
-      if (sheet) sheet.classList.add('open');
-      if (overlay) overlay.classList.add('active');
     };
 
     (window as any).__reactSetChartItem = (item: WatchlistItem | null) => {
       setChartItem(item);
     };
   }, [watchlistItems, activeTab, userId]);
+
+  const closeDetailSheet = () => {
+    setSelectedItem(null);
+    setDetailOpeningSide(null);
+    const ids = ['detailSheet', 'detailSheetOverlay'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.classList.remove('open');
+        el.classList.remove('active');
+      }
+    });
+  };
+
+  const closeChartSheet = () => {
+    setChartItem(null);
+    setIsBenchmarkChart(false);
+    const ids = ['chartSheet', 'chartSheetOverlay'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.classList.remove('open');
+        el.classList.remove('active');
+      }
+    });
+  };
+
+  const closeTradeSheet = () => {
+    setIsTradeSheetOpen(false);
+    setSelectedItem(null);
+    setDetailOpeningSide(null);
+    isOpeningTradeSheetRef.current = false;
+    const ids = [
+      'tradeSheet', 'detailSheet', 'chartSheet', 'basketSheet', 'checkoutSheet',
+      'tradeSheetOverlay', 'detailSheetOverlay', 'chartSheetOverlay', 'basketSheetOverlay', 'checkoutSheetOverlay'
+    ];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.classList.remove('open');
+        el.classList.remove('active');
+      }
+    });
+  };
 
   const openTradeSheet = async (item: WatchlistItem, side: 'BUY' | 'SELL' | 'BOTH' = 'BOTH') => {
     // Guard covers the entire async operation — not just one animation frame.
@@ -1694,7 +1650,6 @@ function WatchlistContent() {
       setTpPrice('');
 
       setIsTradeSheetOpen(true);
-      setDetailOpeningSide(null);
 
       // ── Strike range pre-check (runs after sheet is already open) ────────
       // For options only. If out-of-range, close the sheet and show the error.
@@ -1711,9 +1666,7 @@ function WatchlistContent() {
           if (res.ok) {
             const data = await res.json();
             if (data.allowed === false) {
-              setIsTradeSheetOpen(false);
-              setSelectedItem(null);
-              setDetailOpeningSide(null);
+              closeTradeSheet();
               const errMsg = data.reason || `Strike price ${data.strike} is outside the active option chain window (${data.min} to ${data.max}).`;
               window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
               return;
@@ -1729,20 +1682,6 @@ function WatchlistContent() {
       isOpeningTradeSheetRef.current = false;
       setDetailOpeningSide(null);
     }
-  };
-
-  const closeTradeSheet = () => {
-    setIsTradeSheetOpen(false);
-    setSelectedItem(null);
-    setDetailOpeningSide(null);
-    const ids = ['tradeSheet', 'detailSheet', 'chartSheet', 'tradeSheetOverlay', 'detailSheetOverlay', 'chartSheetOverlay'];
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) {
-        el.classList.remove('open');
-        el.classList.remove('active');
-      }
-    });
   };
 
   const blockedSymbolsArr = useMemo(() => Array.from(blockedSymbols).sort(), [blockedSymbols]);
@@ -1948,16 +1887,9 @@ function WatchlistContent() {
                         });
                       }}
                       onChart={(item) => {
+                        setSelectedItem(null);
                         setChartItem(item);
                         setIsBenchmarkChart(false);
-                        const detailSheet = document.getElementById('detailSheet');
-                        const detailOverlay = document.getElementById('detailSheetOverlay');
-                        if (detailSheet) detailSheet.classList.remove('open');
-                        if (detailOverlay) detailOverlay.classList.remove('active');
-                        const chartSheet = document.getElementById('chartSheet');
-                        const chartOverlay = document.getElementById('chartSheetOverlay');
-                        if (chartSheet) chartSheet.classList.add('open');
-                        if (chartOverlay) chartOverlay.classList.add('active');
                       }}
                     />
                   ))}
@@ -1988,12 +1920,7 @@ function WatchlistContent() {
                     <i className="fas fa-times"></i> Cancel
                   </button>
                   <button
-                    onClick={() => {
-                      const sheet = document.getElementById('basketSheet');
-                      const overlay = document.getElementById('basketSheetOverlay');
-                      if (sheet) sheet.classList.add('open');
-                      if (overlay) overlay.classList.add('active');
-                    }}
+                    onClick={() => setIsBasketSheetOpen(true)}
                     style={{ flex: 2, background: '#15803D', color: '#fff', border: 'none', padding: '11px 0', borderRadius: '30px', fontSize: '0.85rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                   >
                     <i className="fas fa-shopping-basket"></i> View Basket
@@ -2012,7 +1939,7 @@ function WatchlistContent() {
               hideLotText={true}
             />
 
-            <div id="detailSheetOverlay" className={`trade-sheet-overlay${(selectedItem && !isTradeSheetOpen && !chartItem) ? ' active' : ''}`} onClick={() => { const sheet = document.getElementById('detailSheet'); const overlay = document.getElementById('detailSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setSelectedItem(null); }}></div>
+            <div id="detailSheetOverlay" className={`trade-sheet-overlay${(selectedItem && !isTradeSheetOpen && !chartItem) ? ' active' : ''}`} onClick={() => closeDetailSheet()}></div>
             <div id="detailSheet" className={`trade-sheet detail-sheet${(selectedItem && !isTradeSheetOpen && !chartItem) ? ' open' : ''}`} style={{ height: 'auto', maxHeight: '72dvh', paddingBottom: '16px' }}>
               <div className="sheet-handle"><div className="handle-bar"></div></div>
               {selectedItem && (() => {
@@ -2067,7 +1994,7 @@ function WatchlistContent() {
                   <div style={{ padding: '0' }}>
                     <div style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '10px' }}>
-                        <button style={{ width: '26px', height: '26px', borderRadius: '50%', background: 'var(--icon-bg)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: '0', flexShrink: 0 }} onClick={() => { const sheet = document.getElementById('detailSheet'); const overlay = document.getElementById('detailSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); }}>
+                        <button style={{ width: '26px', height: '26px', borderRadius: '50%', background: 'var(--icon-bg)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: '0', flexShrink: 0 }} onClick={() => closeDetailSheet()}>
                           <i className="fas fa-chevron-left" style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}></i>
                         </button>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
@@ -2106,16 +2033,10 @@ function WatchlistContent() {
                           transition: 'all 0.18s'
                         }}
                         onClick={() => {
-                          setChartItem(selectedItem);
+                          const item = selectedItem;
+                          setSelectedItem(null);
+                          setChartItem(item);
                           setIsBenchmarkChart(false);
-                          const detailSheet = document.getElementById('detailSheet');
-                          const detailOverlay = document.getElementById('detailSheetOverlay');
-                          if (detailSheet) detailSheet.classList.remove('open');
-                          if (detailOverlay) detailOverlay.classList.remove('active');
-                          const chartSheet = document.getElementById('chartSheet');
-                          const chartOverlay = document.getElementById('chartSheetOverlay');
-                          if (chartSheet) chartSheet.classList.add('open');
-                          if (chartOverlay) chartOverlay.classList.add('active');
                         }}
                       >
                         <svg
@@ -2199,7 +2120,12 @@ function WatchlistContent() {
                             transition: 'background 0.2s, opacity 0.2s',
                           }}
                           disabled={!!detailOpeningSide}
-                          onClick={() => { setDetailOpeningSide('BUY'); openTradeSheet(selectedItem, 'BUY'); }}
+                          onClick={() => {
+                            if (!isOpeningTradeSheetRef.current && !isTradeSheetOpen && selectedItem) {
+                              setDetailOpeningSide('BUY');
+                              openTradeSheet(selectedItem, 'BUY');
+                            }
+                          }}
                         >
                           {detailOpeningSide === 'BUY' ? (
                             <svg width="16" height="16" viewBox="0 0 24 24" style={{ animation: 'spin 0.7s linear infinite' }}>
@@ -2230,7 +2156,13 @@ function WatchlistContent() {
                             transition: 'background 0.2s, opacity 0.2s',
                           }}
                           disabled={!!detailOpeningSide}
-                          onClick={() => { setDetailOpeningSide('SELL'); openTradeSheet(selectedItem, 'SELL'); }}
+                          onClick={() => {
+                            if (isOpeningTradeSheetRef.current || isTradeSheetOpen || detailOpeningSide) return;
+                            if (selectedItem) {
+                              setDetailOpeningSide('SELL');
+                              openTradeSheet(selectedItem, 'SELL');
+                            }
+                          }}
                         >
                           {detailOpeningSide === 'SELL' ? (
                             <svg width="16" height="16" viewBox="0 0 24 24" style={{ animation: 'spin 0.7s linear infinite' }}>
@@ -2249,13 +2181,13 @@ function WatchlistContent() {
               })()}
             </div>
 
-            <div id="basketSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('basketSheet'); const overlay = document.getElementById('basketSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); }}></div>
+            <div id="basketSheetOverlay" className={`trade-sheet-overlay${isBasketSheetOpen ? ' active' : ''}`} onClick={() => setIsBasketSheetOpen(false)}></div>
 
-            <div id="basketSheet" className="trade-sheet detail-sheet" style={{ height: '100dvh', maxHeight: '100dvh', width: '100vw', top: 0, left: 0, bottom: 0, position: 'fixed', zIndex: 100000, borderRadius: 0, paddingBottom: '30px', background: 'var(--bg-body, #F5F7FB)' }}>
+            <div id="basketSheet" className={`trade-sheet detail-sheet${isBasketSheetOpen ? ' open' : ''}`} style={{ height: '100dvh', maxHeight: '100dvh', width: '100vw', top: 0, left: 0, bottom: 0, position: 'fixed', zIndex: 100000, borderRadius: 0, paddingBottom: '30px', background: 'var(--bg-body, #F5F7FB)' }}>
               <div style={{ padding: '24px 20px 20px 20px', height: '100%', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ display: 'flex', alignItems: 'center', marginBottom: '16px', gap: '12px' }}>
                   <button
-                    onClick={() => { const sheet = document.getElementById('basketSheet'); const overlay = document.getElementById('basketSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); }}
+                    onClick={() => setIsBasketSheetOpen(false)}
                     style={{ background: 'none', border: 'none', fontSize: '1.2rem', cursor: 'pointer', color: 'var(--text-primary)', padding: 0 }}
                   >
                     <i className="fas fa-arrow-left"></i>
@@ -2327,12 +2259,7 @@ function WatchlistContent() {
                 <div style={{ display: 'flex', gap: '12px', width: '100%', padding: '0 4px' }}>
                   <button
                     style={{ flex: 1, background: '#2C8E5A', color: 'white', border: 'none', padding: '17px 8px', borderRadius: '16px', fontSize: '0.9rem', fontWeight: '800', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '6px', boxShadow: '0 6px 14px rgba(44,142,90,0.3)', minWidth: 0, whiteSpace: 'nowrap' }}
-                    onClick={() => {
-                      const sheet = document.getElementById('checkoutSheet');
-                      const overlay = document.getElementById('checkoutSheetOverlay');
-                      if (sheet) sheet.classList.add('open');
-                      if (overlay) overlay.classList.add('active');
-                    }}
+                    onClick={() => setIsCheckoutSheetOpen(true)}
                   >
                     <i className="fas fa-bolt" style={{ lineHeight: 1, fontSize: '0.9rem' }}></i> Checkout
                   </button>
@@ -2340,10 +2267,7 @@ function WatchlistContent() {
                     style={{ flex: 1, background: 'var(--icon-bg, #EFEFEF)', color: 'var(--text-secondary, #6B7280)', border: 'none', padding: '17px 8px', borderRadius: '16px', fontSize: '0.9rem', fontWeight: '600', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '7px', minWidth: 0, whiteSpace: 'nowrap' }}
                     onClick={() => {
                       setBasketLegs([]);
-                      const sheet = document.getElementById('basketSheet');
-                      const overlay = document.getElementById('basketSheetOverlay');
-                      if (sheet) sheet.classList.remove('open');
-                      if (overlay) overlay.classList.remove('active');
+                      setIsBasketSheetOpen(false);
                     }}
                   >
                     <i className="fas fa-trash-alt" style={{ opacity: 0.5 }}></i> Clear
@@ -2353,12 +2277,12 @@ function WatchlistContent() {
             </div>
 
             {/* Checkout Sheet */}
-            <div id="checkoutSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('checkoutSheet'); const overlay = document.getElementById('checkoutSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); }}></div>
-            <div id="checkoutSheet" className="trade-sheet detail-sheet" style={{ height: '100dvh', maxHeight: '100dvh', width: '100vw', top: 0, left: 0, bottom: 0, position: 'fixed', zIndex: 100000, borderRadius: 0, background: 'var(--bg-body, #F5F7FB)', display: 'flex', flexDirection: 'column', padding: 0 }}>
+            <div id="checkoutSheetOverlay" className={`trade-sheet-overlay${isCheckoutSheetOpen ? ' active' : ''}`} onClick={() => setIsCheckoutSheetOpen(false)}></div>
+            <div id="checkoutSheet" className={`trade-sheet detail-sheet${isCheckoutSheetOpen ? ' open' : ''}`} style={{ height: '100dvh', maxHeight: '100dvh', width: '100vw', top: 0, left: 0, bottom: 0, position: 'fixed', zIndex: 100000, borderRadius: 0, background: 'var(--bg-body, #F5F7FB)', display: 'flex', flexDirection: 'column', padding: 0 }}>
 
               {/* Header */}
               <div style={{ display: 'flex', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid var(--border-light, #EEF2F8)', background: 'var(--card-bg, #fff)', flexShrink: 0 }}>
-                <button onClick={() => { const s = document.getElementById('checkoutSheet'); const o = document.getElementById('checkoutSheetOverlay'); if (s) s.classList.remove('open'); if (o) o.classList.remove('active'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px 10px 4px 0', fontSize: '1.05rem' }}>
+                <button onClick={() => setIsCheckoutSheetOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-secondary)', padding: '4px 10px 4px 0', fontSize: '1.05rem' }}>
                   <i className="fas fa-arrow-left" />
                 </button>
                 <div>
@@ -2528,8 +2452,8 @@ function WatchlistContent() {
                       if (failCount === 0) {
                         showToast('Basket executed successfully!', false);
                         setBasketLegs([]); setBasketMode(false);
-                        ['checkoutSheet', 'basketSheet'].forEach(id => document.getElementById(id)?.classList.remove('open'));
-                        ['checkoutSheetOverlay', 'basketSheetOverlay'].forEach(id => document.getElementById(id)?.classList.remove('active'));
+                        setIsCheckoutSheetOpen(false);
+                        setIsBasketSheetOpen(false);
                       } else {
                         showToast(`${successCount} order(s) placed, ${failCount} failed.`, true);
                       }
@@ -2540,7 +2464,7 @@ function WatchlistContent() {
                   {isExecutingBasket ? <><AnimatedLoader size="small" /> Executing...</> : <><i className="fas fa-bolt" style={{ marginRight: '4px' }} /> Confirm</>}
                 </button>
                 <button
-                  onClick={() => { if (isExecutingBasket) return; const s = document.getElementById('checkoutSheet'); const o = document.getElementById('checkoutSheetOverlay'); if (s) s.classList.remove('open'); if (o) o.classList.remove('active'); }}
+                  onClick={() => { if (!isExecutingBasket) setIsCheckoutSheetOpen(false); }}
                   disabled={isExecutingBasket}
                   style={{ flex: 1, background: 'var(--bg-body, #F3F4F6)', color: isExecutingBasket ? '#9CA3AF' : 'var(--text-secondary)', border: '1px solid var(--border-light, #EEF2F8)', padding: '15px 0', borderRadius: '14px', fontSize: '0.9rem', fontWeight: '700', cursor: isExecutingBasket ? 'not-allowed' : 'pointer' }}
                 >
@@ -2711,8 +2635,8 @@ function WatchlistContent() {
             {toast.msg}
           </div>
 
-          <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); setIsBenchmarkChart(false); }}></div>
-          <div id="chartSheet" className="trade-sheet" style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
+          <div id="chartSheetOverlay" className={`trade-sheet-overlay${chartItem ? ' active' : ''}`} onClick={() => closeChartSheet()}></div>
+          <div id="chartSheet" className={`trade-sheet${chartItem ? ' open' : ''}`} style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
             <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
               {chartItem && (() => {
                 console.log('[CHART PERF REACTION] Rendering TradingChart for chartItem:', chartItem.symbol, chartItem.segment);
@@ -3053,10 +2977,6 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
       function openDetailSheet(symbol) {
         if (typeof window.__reactOpenDetailSheet === 'function') {
           window.__reactOpenDetailSheet(symbol);
-          var sheet = document.getElementById('detailSheet');
-          var overlay = document.getElementById('detailSheetOverlay');
-          if (sheet) sheet.classList.add('open');
-          if (overlay) overlay.classList.add('active');
         }
       }
 
