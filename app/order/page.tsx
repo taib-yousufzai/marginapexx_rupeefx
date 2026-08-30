@@ -104,6 +104,7 @@ export default function OrderPage() {
       trigger_price: order.trigger_price,
       stop_loss: order.stop_loss,
       target: order.target,
+      is_exit: order.is_exit,
     });
   };
 

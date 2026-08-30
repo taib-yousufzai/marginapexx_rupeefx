@@ -451,7 +451,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         setOrderQty(initialOrder.qty);
         setQtyInput(String(initialOrder.qty));
         setOrderUnit('qty');
-        const initialOrderType = (exitMode && initialOrder.order_type === 'LIMIT') ? 'TARGET' : initialOrder.order_type;
+        const isExitOrModify = exitMode || isModify || Boolean(initialOrder.is_exit || initialOrder.isExit) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-'));
+        const initialOrderType = (isExitOrModify && (initialOrder.order_type === 'LIMIT' || initialOrder.order_type === 'TARGET')) ? 'TARGET' : initialOrder.order_type;
         setOrderType(initialOrderType);
         setProductType(initialOrder.product_type);
         setLimitPrice(initialOrder.client_price ? String(initialOrder.client_price) : (initialOrder.target ? String(initialOrder.target) : ''));
@@ -467,7 +468,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             setGttSubOption('LIMIT');
           }
         } else {
-          setGttSubOption(exitMode ? 'TARGET' : 'LIMIT');
+          setGttSubOption(isExitOrModify ? 'TARGET' : 'LIMIT');
         }
       } else {
         const defaultQty = lotSize > 0 ? lotSize : 1;
@@ -484,7 +485,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         userHasEditedQty.current = false;
       }
     }
-  }, [item?.symbol, propProductType, exitMode, initialOrder]);
+  }, [item?.symbol, propProductType, exitMode, isModify, initialOrder, modifyingOrderId]);
 
   // Sync maximum position quantity when opening against an existing position
   useEffect(() => {
@@ -652,7 +653,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       let resolvedStopLoss: number | undefined = undefined;
       let resolvedTarget: number | undefined = undefined;
 
-      if (exitMode) {
+      const isExitOrModifyFlow = exitMode || isModify || Boolean(initialOrder && (initialOrder.is_exit || initialOrder.isExit)) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-'));
+
+      if (isExitOrModifyFlow) {
         if (orderType === 'TARGET') {
           resolvedOrderType = 'LIMIT';
           resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
@@ -671,6 +674,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedStopLoss = parseFloat(slPrice) || undefined;
           resolvedTarget = parseFloat(tpPrice) || undefined;
           resolvedClientPrice = currentLtp;
+        } else if (orderType === 'LIMIT') {
+          resolvedOrderType = 'LIMIT';
+          resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
         } else {
           // MARKET
           resolvedOrderType = 'MARKET';
@@ -1605,14 +1611,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 <div className="ts2-card">
                   <div className="ts2-label">Order Type</div>
                   <div className="ts2-pills">
-                    {(exitMode ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT']).map(t => (
+                    {((exitMode || isModify || Boolean(initialOrder?.is_exit || initialOrder?.isExit) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-'))) ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT']).map(t => (
                       <button
                         key={t}
                         className={`ts2-pill${orderType === t ? ' active' : ''}`}
                         onClick={() => {
                           setOrderType(t);
                           if (t === 'GTT') {
-                            setGttSubOption(exitMode ? 'TARGET' : 'LIMIT');
+                            setGttSubOption((exitMode || isModify) ? 'TARGET' : 'LIMIT');
                           }
                         }}
                       >
