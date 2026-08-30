@@ -537,9 +537,56 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     }
   }
 
+  const formattedLtp = `${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formattedMin = `${currencySymbol}${minAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const formattedMax = `${currencySymbol}${maxAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  let priceRangeText = '';
+  if (orderType === 'TARGET') {
+    if (side === 'SELL') {
+      priceRangeText = maxAllowedPrice !== Infinity
+        ? `Allowed price: more than ${formattedLtp} to ${formattedMax}`
+        : `Allowed price: more than ${formattedLtp}`;
+    } else {
+      priceRangeText = minAllowedPrice > 0
+        ? `Allowed price: ${formattedMin} to less than ${formattedLtp}`
+        : `Allowed price: less than ${formattedLtp}`;
+    }
+  } else if (orderType === 'LIMIT') {
+    if (side === 'BUY') {
+      priceRangeText = minAllowedPrice > 0
+        ? `Allowed price: ${formattedMin} to less than ${formattedLtp}`
+        : `Allowed price: less than ${formattedLtp}`;
+    } else {
+      priceRangeText = maxAllowedPrice !== Infinity
+        ? `Allowed price: more than ${formattedLtp} to ${formattedMax}`
+        : `Allowed price: more than ${formattedLtp}`;
+    }
+  } else if (orderType === 'SL' || orderType === 'SLM') {
+    if (side === 'BUY') {
+      priceRangeText = maxAllowedPrice !== Infinity
+        ? `Allowed price: more than ${formattedLtp} to ${formattedMax}`
+        : `Allowed price: more than ${formattedLtp}`;
+    } else {
+      priceRangeText = minAllowedPrice > 0
+        ? `Allowed price: ${formattedMin} to less than ${formattedLtp}`
+        : `Allowed price: less than ${formattedLtp}`;
+    }
+  } else {
+    if (minAllowedPrice > 0 && maxAllowedPrice !== Infinity) {
+      priceRangeText = `Allowed price: ${formattedMin} to ${formattedMax}`;
+    } else if (minAllowedPrice > 0) {
+      priceRangeText = `Allowed price: more than ${formattedMin}`;
+    } else if (maxAllowedPrice !== Infinity) {
+      priceRangeText = `Allowed price: up to ${formattedMax}`;
+    } else {
+      priceRangeText = `Allowed price: Market price`;
+    }
+  }
+
   const priceRangeHelp = currentLtp > 0 ? (
     <div style={{ fontSize: '0.68rem', color: 'var(--text-secondary, #6B7280)', marginTop: '6px', fontWeight: 600 }}>
-      Allowed price: {minAllowedPrice > 0 ? `${currencySymbol}${minAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : `${currencySymbol}0.00`} to {maxAllowedPrice !== Infinity ? `${currencySymbol}${maxAllowedPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'less than limit'}
+      {priceRangeText}
     </div>
   ) : null;
 
