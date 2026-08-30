@@ -92,15 +92,15 @@ export default function OrderPage() {
     setTradeSheetItem({
       name: order.symbol,
       symbol: order.symbol,
-      kiteSymbol: order.kite_instrument,
+      kiteSymbol: order.kite_instrument || order.symbol,
       segment: order.segment,
-      price: order.fill_price || 0,
+      price: order.price || order.trigger_price || order.fill_price || 0,
     });
     setTradeSheetInitialOrder({
       qty: order.qty,
       order_type: order.order_type,
       product_type: order.product_type,
-      client_price: order.client_price || order.fill_price,
+      client_price: order.price || order.client_price || order.fill_price,
       trigger_price: order.trigger_price,
       stop_loss: order.stop_loss,
       target: order.target,
@@ -281,9 +281,9 @@ export default function OrderPage() {
                         </span>
                       </div>
                       <div className="ord-row ord-row-price">
-                        <span className="ord-label">FILL PRICE</span>
+                        <span className="ord-label">{isPending ? (order.order_type === 'LIMIT' ? 'LIMIT PRICE' : 'PRICE') : 'FILL PRICE'}</span>
                         <span className={`ord-price-val ${isBuy ? 'buy-price' : 'sell-price'}`}>
-                          {fmtPrice(order.fill_price)}
+                          {fmtPrice(isPending ? (order.price || order.trigger_price || order.fill_price) : order.fill_price)}
                         </span>
                       </div>
                       <div className="ord-row ord-row-info">

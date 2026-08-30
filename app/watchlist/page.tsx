@@ -854,12 +854,14 @@ function WatchlistContent() {
       });
       if (i.binanceSymbol && !list.includes(i.binanceSymbol)) list.push(i.binanceSymbol);
     });
-    const selSym = selectedItem?.kiteSymbol || selectedItem?.symbol;
-    if (selSym && !list.includes(selSym)) {
-      list.push(selSym);
+    if (selectedItem) {
+      const selCandidates = [selectedItem.kiteSymbol, selectedItem.symbol, selectedItem.name, selectedItem.symbol?.replace(/\s+/g, '')].filter(Boolean) as string[];
+      selCandidates.forEach(sym => {
+        if (!list.includes(sym)) list.push(sym);
+      });
     }
     return list;
-  }, [watchlistItems, selectedItem?.kiteSymbol, selectedItem?.symbol]);
+  }, [watchlistItems, selectedItem?.kiteSymbol, selectedItem?.symbol, selectedItem?.name]);
 
   const { quotes: marketQuotes } = useMarketQuotes(marketSymbols);
 
@@ -889,7 +891,13 @@ function WatchlistContent() {
   const isCrypto = !!(selectedItem?.binanceSymbol);
   const isComex = !!(selectedItem?.comexSymbol) && (!(selectedItem?.kiteSymbol) || (selectedItem as any).preferredView === 'comex');
 
-  const currentKiteQuote = selectedItem?.kiteSymbol ? marketQuotes[selectedItem.kiteSymbol] : null;
+  const currentKiteQuote = selectedItem ? (
+    (selectedItem.kiteSymbol ? marketQuotes[selectedItem.kiteSymbol] : null) ||
+    (selectedItem.symbol ? marketQuotes[selectedItem.symbol] : null) ||
+    (selectedItem.symbol ? marketQuotes[selectedItem.symbol.replace(/\s+/g, '')] : null) ||
+    (selectedItem.name ? marketQuotes[selectedItem.name] : null) ||
+    null
+  ) : null;
   const currentBinanceQuote = selectedItem?.binanceSymbol ? (marketQuotes[selectedItem.binanceSymbol] || binanceQuotesAsQuoteData[selectedItem.binanceSymbol]) : null;
   const currentComexQuote = selectedItem?.comexSymbol ? comexQuotes[selectedItem.comexSymbol] : null;
 
@@ -1425,7 +1433,12 @@ function WatchlistContent() {
     if (legItem.comexSymbol) {
       return comexQuotes?.[legItem.comexSymbol]?.lastPrice ?? legItem.price;
     }
-    return marketQuotes?.[legItem.kiteSymbol]?.lastPrice ?? legItem.price;
+    return (
+      (legItem.kiteSymbol && marketQuotes?.[legItem.kiteSymbol]) ||
+      (legItem.symbol && marketQuotes?.[legItem.symbol]) ||
+      (legItem.symbol && marketQuotes?.[legItem.symbol.replace(/\s+/g, '')]) ||
+      (legItem.name && marketQuotes?.[legItem.name])
+    )?.lastPrice ?? legItem.price;
   };
 
   useEffect(() => {

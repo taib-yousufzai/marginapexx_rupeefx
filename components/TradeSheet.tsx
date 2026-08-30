@@ -155,14 +155,19 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const marketSymbols = useMemo(() => {
     const list: string[] = [];
     if (computedKiteSymbol) list.push(computedKiteSymbol);
+    if (item?.kiteSymbol && !list.includes(item.kiteSymbol)) list.push(item.kiteSymbol);
+    if (item?.symbol && !list.includes(item.symbol)) list.push(item.symbol);
+    if (item?.name && !list.includes(item.name)) list.push(item.name);
+    if (item?.symbol && !list.includes(item.symbol.replace(/\s+/g, ''))) list.push(item.symbol.replace(/\s+/g, ''));
     if (isCrypto && item?.symbol) {
-      list.push(item.symbol.replace('/', ''));
+      const cleanCrypto = item.symbol.replace('/', '');
+      if (!list.includes(cleanCrypto)) list.push(cleanCrypto);
     }
-    if (bSymbol) {
+    if (bSymbol && !list.includes(bSymbol)) {
       list.push(bSymbol);
     }
     return list;
-  }, [computedKiteSymbol, isCrypto, item?.symbol, bSymbol]);
+  }, [computedKiteSymbol, item?.kiteSymbol, item?.symbol, item?.name, isCrypto, bSymbol]);
 
   const comexSymbols = useMemo(() => {
     if (item?.comexSymbol) return [item.comexSymbol];
@@ -182,6 +187,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const usdInrRate = 83.85;
 
   const cryptoQuote = isCrypto && bSymbol ? (marketQuotes[bSymbol] || marketQuotes[item?.symbol?.replace('/', '') || '']) : null;
+  const activeKiteQuote = (computedKiteSymbol && marketQuotes[computedKiteSymbol]) ||
+    (item?.kiteSymbol && marketQuotes[item.kiteSymbol]) ||
+    (item?.symbol && marketQuotes[item.symbol]) ||
+    (item?.symbol && marketQuotes[item.symbol.replace(/\s+/g, '')]) ||
+    (item?.name && marketQuotes[item.name]) ||
+    null;
 
   if (isCrypto && bSymbol && cryptoQuote) {
     currentLtp = cryptoQuote.lastPrice || currentLtp;
@@ -190,12 +201,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   } else if (isComex && item?.comexSymbol && comexQuotes[item.comexSymbol]) {
     currentLtp = comexQuotes[item.comexSymbol].lastPrice;
     currentChangePercent = comexQuotes[item.comexSymbol].changePercent;
-  } else if (computedKiteSymbol && marketQuotes[computedKiteSymbol]) {
-    currentLtp = marketQuotes[computedKiteSymbol].lastPrice;
-    currentChangePercent = marketQuotes[computedKiteSymbol].changePercent;
-  } else if (item?.symbol && marketQuotes[item.symbol]) {
-    currentLtp = marketQuotes[item.symbol].lastPrice;
-    currentChangePercent = marketQuotes[item.symbol].changePercent;
+  } else if (activeKiteQuote) {
+    currentLtp = activeKiteQuote.lastPrice;
+    currentChangePercent = activeKiteQuote.changePercent;
   }
 
   if (isForexUsd && currentLtp > 0 && currentLtp < 20) {
@@ -231,12 +239,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     } else if (isComex && item?.comexSymbol && comexQuotes[item.comexSymbol]) {
       rawBid = comexQuotes[item.comexSymbol].bid || currentLtp;
       rawAsk = comexQuotes[item.comexSymbol].ask || currentLtp;
-    } else if (computedKiteSymbol && marketQuotes[computedKiteSymbol]) {
-      rawBid = marketQuotes[computedKiteSymbol].bid || currentLtp;
-      rawAsk = marketQuotes[computedKiteSymbol].ask || currentLtp;
-    } else if (item?.symbol && marketQuotes[item.symbol]) {
-      rawBid = marketQuotes[item.symbol].bid || currentLtp;
-      rawAsk = marketQuotes[item.symbol].ask || currentLtp;
+    } else if (activeKiteQuote) {
+      rawBid = activeKiteQuote.bid || currentLtp;
+      rawAsk = activeKiteQuote.ask || currentLtp;
     }
 
     if (!rawBid || rawBid <= 0) rawBid = currentLtp;
@@ -971,7 +976,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
 
         try {
-          const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (computedKiteSymbol ? marketQuotes[computedKiteSymbol] : null) || (item?.symbol ? marketQuotes[item.symbol] : null);
+          const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote;
           const diagnosticFields = {
             frontend_bid: activeQuoteObj?.bid,
             frontend_ask: activeQuoteObj?.ask,
@@ -1075,7 +1080,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
 
         try {
-          const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (computedKiteSymbol ? marketQuotes[computedKiteSymbol] : null) || (item?.symbol ? marketQuotes[item.symbol] : null);
+          const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote;
           const diagnosticFields = {
             frontend_bid: activeQuoteObj?.bid,
             frontend_ask: activeQuoteObj?.ask,
