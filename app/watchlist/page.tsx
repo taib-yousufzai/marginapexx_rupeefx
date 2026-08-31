@@ -187,7 +187,7 @@ export type TabLabel =
   | 'MCX-OPT'
   | 'STOCK-FUT'
   | 'STOCK-OPT'
-  | 'NSE-EQ'
+  | 'STOCKS'
   | 'CRYPTO'
   | 'COMEX'
   | 'FOREX'
@@ -201,7 +201,7 @@ export const TAB_LABELS: TabLabel[] = [
   'MCX-OPT',
   'STOCK-FUT',
   'STOCK-OPT',
-  'NSE-EQ',
+  'STOCKS',
   'CRYPTO',
   'COMEX',
   'FOREX',
@@ -231,10 +231,14 @@ export const SEGMENT_TAB_MAP: Record<string, TabLabel> = {
   'MCX - Options': 'MCX-OPT',
   'MCX-FUT': 'MCX-FUT',
   'MCX-OPT': 'MCX-OPT',
-  'NSE - Equity': 'NSE-EQ',
-  'BSE - Equity': 'NSE-EQ',
-  'NSE-EQ': 'NSE-EQ',
-  'BSE-EQ': 'NSE-EQ',
+  'NSE - Equity': 'STOCKS',
+  'BSE - Equity': 'STOCKS',
+  'NSE-EQ': 'STOCKS',
+  'BSE-EQ': 'STOCKS',
+  'STOCKS': 'STOCKS',
+  'Stocks': 'STOCKS',
+  'Equity': 'STOCKS',
+  'EQUITY': 'STOCKS',
   'Crypto': 'CRYPTO',
   'CRYPTO': 'CRYPTO',
   'Forex': 'FOREX',
@@ -265,7 +269,7 @@ export function getTabForItem(item: WatchlistItem): TabLabel {
     if (c.includes('STOCK-OPT') || c.includes('STOCKS - OPTIONS')) return 'STOCK-OPT';
     if (c.includes('MCX-FUT') || c.includes('MCX - FUTURE')) return 'MCX-FUT';
     if (c.includes('MCX-OPT') || c.includes('MCX - OPTIONS')) return 'MCX-OPT';
-    if (c.includes('NSE-EQ') || c.includes('EQUITY')) return 'NSE-EQ';
+    if (c.includes('NSE-EQ') || c.includes('EQUITY') || c.includes('STOCKS')) return 'STOCKS';
     if (c.includes('CRYPTO')) return 'CRYPTO';
     if (c.includes('FOREX')) return 'FOREX';
     if (c.includes('COMEX') || c === 'COI') return 'COMEX';
@@ -298,7 +302,7 @@ export function getTabForItem(item: WatchlistItem): TabLabel {
     return 'STOCK-FUT';
   }
 
-  return 'NSE-EQ';
+  return 'STOCKS';
 }
 
 /** Filters items to those belonging to the active tab. */
@@ -358,7 +362,7 @@ export function getExchangeBadge(segment: string, name?: string, symbol?: string
   if (segUpper.includes('CRYPTO')) return 'CRYPTO';
   if (segUpper.includes('FOREX')) return 'FOREX';
   if (segUpper.includes('CDS')) return 'CDS';
-  if (segUpper === 'NSE - EQUITY' || segUpper === 'NSE-EQ' || segUpper === 'EQUITY' || segUpper === 'NSE') return 'NSE';
+  if (segUpper === 'NSE - EQUITY' || segUpper === 'NSE-EQ' || segUpper === 'EQUITY' || segUpper === 'STOCKS' || segUpper === 'NSE') return 'NSE';
   if (segUpper === 'BSE - EQUITY' || segUpper === 'BSE-EQ' || segUpper === 'BSE') return 'BSE';
   if (segUpper.startsWith('NSE') || segUpper.startsWith('NFO')) return 'NFO';
   if (segUpper.startsWith('BSE') || segUpper.startsWith('BFO')) return 'BFO';
@@ -2507,7 +2511,7 @@ function WatchlistContent() {
                     'US Equity': 'US-EQ',
                   };
                   // Define the desired display order
-                  const SEGMENT_ORDER = ['INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'Equity', 'NSE-EQ', 'CRYPTO', 'COMEX', 'FOREX', 'US-EQ', 'US Equity'];
+                  const SEGMENT_ORDER = ['INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'STOCKS', 'Equity', 'NSE-EQ', 'CRYPTO', 'COMEX', 'FOREX', 'US-EQ', 'US Equity'];
                   const sortedSegments = [...tradingSegments].sort((a, b) => {
                     const ai = SEGMENT_ORDER.indexOf(a.name);
                     const bi = SEGMENT_ORDER.indexOf(b.name);
@@ -2879,7 +2883,7 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           ]
         },
         {
-          name: 'Stocks',
+          name: 'STOCKS',
           icon: 'fa-landmark',
           instruments: [
             { name: 'RELIANCE', symbol: 'RELIANCE_EQ', kiteSymbol: 'NSE:RELIANCE', price: 0, change: '0%', segment: 'NSE - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0 },

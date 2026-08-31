@@ -382,7 +382,7 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
   const SEGMENT_DEFAULTS: Record<string, string> = {
     'INDEX-FUT': 'NIFTY', 'INDEX-OPT': 'NIFTY',
     'STOCK-FUT': 'RELIANCE', 'STOCK-OPT': 'RELIANCE',
-    'NSE-EQ': 'RELIANCE', 'Equity': 'RELIANCE', 'MCX-FUT': 'GOLD', 'MCX-OPT': 'GOLD',
+    'NSE-EQ': 'RELIANCE', 'STOCKS': 'RELIANCE', 'Equity': 'RELIANCE', 'Stocks': 'RELIANCE', 'MCX-FUT': 'GOLD', 'MCX-OPT': 'GOLD',
     'COMEX': 'GOLD', 'CRYPTO': 'BTC', 'FOREX': 'USDINR',
   };
 

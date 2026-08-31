@@ -96,4 +96,20 @@ describe('Instrument Segment and Tab Categorization Audit', () => {
     expect(getExchangeBadge(btc.segment, btc.name, btc.symbol)).toBe('CRYPTO');
     expect(getExchangeBadge(ada.segment, ada.name, ada.symbol)).toBe('CRYPTO');
   });
+
+  it('correctly classifies equity items under STOCKS tab', () => {
+    const reliance: WatchlistItem = {
+      name: 'RELIANCE',
+      symbol: 'RELIANCE_EQ',
+      kiteSymbol: 'NSE:RELIANCE',
+      price: 0,
+      change: '0%',
+      segment: 'NSE - Equity',
+      contractDate: '',
+      open: 0, high: 0, low: 0, close: 0
+    };
+
+    expect(getTabForItem(reliance)).toBe('STOCKS');
+    expect(getExchangeBadge(reliance.segment, reliance.name, reliance.symbol)).toBe('NSE');
+  });
 });
