@@ -9,6 +9,7 @@ import { useBinanceQuotes } from '@/hooks/useBinanceQuotes';
 import { MyPosition } from '@/lib/types/order';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
+import { getSharedSessionSync } from '@/lib/sharedSession';
 import { isContractExpired } from '@/lib/contractExpiry';
 
 export interface EnrichedPosition extends MyPosition {
@@ -148,8 +149,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   const fetchPositions = useCallback(async () => {
     try {
       // Don't fetch if there's no active session (e.g. on the login page)
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const { token } = getSharedSessionSync();
+      if (!token) return;
 
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();

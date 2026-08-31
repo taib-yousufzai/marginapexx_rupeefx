@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { supabase } from '@/lib/supabaseClient';
 import type { MyOrder } from '@/lib/types/order';
 import { api, ApiError } from '@/lib/api';
+import { getSharedSessionSync } from '@/lib/sharedSession';
 
 export interface OrdersContextType {
   orders: MyOrder[];
@@ -68,8 +69,8 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
     async function init() {
       // Wait for a valid session before fetching — prevents a 401 flash on
       // first load when Supabase hasn't yet restored the session from storage.
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
+      const { token } = getSharedSessionSync();
+      if (!token) {
         setLoading(false);
         return;
       }

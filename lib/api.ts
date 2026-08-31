@@ -1,6 +1,6 @@
 'use client';
 
-import { getSharedSession, clearSharedSession } from '@/lib/sharedSession';
+import { getSharedSessionSync, clearSharedSession } from '@/lib/sharedSession';
 import { clearAuthCache } from '@/lib/auth';
 
 
@@ -70,7 +70,7 @@ async function apiCall<T>(
   body?: unknown,
   options?: RequestOptions,
 ): Promise<T> {
-  const { token } = await getSharedSession();
+  const { token } = getSharedSessionSync();
 
   // Build headers
   const headers: Record<string, string> = {

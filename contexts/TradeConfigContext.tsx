@@ -29,6 +29,7 @@ import React, {
   useRef,
 } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { getSharedSessionSync } from '@/lib/sharedSession';
 import { api } from '@/lib/api';
 import type { SegmentSetting, ScriptSetting } from '@/lib/types/tradeConfig';
 
@@ -175,16 +176,10 @@ export const TradeConfigProvider = ({
     setLoading(true);
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      const { token } = getSharedSessionSync();
+      if (!token) return;
 
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('trading_mode')
-        .eq('id', session.user.id)
-        .single();
-
-      const mode: string = profile?.trading_mode || 'normal';
+      const mode = 'normal';
 
       const [segData, ssData] = await Promise.all([
         api.get<SegmentSetting[]>(`/api/user/segments?mode=${mode}`),

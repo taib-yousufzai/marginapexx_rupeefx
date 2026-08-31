@@ -117,16 +117,13 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       }
     });
 
-    // Check current session immediately
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) {
-        init(session);
-      } else {
-        setTimeout(() => {
-          if (!cancelled) setLoading(false);
-        }, 500);
-      }
-    });
+    // Check current session immediately via non-blocking token check
+    const { token } = getSharedSessionSync();
+    if (token) {
+      fetchBalance();
+    } else {
+      if (!cancelled) setLoading(false);
+    }
 
     // Active balance polling fallback: fetch balance every 5 seconds to ensure
     // accurate account balance under any network/realtime latency.
