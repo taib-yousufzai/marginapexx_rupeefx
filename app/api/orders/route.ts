@@ -269,27 +269,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const from  = (page - 1) * limit;
     const to    = from + limit - 1;
 
-    // Fetch profile to check history_reset_at
-    const { data: userProfile } = await admin
-      .from('profiles')
-      .select('history_reset_at')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    const historyResetAt = userProfile?.history_reset_at ? new Date(userProfile.history_reset_at).toISOString() : null;
-
-    let ordersQuery = admin
-      .from('orders')
-      .select('*')
-      .eq('user_id', user.id);
-
-    if (historyResetAt) {
-      ordersQuery = ordersQuery.or(`status.in.(PENDING,pending,TRIGGER_PENDING,trigger_pending,OPEN,open,ACTIVE,active),updated_at.gt.${historyResetAt},created_at.gt.${historyResetAt}`);
-    }
-
-    // Fetch orders and open positions in parallel
-    const [ordersRes, posRes] = await Promise.all([
-      ordersQuery
+    // Fetch user profile, orders, and open positions in a SINGLE parallel round-trip
+    const [userProfileRes, ordersRes, posRes] = await Promise.all([
+      admin
+        .from('profiles')
+        .select('history_reset_at')
+        .eq('id', user.id)
+        .maybeSingle(),
+      admin
+        .from('orders')
+        .select('*')
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .range(from, to),
       admin
@@ -301,7 +291,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     if (ordersRes.error) throw ordersRes.error;
 
-    const dbOrders = ordersRes.data ?? [];
+    const userProfile = userProfileRes.data;
+    const historyResetAt = userProfile?.history_reset_at ? new Date(userProfile.history_reset_at).getTime() : null;
+
+    let dbOrders = ordersRes.data ?? [];
+    if (historyResetAt) {
+      const pendingStatuses = new Set(['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending', 'OPEN', 'open', 'ACTIVE', 'active']);
+      dbOrders = dbOrders.filter((r: any) => {
+        if (r.status && pendingStatuses.has(r.status)) return true;
+        const updatedAt = r.updated_at ? new Date(r.updated_at).getTime() : 0;
+        const createdAt = r.created_at ? new Date(r.created_at).getTime() : 0;
+        return updatedAt > historyResetAt || createdAt > historyResetAt;
+      });
+    }
+
     const openPositions = posRes.data ?? [];
 
     const orders: MyOrder[] = dbOrders.map((r: Record<string, unknown>) => ({
@@ -335,20 +338,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         .map((o: any) => `${o.symbol}|${o.side}`)
     );
 
-    // Also build a set of position IDs that are fully closed to skip virtual orders
-    const closedPosRes = await admin
-      .from('positions')
-      .select('id')
-      .eq('user_id', user.id)
-      .eq('status', 'closed');
-    const closedPosIds = new Set<string>((closedPosRes.data ?? []).map((p: any) => p.id));
-
     // Dynamically synthesize virtual pending orders for positions with SL/Target
     const virtualOrders: MyOrder[] = [];
     for (const pos of openPositions) {
-      // Skip if position is already closed
-      if (closedPosIds.has(pos.id)) continue;
-
       const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
       const exitKey = `${pos.symbol}|${exitSide}`;
 

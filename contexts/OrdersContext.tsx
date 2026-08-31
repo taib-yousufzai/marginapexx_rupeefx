@@ -31,10 +31,13 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       setOrders(globalOrdersCache);
       setError(null);
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(`API error ${err.status}`);
-      } else {
-        setError('Network error loading orders');
+      console.error('[OrdersContext] Failed to fetch orders:', err);
+      if (globalOrdersCache.length === 0) {
+        if (err instanceof ApiError) {
+          setError(`API error ${err.status}`);
+        } else {
+          setError('Network error loading orders');
+        }
       }
     } finally {
       setLoading(false);
