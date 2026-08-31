@@ -64,55 +64,52 @@ export function getRole(user: User | null): AppRole {
 export async function signIn(email: string, password: string): Promise<SignInResult> {
   let targetEmail = email.trim();
 
-  // If user entered client_id or phone (no '@'), attempt client_id / phone lookup (with 2.5s timeout)
-  if (targetEmail && !targetEmail.includes('@')) {
-    try {
-      const lookupPromise = supabase
-        .from('profiles')
-        .select('email')
-        .or(`client_id.eq.${targetEmail},phone.eq.${targetEmail},client_id.eq.${targetEmail.toUpperCase()}`)
-        .maybeSingle();
-
-      const timeoutPromise = new Promise<{ data: null }>((resolve) =>
-        setTimeout(() => resolve({ data: null }), 2500)
-      );
-
-      const res: any = await Promise.race([lookupPromise, timeoutPromise]);
-      if (res?.data?.email) {
-        targetEmail = res.data.email;
-      }
-    } catch (e) {
-      console.warn('Identifier lookup warning:', e);
-    }
-  }
-
-  // Execute auth request with a 12-second timeout fail-safe
+  // Try standard Supabase Auth with a 3.5s fast timeout
   try {
     const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password });
-    const timeoutAuth = new Promise<{ data: { session: null; user: null }; error: { message: string } }>((resolve) =>
-      setTimeout(
-        () =>
-          resolve({
-            data: { session: null, user: null },
-            error: { message: 'Authentication timed out. Please check network connection and try again.' },
-          }),
-        12000
-      )
+    const timeoutAuth = new Promise<any>((resolve) =>
+      setTimeout(() => resolve({ timeout: true }), 3500)
     );
 
-    const { data, error } = await Promise.race([authPromise, timeoutAuth]);
+    const res = await Promise.race([authPromise, timeoutAuth]);
 
-    if (error || !data?.session || !data?.user) {
-      return { error: error?.message || 'Invalid credentials. Please try again.' };
+    if (!res.timeout && res.data?.session && res.data?.user && !res.error) {
+      _cachedSession = res.data.session;
+      _cacheTimestamp = Date.now();
+      return { session: res.data.session, user: res.data.user };
     }
 
-    _cachedSession = data.session;
-    _cacheTimestamp = Date.now();
-
-    return { session: data.session, user: data.user };
-  } catch (err: any) {
-    return { error: err?.message || 'Authentication error. Please try again.' };
+    if (!res.timeout && res.error && !res.error.message.includes('FetchError') && !res.error.message.includes('timeout')) {
+      // Return invalid credentials error immediately if password was wrong
+      return { error: res.error.message };
+    }
+  } catch (e) {
+    console.warn('Supabase Auth SDK call failed/timed out, attempting server auth fallback:', e);
   }
+
+  // Fallback: Direct DB server auth via /api/auth/login (handles identifier lookup & fast Postgres verification)
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: targetEmail, password }),
+    });
+
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      return { error: data.error || 'Invalid credentials. Please try again.' };
+    }
+
+    if (data.session && data.user) {
+      _cachedSession = data.session;
+      _cacheTimestamp = Date.now();
+      return { session: data.session, user: data.user };
+    }
+  } catch (err: any) {
+    console.error('Direct auth fallback error:', err);
+  }
+
+  return { error: 'Authentication failed. Please check credentials or network connection.' };
 }
 
 /**
