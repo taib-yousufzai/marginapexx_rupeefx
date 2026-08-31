@@ -818,10 +818,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
 
       // Resolve reference entry price and position side (Long vs Short)
-      const refEntry = (exitMode && existingPos) ? Number(existingPos.avg_price) : resolvedClientPrice;
-      const isLong = (exitMode && existingPos) ? (existingPos.side === 'BUY') : (placeSide === 'BUY');
+      const isExitTrade = exitMode || isExitOrder || isModify || Boolean(initialOrder?.is_exit || initialOrder?.isExit) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-'));
+      const refEntry = (isExitTrade && existingPos) ? Number(existingPos.avg_price) : resolvedClientPrice;
+      const isLong = existingPos ? (existingPos.side === 'BUY') : (isExitTrade ? (placeSide === 'SELL') : (placeSide === 'BUY'));
 
-      if (exitMode) {
+      if (isExitTrade) {
         if (isLong) {
           if (resolvedTarget !== undefined && !isNaN(resolvedTarget) && resolvedTarget <= currentLtp) {
             showOrderError('Target price must be above the current market price.');

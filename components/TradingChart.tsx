@@ -639,8 +639,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     const displayPrice = defaultAction === 'BUY' ? ask : bid;
     setLimitPrice(displayPrice.toFixed(2));
     setTriggerPrice(displayPrice.toFixed(2));
-    setGttSlPrice((displayPrice * 0.99).toFixed(2));
-    setGttTargetPrice((displayPrice * 1.01).toFixed(2));
+    setGttSlPrice(defaultAction === 'BUY' ? (displayPrice * 0.99).toFixed(2) : (displayPrice * 1.01).toFixed(2));
+    setGttTargetPrice(defaultAction === 'BUY' ? (displayPrice * 1.01).toFixed(2) : (displayPrice * 0.99).toFixed(2));
     setOrderType('market');
     setOrderCarry('normal');
     const isQtyDefault = segment.toUpperCase().includes('EQUITY') || segment.toUpperCase() === 'NSE-EQ' || segment.toUpperCase().includes('CRYPTO');
