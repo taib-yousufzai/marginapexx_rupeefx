@@ -953,7 +953,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 10. Compute fill price (LTP ± buffer from segment_settings)
     let fillPrice: number;
-    const isImmediate = (order_type ?? 'MARKET') === 'MARKET' || order_type === 'SLM';
+    const isImmediate = (order_type ?? 'MARKET') === 'MARKET';
 
     let rawBid = typeof rawQuote === 'object' ? (rawQuote?.bid ?? null) : null;
     let rawAsk = typeof rawQuote === 'object' ? (rawQuote?.ask ?? null) : null;
@@ -991,8 +991,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       bidBuffer: bidBuf,
     });
 
-    if (order_type === 'LIMIT' || order_type === 'SL' || order_type === 'GTT') {
-      fillPrice = client_price;
+    if (order_type === 'LIMIT' || order_type === 'SL' || order_type === 'SLM' || order_type === 'GTT') {
+      fillPrice = client_price || trigger_price || baseLtp;
     } else {
       const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
       const exitPriceMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
@@ -1066,20 +1066,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 11. Atomic write via Postgres RPC
     const targetOrderType = order_type ?? 'MARKET';
-    
-    // To make SLM execute immediately and create a position, we tell the DB it's a MARKET order
-    const rpcOrderType = targetOrderType === 'SLM' ? 'MARKET' : targetOrderType;
+    const rpcOrderType = targetOrderType;
 
     let resolvedTriggerPrice = trigger_price ? parseFloat(trigger_price.toString()) : null;
     let resolvedStopLoss = stop_loss ? parseFloat(stop_loss.toString()) : null;
-
-    // For SLM, the UI sends the Stop Loss price in the trigger_price field.
-    if (targetOrderType === 'SLM') {
-      if (resolvedTriggerPrice !== null) {
-        resolvedStopLoss = resolvedTriggerPrice;
-        resolvedTriggerPrice = null; // Clear trigger price since it's a market order now
-      }
-    }
 
     const executeDbCall = async () => {
       const { data: oId, error: rpcErr } = await admin.rpc('place_order_v2', {
@@ -1122,19 +1112,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } catch (err: any) {
       console.error('[POST /api/orders] Order execution error:', err);
       return NextResponse.json({ error: err.message || 'Order execution failed. Please try again.' }, { status: 400 });
-    }
-
-    // Update order_type to 'SLM' in the database if it was an SLM order asynchronously
-    if (targetOrderType === 'SLM' && orderId) {
-      admin
-        .from('orders')
-        .update({ order_type: 'SLM' })
-        .eq('id', orderId)
-        .then(({ error: updateErr }) => {
-          if (updateErr) {
-            console.error('[POST /api/orders] Failed to restore SLM order type:', updateErr);
-          }
-        });
     }
 
     const response: PlaceOrderResponse = {
