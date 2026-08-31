@@ -14,7 +14,7 @@ interface InstrumentSuggestion {
 }
 
 export default function MarketWatchPage() {
-  const tabs = ['INDEX-FUT', 'INDEX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'NSE-EQ', 'MCX-FUT', 'MCX-OPT', 'COMEX', 'CRYPTO', 'FOREX'];
+  const tabs = ['INDEX-FUT', 'INDEX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'STOCKS', 'MCX-FUT', 'MCX-OPT', 'COMEX', 'CRYPTO', 'FOREX'];
   const [activeTab, setActiveTab] = useState('INDEX-FUT');
   const [search, setSearch] = useState('');
   const [focused, setFocused] = useState(false);

@@ -41,13 +41,15 @@ const SEGMENT_MAP: Record<string, Segment> = {
   'MCX - Options':       'MCX-OPT',
   'MCX-OPT':             'MCX-OPT',
   // Equity
-  'NSE - Equity':        'NSE-EQ',
-  'NSE-EQ':              'NSE-EQ',
-  'Equity':              'NSE-EQ',
-  'EQUITY':              'NSE-EQ',
-  'BSE - Equity':        'BSE-EQ',
-  'BSE-EQ':              'BSE-EQ',
-  'BSE':                 'BSE-EQ',
+  'NSE - Equity':        'STOCKS',
+  'NSE-EQ':              'STOCKS',
+  'Equity':              'STOCKS',
+  'EQUITY':              'STOCKS',
+  'STOCKS':              'STOCKS',
+  'Stocks':              'STOCKS',
+  'BSE - Equity':        'STOCKS',
+  'BSE-EQ':              'STOCKS',
+  'BSE':                 'STOCKS',
   // Crypto / Forex / COMEX — already normalized
   'CRYPTO':              'CRYPTO',
   'Crypto':              'CRYPTO',
@@ -71,7 +73,7 @@ const SEGMENT_MAP: Record<string, Segment> = {
   'NFO-OPT':             'INDEX-OPT',
   'BFO-OPT':             'INDEX-OPT',
   'NFO-FUT':             'INDEX-FUT',
-  'NSE':                 'NSE-EQ',
+  'NSE':                 'STOCKS',
 };
 
 /**
@@ -82,7 +84,7 @@ const SEGMENT_MAP: Record<string, Segment> = {
  * this preserves existing behaviour in edge cases while the codebase migrates.
  */
 export function mapSegmentToDbSegment(s: string): Segment {
-  if (!s) return 'NSE-EQ';
+  if (!s) return 'STOCKS';
   const trimmed = s.trim();
   return (SEGMENT_MAP[trimmed] ?? trimmed) as Segment;
 }
@@ -97,7 +99,7 @@ export function mapSegmentToDbSegment(s: string): Segment {
  * disambiguate.
  */
 export function mapSegmentWithSymbol(segment: string, symbol: string = ''): Segment {
-  if (!segment && !symbol) return 'NSE-EQ';
+  if (!segment && !symbol) return 'STOCKS';
 
   const seg = segment.trim().toUpperCase();
   const sym = symbol.toUpperCase();
@@ -163,7 +165,7 @@ export function mapSymbolToSegment(symbol: string): Segment {
   if (n.endsWith('USDT') || ['BTC','ETH','DOGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC'].some(c => n === c)) {
     return 'CRYPTO';
   }
-  return 'NSE-EQ';
+  return 'STOCKS';
 }
 
 // ─── Feed detection ────────────────────────────────────────────────────────
@@ -278,7 +280,8 @@ export function fromPosition(pos: Pick<MyPosition,
   'symbol' | 'kite_instrument' | 'settlement' | 'ltp'
 > & { current_ltp?: number }): ChartInstrument {
   const settlement = (pos.settlement || '').toUpperCase();
-  let segment: string = pos.settlement ?? 'NSE-EQ';
+  let segment: string = pos.settlement ?? 'STOCKS';
+  if (segment === 'NSE-EQ') segment = 'STOCKS';
   if (settlement.includes('CRYPTO') || pos.symbol.endsWith('USDT')) {
     segment = 'CRYPTO';
   } else if (settlement.includes('COMEX') || pos.symbol.endsWith('=F')) {

@@ -2500,10 +2500,11 @@ function WatchlistContent() {
                     'MCX-OPT': 'MCX-OPT',
                     'STOCK-FUT': 'STOCK-FUT',
                     'STOCK-OPT': 'STOCK-OPT',
-                    'NSE-EQ': 'NSE-EQ',
-                    'Equity': 'NSE-EQ',
-                    'EQUITY': 'NSE-EQ',
-                    'Stocks': 'NSE-EQ',
+                    'NSE-EQ': 'STOCKS',
+                    'Equity': 'STOCKS',
+                    'EQUITY': 'STOCKS',
+                    'Stocks': 'STOCKS',
+                    'STOCKS': 'STOCKS',
                     'CRYPTO': 'CRYPTO',
                     'COMEX': 'COMEX',
                     'FOREX': 'FOREX',
@@ -2511,7 +2512,7 @@ function WatchlistContent() {
                     'US Equity': 'US-EQ',
                   };
                   // Define the desired display order
-                  const SEGMENT_ORDER = ['INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'STOCKS', 'Equity', 'NSE-EQ', 'CRYPTO', 'COMEX', 'FOREX', 'US-EQ', 'US Equity'];
+                  const SEGMENT_ORDER = ['INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'STOCKS', 'CRYPTO', 'COMEX', 'FOREX', 'US-EQ', 'US Equity'];
                   const sortedSegments = [...tradingSegments].sort((a, b) => {
                     const ai = SEGMENT_ORDER.indexOf(a.name);
                     const bi = SEGMENT_ORDER.indexOf(b.name);
@@ -2902,7 +2903,7 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
         if (n === 'STOCK-OPT') return 'STOCK-OPT';
         if (n === 'MCX-FUT') return 'MCX-FUT';
         if (n === 'MCX-OPT') return 'MCX-OPT';
-        if (n === 'NSE-EQ' || n === 'EQUITY' || n === 'STOCKS') return 'NSE-EQ';
+        if (n === 'NSE-EQ' || n === 'EQUITY' || n === 'STOCKS') return 'STOCKS';
         if (n === 'CRYPTO') return 'CRYPTO';
         if (n === 'FOREX') return 'FOREX';
         if (n === 'COMEX') return 'COMEX';
@@ -3105,7 +3106,7 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           if (c.indexOf('STOCK-OPT') >= 0 || c.indexOf('STOCKS - OPTIONS') >= 0) return 'STOCK-OPT';
           if (c.indexOf('MCX-FUT') >= 0 || c.indexOf('MCX - FUTURE') >= 0) return 'MCX-FUT';
           if (c.indexOf('MCX-OPT') >= 0 || c.indexOf('MCX - OPTIONS') >= 0) return 'MCX-OPT';
-          if (c.indexOf('NSE-EQ') >= 0 || c.indexOf('EQUITY') >= 0) return 'NSE-EQ';
+          if (c.indexOf('NSE-EQ') >= 0 || c.indexOf('EQUITY') >= 0 || c.indexOf('STOCKS') >= 0) return 'STOCKS';
           if (c.indexOf('CRYPTO') >= 0) return 'CRYPTO';
           if (c.indexOf('FOREX') >= 0) return 'FOREX';
           if (c.indexOf('COMEX') >= 0 || c === 'COI') return 'COMEX';
@@ -3117,7 +3118,7 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           'NSE - Stock Futures': 'STOCK-FUT', 'BSE - Stock Futures': 'STOCK-FUT',
           'NSE - Stock Options': 'STOCK-OPT', 'BSE - Stock Options': 'STOCK-OPT',
           'MCX - Futures': 'MCX-FUT', 'MCX - Options': 'MCX-OPT',
-          'NSE - Equity': 'NSE-EQ', 'BSE - Equity': 'NSE-EQ',
+          'NSE - Equity': 'STOCKS', 'BSE - Equity': 'STOCKS', 'NSE-EQ': 'STOCKS', 'STOCKS': 'STOCKS',
           'Crypto': 'CRYPTO', 'CRYPTO': 'CRYPTO',
           'Forex': 'FOREX', 'FOREX': 'FOREX',
           'CDS - Futures': 'FOREX', 'CDS - Options': 'FOREX',

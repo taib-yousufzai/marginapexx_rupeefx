@@ -413,11 +413,11 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, added
     'Mcx-opt': 'MCX-OPT',
     'Stock-fut': 'STOCK-FUT',
     'Stock-opt': 'STOCK-OPT',
-    'Stocks': 'NSE-EQ',
-    'STOCKS': 'NSE-EQ',
-    'Equity': 'NSE-EQ',
-    'Nse-eq': 'NSE-EQ',
-    'NSE-EQ': 'NSE-EQ',
+    'Stocks': 'STOCKS',
+    'STOCKS': 'STOCKS',
+    'Equity': 'STOCKS',
+    'Nse-eq': 'STOCKS',
+    'NSE-EQ': 'STOCKS',
     'Crypto': 'CRYPTO',
     'CRYPTO': 'CRYPTO',
     'Comex': 'COMEX',
@@ -433,8 +433,8 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, added
     return (
       allowedSegments.includes(dbKey) ||
       allowedSegments.includes(seg.name) ||
-      ((seg.name === 'Stocks' || seg.name === 'STOCKS' || seg.name === 'Equity' || seg.name.toUpperCase() === 'EQUITY') && (allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks'))) ||
-      (dbKey === 'US-EQ' && (allowedSegments.includes('US-EQ') || allowedSegments.includes('US Equity') || allowedSegments.includes('NSE-EQ') || allowedSegments.length >= 8))
+      ((seg.name === 'Stocks' || seg.name === 'STOCKS' || seg.name === 'Equity' || seg.name.toUpperCase() === 'EQUITY') && (allowedSegments.includes('STOCKS') || allowedSegments.includes('NSE-EQ') || allowedSegments.includes('Equity') || allowedSegments.includes('Stocks'))) ||
+      (dbKey === 'US-EQ' && (allowedSegments.includes('US-EQ') || allowedSegments.includes('US Equity') || allowedSegments.includes('STOCKS') || allowedSegments.includes('NSE-EQ') || allowedSegments.length >= 8))
     );
   });
 

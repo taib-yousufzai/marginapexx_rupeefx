@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { apiCall, Toast, ToastState } from '../AdminUtils';
 import { SegmentSettingsType } from './UpdateSegments';
 
-const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
+const ALL_SEGMENTS = ['INDEX-FUT', 'STOCK-OPT', 'STOCKS', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'];
 
 const defaultSeg = (): SegmentSettingsType => ({
   commissionType: 'Per Crore', commissionValue: '4500',

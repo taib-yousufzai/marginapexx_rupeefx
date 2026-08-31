@@ -35,6 +35,7 @@ export type Segment =
   | 'STOCK-OPT'
   | 'MCX-FUT'
   | 'MCX-OPT'
+  | 'STOCKS'
   | 'NSE-EQ'
   | 'BSE-EQ'
   | 'CRYPTO'
