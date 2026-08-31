@@ -82,7 +82,7 @@ export default function LoginPage() {
         }
         setIsLoading(false);
       } else {
-        setFormError('Demo account unavailable. Please try again later.');
+        setFormError(result.error || 'Demo account unavailable. Please try again later.');
         setIsLoading(false);
       }
     } catch (err: any) {
@@ -130,7 +130,7 @@ export default function LoginPage() {
         }
         setIsLoading(false);
       } else {
-        setFormError('Invalid credentials. Please try again.');
+        setFormError(result.error);
         setIsLoading(false);
       }
     } catch (err: any) {

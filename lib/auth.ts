@@ -64,33 +64,55 @@ export function getRole(user: User | null): AppRole {
 export async function signIn(email: string, password: string): Promise<SignInResult> {
   let targetEmail = email.trim();
 
-  // If user entered client_id or phone (no '@'), attempt client_id / phone lookup
+  // If user entered client_id or phone (no '@'), attempt client_id / phone lookup (with 2.5s timeout)
   if (targetEmail && !targetEmail.includes('@')) {
     try {
-      const { data: profile } = await supabase
+      const lookupPromise = supabase
         .from('profiles')
         .select('email')
         .or(`client_id.eq.${targetEmail},phone.eq.${targetEmail},client_id.eq.${targetEmail.toUpperCase()}`)
         .maybeSingle();
 
-      if (profile?.email) {
-        targetEmail = profile.email;
+      const timeoutPromise = new Promise<{ data: null }>((resolve) =>
+        setTimeout(() => resolve({ data: null }), 2500)
+      );
+
+      const res: any = await Promise.race([lookupPromise, timeoutPromise]);
+      if (res?.data?.email) {
+        targetEmail = res.data.email;
       }
     } catch (e) {
       console.warn('Identifier lookup warning:', e);
     }
   }
 
-  const { data, error } = await supabase.auth.signInWithPassword({ email: targetEmail, password });
+  // Execute auth request with a 12-second timeout fail-safe
+  try {
+    const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password });
+    const timeoutAuth = new Promise<{ data: { session: null; user: null }; error: { message: string } }>((resolve) =>
+      setTimeout(
+        () =>
+          resolve({
+            data: { session: null, user: null },
+            error: { message: 'Authentication timed out. Please check network connection and try again.' },
+          }),
+        12000
+      )
+    );
 
-  if (error || !data.session || !data.user) {
-    return { error: 'Invalid credentials. Please try again.' };
+    const { data, error } = await Promise.race([authPromise, timeoutAuth]);
+
+    if (error || !data?.session || !data?.user) {
+      return { error: error?.message || 'Invalid credentials. Please try again.' };
+    }
+
+    _cachedSession = data.session;
+    _cacheTimestamp = Date.now();
+
+    return { session: data.session, user: data.user };
+  } catch (err: any) {
+    return { error: err?.message || 'Authentication error. Please try again.' };
   }
-
-  _cachedSession = data.session;
-  _cacheTimestamp = Date.now();
-
-  return { session: data.session, user: data.user };
 }
 
 /**
