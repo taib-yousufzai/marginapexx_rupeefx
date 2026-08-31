@@ -143,8 +143,14 @@ const SEGMENT_TAB_MAP: Record<string, string> = {
   'BSE - Stock Options': 'STOCK-OPT',
   'MCX - Futures': 'MCX-FUT',
   'MCX - Options': 'MCX-OPT',
-  'NSE - Equity': 'NSE-EQ',
-  'BSE - Equity': 'NSE-EQ',
+  'NSE - Equity': 'STOCKS',
+  'BSE - Equity': 'STOCKS',
+  'NSE-EQ': 'STOCKS',
+  'BSE-EQ': 'STOCKS',
+  'STOCKS': 'STOCKS',
+  'Stocks': 'STOCKS',
+  'Equity': 'STOCKS',
+  'EQUITY': 'STOCKS',
   'Crypto': 'CRYPTO',
   'CRYPTO': 'CRYPTO',
   'Forex': 'FOREX',
@@ -207,8 +213,10 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
     'INDEX-OPT': 'NIFTY',
     'STOCK-FUT': 'RELIANCE',
     'STOCK-OPT': 'RELIANCE',
+    'STOCKS': 'RELIANCE',
     'NSE-EQ': 'RELIANCE',
     'Equity': 'RELIANCE',
+    'Stocks': 'RELIANCE',
     'MCX-FUT': 'GOLD',
     'MCX-OPT': 'GOLD',
     'COMEX': 'GOLD',
@@ -292,7 +300,7 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
       </div>
       <div className="tc-search-body-fs">
         <div className="tc-search-tabs">
-          {['All', 'INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'Equity', 'CRYPTO', 'COMEX', 'FOREX'].map(tab => (
+          {['All', 'INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'STOCKS', 'CRYPTO', 'COMEX', 'FOREX'].map(tab => (
             <div
               key={tab}
               className={`tc-search-tab ${activeSearchTab === tab ? 'active' : ''}`}
@@ -643,7 +651,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     setGttTargetPrice(defaultAction === 'BUY' ? (displayPrice * 1.01).toFixed(2) : (displayPrice * 0.99).toFixed(2));
     setOrderType('market');
     setOrderCarry('normal');
-    const isQtyDefault = segment.toUpperCase().includes('EQUITY') || segment.toUpperCase() === 'NSE-EQ' || segment.toUpperCase().includes('CRYPTO');
+    const isQtyDefault = segment.toUpperCase().includes('EQUITY') || segment.toUpperCase() === 'NSE-EQ' || segment.toUpperCase() === 'STOCKS' || segment.toUpperCase().includes('CRYPTO');
     setUseLots(!isQtyDefault);
     setQtyValue(1);
     setIsExitFlow(false);
@@ -741,7 +749,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   // Ensure default quantity is reset to 1 when the symbol changes
   useEffect(() => {
-    const isQtyDefault = segment.toUpperCase().includes('EQUITY') || segment.toUpperCase() === 'NSE-EQ' || segment.toUpperCase().includes('CRYPTO');
+    const isQtyDefault = segment.toUpperCase().includes('EQUITY') || segment.toUpperCase() === 'NSE-EQ' || segment.toUpperCase() === 'STOCKS' || segment.toUpperCase().includes('CRYPTO');
     setUseLots(!isQtyDefault);
     setQtyValue(1);
   }, [symbol]);

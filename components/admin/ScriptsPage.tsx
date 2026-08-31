@@ -34,6 +34,7 @@ const SEGMENT_DEFAULTS: Record<string, string> = {
   'INDEX-OPT':  'NIFTY',
   'STOCK-FUT':  'RELIANCE',
   'STOCK-OPT':  'RELIANCE',
+  'STOCKS':     'RELIANCE',
   'NSE-EQ':     'RELIANCE',
   'MCX-FUT':    'GOLD',
   'MCX-OPT':    'GOLD',
@@ -44,7 +45,7 @@ const SEGMENT_DEFAULTS: Record<string, string> = {
 
 const SEGMENTS = [
   'INDEX-FUT', 'INDEX-OPT', 'STOCK-FUT', 'STOCK-OPT',
-  'NSE-EQ', 'MCX-FUT', 'MCX-OPT', 'COMEX', 'CRYPTO', 'FOREX',
+  'STOCKS', 'NSE-EQ', 'MCX-FUT', 'MCX-OPT', 'COMEX', 'CRYPTO', 'FOREX',
 ];
 
 export default function ScriptsPage() {

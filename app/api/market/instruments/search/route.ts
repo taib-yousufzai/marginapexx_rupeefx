@@ -164,7 +164,7 @@ const mapSegmentToDbSegment = (s: string): string => {
   if (trimmed === 'NSE - Stock Options' || trimmed === 'BSE - Stock Options') return 'STOCK-OPT';
   if (trimmed === 'MCX - Futures') return 'MCX-FUT';
   if (trimmed === 'MCX - Options') return 'MCX-OPT';
-  if (trimmed === 'NSE - Equity' || trimmed === 'BSE - Equity' || trimmed === 'Equity' || trimmed === 'EQUITY') return 'NSE-EQ';
+  if (trimmed === 'NSE - Equity' || trimmed === 'BSE - Equity' || trimmed === 'Equity' || trimmed === 'EQUITY' || trimmed === 'STOCKS' || trimmed === 'Stocks') return 'NSE-EQ';
   if (trimmed === 'Crypto' || trimmed === 'CRYPTO') return 'CRYPTO';
   if (trimmed === 'Forex' || trimmed === 'FOREX' || trimmed === 'CDS - Futures' || trimmed === 'CDS - Options') return 'FOREX';
   if (trimmed === 'COMEX - Futures' || trimmed === 'COMEX - Options' || trimmed === 'COMEX' || trimmed === 'COI') return 'COMEX';
@@ -466,7 +466,7 @@ export async function GET(request: NextRequest) {
       if (tab === 'STOCK-OPT') return query.not('option_type', 'is', null).in('exchange', ['NFO', 'BFO', 'NSE', 'BSE']);
       if (tab === 'MCX-FUT') return query.is('option_type', null).eq('exchange', 'MCX');
       if (tab === 'MCX-OPT') return query.not('option_type', 'is', null).eq('exchange', 'MCX');
-      if (tab === 'NSE-EQ' || tab === 'Equity' || tab === 'EQUITY') return query.eq('instrument_type', 'EQ').is('option_type', null).in('exchange', ['NSE', 'BSE']);
+      if (tab === 'STOCKS' || tab === 'NSE-EQ' || tab === 'Equity' || tab === 'EQUITY' || tab === 'Stocks') return query.eq('instrument_type', 'EQ').is('option_type', null).in('exchange', ['NSE', 'BSE']);
       if (tab === 'CRYPTO') return query.eq('segment', 'CRYPTO');
       if (tab === 'FOREX') return query.or('exchange.eq.CDS,exchange.eq.FOREX,segment.eq.FOREX');
       if (tab === 'COMEX') return query.eq('segment', 'COMEX');
@@ -502,7 +502,7 @@ export async function GET(request: NextRequest) {
     // Fallback: tradingsymbol ilike (spaces/slashes removed) or numeric strike
     if (!data || data.length === 0) {
       const qNoSpace = q.replace(/[\s\/]+/g, '').toUpperCase();
-      const isEquitySearch = tab === 'All' || tab === 'NSE-EQ' || tab === 'Equity' || tab === 'EQUITY';
+      const isEquitySearch = tab === 'All' || tab === 'STOCKS' || tab === 'NSE-EQ' || tab === 'Equity' || tab === 'EQUITY' || tab === 'Stocks';
 
       // 1. Dedicated Equity & Spot Index Query (NSE/BSE EQ & INDEX) to guarantee real stocks and indices (e.g. NIFTY 50, AARTIIND, ADANIENT) load at top priority
       let eqPromise = Promise.resolve<{ data: any[] | null; error: any }>({ data: [], error: null });
