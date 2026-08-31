@@ -16,7 +16,7 @@ function resolveDbSegment(exchange: string, instrumentType: string, segment: str
   if (ex === 'COMEX' || seg === 'COMEX') return 'COMEX';
 
   // Indian Equities/Futures/Options
-  if (type === 'EQ') return 'NSE-EQ';
+  if (type === 'EQ') return 'STOCKS';
   if (type.includes('FUT')) {
     if (type.includes('IDX')) return 'INDEX-FUT';
     return 'STOCK-FUT';
@@ -26,7 +26,7 @@ function resolveDbSegment(exchange: string, instrumentType: string, segment: str
     return 'STOCK-OPT';
   }
 
-  return 'NSE-EQ'; // fallback default
+  return 'STOCKS'; // fallback default
 }
 
 export async function POST(request: NextRequest) {

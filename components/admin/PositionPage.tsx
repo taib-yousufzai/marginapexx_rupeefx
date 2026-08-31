@@ -444,7 +444,7 @@ export default function PositionPage({ selectedUser, onOpenUserPanel, isDemoMode
                   </div>
                   <div>
                     <label style={labelSm}>Segment</label>
-                    <input type="text" value={editSettlement} onChange={e => setEditSettlement(e.target.value)} placeholder="e.g. NSE-EQ" style={inputSm} />
+                    <input type="text" value={editSettlement} onChange={e => setEditSettlement(e.target.value)} placeholder="e.g. STOCKS" style={inputSm} />
                   </div>
                 </div>
 

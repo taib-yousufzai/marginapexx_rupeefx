@@ -169,7 +169,7 @@ export async function GET(request: Request) {
           p_user_id: prof.id,
           p_symbol: pos.symbol,
           p_kite_inst: pos.symbol, // fallback to symbol
-          p_segment: pos.settlement || 'NSE-EQ',
+          p_segment: pos.settlement || 'STOCKS',
           p_side: pos.side,
           p_order_type: 'MARKET',
           p_product_type: 'CARRY',

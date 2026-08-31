@@ -46,7 +46,7 @@ const FAKE_ORDERS: Order[] = [
     { id: 'f7',  symbol: 'CRUDEOIL FUT',  segment: 'MCX',     side: 'SELL', status: 'CANCELLED', qty: 100, fill_price: 6820.00,  order_type: 'LIMIT',  created_at: new Date(Date.now() - 35 * 86400000).toISOString() },
     { id: 'f8',  symbol: 'BTC/USDT',      segment: 'CRYPTO',  side: 'BUY',  status: 'EXECUTED',  qty: 1,   fill_price: 68450.20, order_type: 'MARKET', created_at: new Date(Date.now() - 50 * 86400000).toISOString() },
     { id: 'f9',  symbol: 'HDFCBANK FUT',  segment: 'NSE-FUT', side: 'BUY',  status: 'EXECUTED',  qty: 550, fill_price: 1680.90,  order_type: 'MARKET', created_at: new Date(Date.now() - 65 * 86400000).toISOString() },
-    { id: 'f10', symbol: 'TCS EQ',        segment: 'NSE-EQ',  side: 'SELL', status: 'EXECUTED',  qty: 20,  fill_price: 3982.50,  order_type: 'LIMIT',  created_at: new Date(Date.now() - 80 * 86400000).toISOString() },
+    { id: 'f10', symbol: 'TCS EQ',        segment: 'STOCKS',  side: 'SELL', status: 'EXECUTED',  qty: 20,  fill_price: 3982.50,  order_type: 'LIMIT',  created_at: new Date(Date.now() - 80 * 86400000).toISOString() },
 ];
 
 // ── Fake positions for preview (auto-replaced when real data loads) ──
@@ -55,10 +55,10 @@ const FAKE_POSITIONS: Position[] = [
     { id: 'p2', symbol: 'RELIANCE FUT',  segment: 'NSE-FUT', side: 'SELL', qty: 250, entry_price: 2856.40,  exit_price: 2830.15,  pnl:   6562.50, status: 'CLOSED', created_at: new Date(Date.now() -  5 * 86400000).toISOString(), closed_at: new Date(Date.now() -  5 * 86400000 + 5400000).toISOString() },
     { id: 'p3', symbol: 'BANKNIFTY FUT', segment: 'NSE-FUT', side: 'BUY',  qty: 25,  entry_price: 48210.50, exit_price: 47890.25, pnl:  -8006.25, status: 'CLOSED', created_at: new Date(Date.now() - 12 * 86400000).toISOString(), closed_at: new Date(Date.now() - 12 * 86400000 + 7200000).toISOString() },
     { id: 'p4', symbol: 'GOLD FUT',      segment: 'MCX',     side: 'BUY',  qty: 10,  entry_price: 62340.00, exit_price: 62850.75, pnl:   5107.50, status: 'CLOSED', created_at: new Date(Date.now() - 20 * 86400000).toISOString(), closed_at: new Date(Date.now() - 20 * 86400000 + 3600000).toISOString() },
-    { id: 'p5', symbol: 'INFY EQ',       segment: 'NSE-EQ',  side: 'SELL', qty: 50,  entry_price: 1598.40,  exit_price: 1612.80,  pnl:   -720.00, status: 'CLOSED', created_at: new Date(Date.now() - 28 * 86400000).toISOString(), closed_at: new Date(Date.now() - 28 * 86400000 + 2700000).toISOString() },
+    { id: 'p5', symbol: 'INFY EQ',       segment: 'STOCKS',  side: 'SELL', qty: 50,  entry_price: 1598.40,  exit_price: 1612.80,  pnl:   -720.00, status: 'CLOSED', created_at: new Date(Date.now() - 28 * 86400000).toISOString(), closed_at: new Date(Date.now() - 28 * 86400000 + 2700000).toISOString() },
     { id: 'p6', symbol: 'BTC/USDT',      segment: 'CRYPTO',  side: 'BUY',  qty: 1,   entry_price: 68450.20, exit_price: 69120.50, pnl:    670.30, status: 'CLOSED', created_at: new Date(Date.now() - 40 * 86400000).toISOString(), closed_at: new Date(Date.now() - 40 * 86400000 + 18000000).toISOString() },
     { id: 'p7', symbol: 'HDFCBANK FUT',  segment: 'NSE-FUT', side: 'SELL', qty: 550, entry_price: 1680.90,  exit_price: 1672.30,  pnl:   4730.00, status: 'CLOSED', created_at: new Date(Date.now() - 55 * 86400000).toISOString(), closed_at: new Date(Date.now() - 55 * 86400000 + 3600000).toISOString() },
-    { id: 'p8', symbol: 'TCS EQ',        segment: 'NSE-EQ',  side: 'BUY',  qty: 20,  entry_price: 3982.50,  exit_price: 4012.30,  pnl:    596.00, status: 'CLOSED', created_at: new Date(Date.now() - 70 * 86400000).toISOString(), closed_at: new Date(Date.now() - 70 * 86400000 + 5400000).toISOString() },
+    { id: 'p8', symbol: 'TCS EQ',        segment: 'STOCKS',  side: 'BUY',  qty: 20,  entry_price: 3982.50,  exit_price: 4012.30,  pnl:    596.00, status: 'CLOSED', created_at: new Date(Date.now() - 70 * 86400000).toISOString(), closed_at: new Date(Date.now() - 70 * 86400000 + 5400000).toISOString() },
 ];
 
 export default function ReportsPage() {

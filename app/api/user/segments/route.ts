@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 
 const ALL_SEGMENTS = [
-  'INDEX-FUT', 'STOCK-OPT', 'NSE-EQ', 'COMEX', 'INDEX-OPT',
+  'INDEX-FUT', 'STOCK-OPT', 'STOCKS', 'COMEX', 'INDEX-OPT',
   'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'
 ];
 
@@ -34,9 +34,10 @@ export async function GET(request: NextRequest) {
   const settingsTable = targetMode === 'scalper' ? 'scalper_segment_settings' : 'segment_settings';
 
   // If segments is null or empty, it means the user is unrestricted and allowed to trade ALL segments!
-  const allowedSegments: string[] = profile.segments && profile.segments.length > 0
+  const rawSegments: string[] = profile.segments && profile.segments.length > 0
     ? profile.segments
     : ALL_SEGMENTS;
+  const allowedSegments = rawSegments.map(s => s === 'NSE-EQ' || s === 'NSE - EQUITY' || s === 'Equity' ? 'STOCKS' : s);
 
   // 2. Fetch current segment settings from DB
   const { data: currentSettings, error: queryErr } = await admin

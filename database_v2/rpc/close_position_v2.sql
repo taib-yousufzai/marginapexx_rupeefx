@@ -163,7 +163,7 @@ BEGIN
             price, fill_price, ltp_at_entry, order_type, product_type, info, is_exit, idempotency_key
         )
         VALUES (
-            v_user_id, v_symbol, v_symbol, COALESCE(v_settlement, 'NSE-EQ'), v_exit_side, 'EXECUTED', p_close_qty, v_lots,
+            v_user_id, v_symbol, v_symbol, COALESCE(v_settlement, 'STOCKS'), v_exit_side, 'EXECUTED', p_close_qty, v_lots,
             p_close_price, p_close_price, p_close_price, 'MARKET', COALESCE(v_product_type, 'INTRADAY'), p_position_id::text, true, p_idempotency_key
         );
     END IF;

@@ -34,6 +34,9 @@ export async function GET(request: NextRequest) {
     }
 
     const profile = profileRes.data;
+    if (Array.isArray(profile.segments)) {
+      profile.segments = profile.segments.map((s: string) => (s === 'NSE-EQ' || s === 'NSE - EQUITY' || s === 'Equity') ? 'STOCKS' : s);
+    }
     
     // Override with primary bank account if it exists
     if (bankRes.data) {
