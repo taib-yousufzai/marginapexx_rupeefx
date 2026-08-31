@@ -21,10 +21,24 @@ function getTokenFromLocalStorage(): { token: string | null; userId: string | nu
   
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-    const projectId = supabaseUrl.match(/https:\/\/([^.]+)\.supabase\.co/)?.[1];
-    if (!projectId) return { token: null, userId: null };
-    
-    const stored = localStorage.getItem(`sb-${projectId}-auth-token`);
+    let storageKey = '';
+    try {
+      if (supabaseUrl) {
+        const hostname = new URL(supabaseUrl).hostname;
+        storageKey = hostname.split('.')[0];
+      }
+    } catch {}
+
+    let stored = storageKey ? localStorage.getItem(`sb-${storageKey}-auth-token`) : null;
+    if (!stored) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+          stored = localStorage.getItem(key);
+          if (stored) break;
+        }
+      }
+    }
     if (!stored) return { token: null, userId: null };
     
     const parsed = JSON.parse(stored);

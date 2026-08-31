@@ -4,17 +4,12 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { supabase } from '@/lib/supabaseClient';
 import { api } from '@/lib/api';
 
+import { getSharedSessionSync } from '@/lib/sharedSession';
+
 export interface BalanceContextType {
   balance: number;
   settlementAmount: number;
   loading: boolean;
-  /**
-   * Explicitly re-fetch balance from the API.
-   * Normally not needed — the provider updates automatically via:
-   *   1. Supabase realtime on profile row UPDATE
-   *   2. `order_placed` window event listener
-   * Only use this in edge cases where neither fires in time.
-   */
   refresh: () => Promise<void>;
 }
 
@@ -30,13 +25,18 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
 
   const fetchBalance = useCallback(async () => {
     if (fetchingRef.current) return;
+    const { token } = getSharedSessionSync();
+    if (!token) return;
+
     fetchingRef.current = true;
     try {
       const data = await api.get<{ balance?: number; settlementAmount?: number }>('/api/pay/balance');
       setBalance(Number(data.balance ?? 0));
       setSettlementAmount(Math.abs(Number(data.settlementAmount ?? 0)));
-    } catch (err) {
-      console.error('[BalanceProvider] failed to fetch balance:', err);
+    } catch (err: any) {
+      if (err?.status !== 401) {
+        console.error('[BalanceProvider] failed to fetch balance:', err);
+      }
     } finally {
       fetchingRef.current = false;
     }
@@ -48,6 +48,13 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
 
     const init = async (session?: any) => {
       if (cancelled) return;
+      if (!session) {
+        const { token } = getSharedSessionSync();
+        if (!token) {
+          if (!cancelled) setLoading(false);
+          return;
+        }
+      }
 
       // Initial fetch
       setLoading(true);
@@ -57,8 +64,10 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
           setBalance(Number(data.balance ?? 0));
           setSettlementAmount(Math.abs(Number(data.settlementAmount ?? 0)));
         }
-      } catch (err) {
-        console.error('[BalanceProvider] failed to fetch balance:', err);
+      } catch (err: any) {
+        if (err?.status !== 401) {
+          console.error('[BalanceProvider] failed to fetch balance:', err);
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }

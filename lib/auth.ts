@@ -62,11 +62,33 @@ export function getRole(user: User | null): AppRole {
  * Validates: Requirements 2.1, 2.3, 5.3
  */
 export async function signIn(email: string, password: string): Promise<SignInResult> {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  let targetEmail = email.trim();
+
+  // If user entered client_id or phone (no '@'), attempt client_id / phone lookup
+  if (targetEmail && !targetEmail.includes('@')) {
+    try {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('email')
+        .or(`client_id.eq.${targetEmail},phone.eq.${targetEmail},client_id.eq.${targetEmail.toUpperCase()}`)
+        .maybeSingle();
+
+      if (profile?.email) {
+        targetEmail = profile.email;
+      }
+    } catch (e) {
+      console.warn('Identifier lookup warning:', e);
+    }
+  }
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email: targetEmail, password });
 
   if (error || !data.session || !data.user) {
     return { error: 'Invalid credentials. Please try again.' };
   }
+
+  _cachedSession = data.session;
+  _cacheTimestamp = Date.now();
 
   return { session: data.session, user: data.user };
 }
@@ -199,17 +221,18 @@ export async function getSession(): Promise<Session | null> {
         return null;
       }
 
-      // Refresh user data from server to get latest user_metadata (e.g. role)
-      const { data: userData, error: userError } = await supabase.auth.getUser();
-      
-      if (userError) {
-        console.warn('getUser() failed, treating session as invalid:', userError.message);
-        _cachedSession = null;
-        _cacheTimestamp = 0;
-        return null;
+      let user = sessionData.session.user;
+
+      try {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (!userError && userData?.user) {
+          user = userData.user;
+        }
+      } catch (e) {
+        console.warn('getUser() network call warning:', e);
       }
 
-      const freshSession = { ...sessionData.session, user: userData.user };
+      const freshSession = { ...sessionData.session, user };
 
       _cachedSession = freshSession;
       _cacheTimestamp = Date.now();
