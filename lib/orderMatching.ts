@@ -30,6 +30,7 @@ export function evaluateOrderTriggerCondition(
     stop_loss?: number | null;
     target?: number | null;
     ltp_at_entry?: number | null;
+    is_exit?: boolean | null;
   },
   ltp: number,
   bid?: number,
@@ -67,7 +68,16 @@ export function evaluateOrderTriggerCondition(
       fillPrice = effective.effectiveBid;
     }
   } else if (orderType === 'GTT') {
-    if (triggerPrice !== null) {
+    // Evaluate entry trigger (limitPrice or triggerPrice)
+    if (limitPrice !== null) {
+      if (side === 'BUY' && ltp <= limitPrice) {
+        shouldTrigger = true;
+        fillPrice = limitPrice;
+      } else if (side === 'SELL' && ltp >= limitPrice) {
+        shouldTrigger = true;
+        fillPrice = limitPrice;
+      }
+    } else if (triggerPrice !== null) {
       const ltpAtEntry = order.ltp_at_entry ? Number(order.ltp_at_entry) : null;
       if (side === 'BUY') {
         if (ltpAtEntry !== null && ltpAtEntry < triggerPrice) {
@@ -84,26 +94,21 @@ export function evaluateOrderTriggerCondition(
       }
     }
 
-    const stopLoss = order.stop_loss ? Number(order.stop_loss) : null;
-    const target = order.target ? Number(order.target) : null;
-    if (triggerPrice === null) {
-      if (!shouldTrigger && stopLoss !== null) {
-        if (side === 'BUY') {
-          if (ltp >= stopLoss) shouldTrigger = true;
-        } else if (side === 'SELL') {
-          if (ltp <= stopLoss) shouldTrigger = true;
-        }
+    // Only evaluate attached SL / Target if this order is an exit order (is_exit === true)
+    if (!shouldTrigger && order.is_exit === true) {
+      const stopLoss = order.stop_loss ? Number(order.stop_loss) : null;
+      const target = order.target ? Number(order.target) : null;
+      if (stopLoss !== null) {
+        if (side === 'BUY' && ltp <= stopLoss) shouldTrigger = true;
+        else if (side === 'SELL' && ltp >= stopLoss) shouldTrigger = true;
       }
       if (!shouldTrigger && target !== null) {
-        if (side === 'BUY') {
-          if (ltp <= target) shouldTrigger = true;
-        } else if (side === 'SELL') {
-          if (ltp >= target) shouldTrigger = true;
-        }
+        if (side === 'BUY' && ltp >= target) shouldTrigger = true;
+        else if (side === 'SELL' && ltp <= target) shouldTrigger = true;
       }
     }
 
-    if (shouldTrigger) {
+    if (shouldTrigger && (fillPrice === 0 || fillPrice === Number(order.price ?? 0))) {
       fillPrice = side === 'BUY' ? effective.effectiveAsk : effective.effectiveBid;
     }
   } else if (orderType === 'MARKET') {
@@ -558,6 +563,13 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
 
         if (closeRpcErr) {
           console.error(`[Order Matching] Failed to close position ${pos.id} via close_position RPC:`, closeRpcErr);
+        } else {
+          // Cancel open pending exit/linked orders for this position or symbol
+          await admin.from('orders')
+            .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+            .eq('user_id', pos.user_id)
+            .eq('status', 'PENDING')
+            .or(`info.eq.${pos.id},linked_position_id.eq.${pos.id},symbol.eq.${pos.symbol}`);
         }
       }
     }

@@ -890,6 +890,21 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       }
 
+      if (resolvedOrderType === 'GTT' && !isExitTrade) {
+        if (resolvedClientPrice === undefined || isNaN(resolvedClientPrice) || resolvedClientPrice <= 0) {
+          showOrderError('Limit price is required for GTT orders.');
+          return;
+        }
+        if (placeSide === 'BUY' && resolvedClientPrice > currentLtp) {
+          showOrderError('Limit price must be lower than or equal to the current market price.');
+          return;
+        }
+        if (placeSide === 'SELL' && resolvedClientPrice < currentLtp) {
+          showOrderError('Limit price must be higher than or equal to the current market price.');
+          return;
+        }
+      }
+
       if (['LIMIT', 'SL', 'GTT'].includes(resolvedOrderType)) {
         const parsedPrice = resolvedClientPrice;
         if (placeSide === 'BUY') {

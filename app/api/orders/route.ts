@@ -779,6 +779,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         return NextResponse.json({ error: 'Limit price must be higher than the current market price (LTP).' }, { status: 400 });
       }
     } else if (order_type === 'GTT' && !is_exit) {
+      if (!client_price || isNaN(Number(client_price)) || Number(client_price) <= 0) {
+        return NextResponse.json({ error: 'Limit price is required for GTT orders.' }, { status: 400 });
+      }
       if (side === 'BUY' && client_price > baseLtp) {
         return NextResponse.json({ error: 'Limit price must be lower than or equal to the current market price (LTP).' }, { status: 400 });
       }
@@ -800,11 +803,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         } else {
           if (order_type === 'SLM') {
-            if (side === 'BUY' && trigPrice >= baseLtp) {
-              return NextResponse.json({ error: 'Stop loss price must be below the current market price.' }, { status: 400 });
+            if (side === 'BUY' && trigPrice <= baseLtp) {
+              return NextResponse.json({ error: 'Trigger price must be above the current market price for stop buy.' }, { status: 400 });
             }
-            if (side === 'SELL' && trigPrice <= baseLtp) {
-              return NextResponse.json({ error: 'Stop loss price must be above the current market price.' }, { status: 400 });
+            if (side === 'SELL' && trigPrice >= baseLtp) {
+              return NextResponse.json({ error: 'Trigger price must be below the current market price for stop sell.' }, { status: 400 });
             }
           } else { // SL order type
             if (side === 'BUY' && trigPrice <= baseLtp) {

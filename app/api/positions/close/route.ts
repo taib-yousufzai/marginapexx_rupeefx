@@ -385,6 +385,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
+    // Cancel open pending orders for all successfully closed positions/symbols
+    const successfulPosIds = results.filter(r => r.success).map(r => r.positionId);
+    if (successfulPosIds.length > 0) {
+      try {
+        const closedSymbols = positions.filter(p => successfulPosIds.includes(p.id)).map(p => p.symbol);
+        for (const posId of successfulPosIds) {
+          await admin.from('orders')
+            .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+            .eq('user_id', user.id)
+            .eq('status', 'PENDING')
+            .or(`info.eq.${posId},linked_position_id.eq.${posId}`);
+        }
+        for (const sym of closedSymbols) {
+          if (sym) {
+            await admin.from('orders')
+              .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+              .eq('user_id', user.id)
+              .eq('status', 'PENDING')
+              .eq('symbol', sym)
+              .eq('is_exit', true);
+          }
+        }
+      } catch (cancelErr) {
+        console.warn('[POST /api/positions/close] Non-fatal error cleaning up pending orders:', cancelErr);
+      }
+    }
+
     return NextResponse.json({ success: true, results }, { status: 200 });
   } catch (err: any) {
     console.error('[POST /api/positions/close] Request error:', err);
