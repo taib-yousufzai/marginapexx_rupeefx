@@ -90,12 +90,13 @@ export default function OrderPage() {
     setModifyingOrderId(order.id);
     setTradeSheetSide(order.side);
     setTradeSheetItem({
+      id: order.id,
       name: order.symbol,
       symbol: order.symbol,
       kiteSymbol: order.kite_instrument || order.symbol,
       segment: order.segment,
       price: order.price || order.trigger_price || order.fill_price || 0,
-    });
+    } as any);
     setTradeSheetInitialOrder({
       qty: order.qty,
       order_type: order.order_type,
@@ -116,8 +117,14 @@ export default function OrderPage() {
     }, 80);
   };
 
-  const openOrders = orders.filter(o => o.status === 'PENDING');
-  const closedOrders = orders.filter(o => o.status !== 'PENDING');
+  const isPendingOrder = (status?: string) => {
+    if (!status) return false;
+    const s = status.toUpperCase();
+    return s === 'PENDING' || s === 'TRIGGER_PENDING' || s === 'OPEN' || s === 'VALIDATION_PENDING';
+  };
+
+  const openOrders = orders.filter(o => isPendingOrder(o.status));
+  const closedOrders = orders.filter(o => !isPendingOrder(o.status));
 
   const activeList = tab === 'open' ? openOrders : closedOrders;
   const filtered = activeList.filter(o =>
@@ -257,10 +264,11 @@ export default function OrderPage() {
                 {/* List of My Orders */}
                 {!ordersLoading && filtered.map(order => {
                   const isBuy = order.side === 'BUY';
-                  const isExecuted = order.status === 'EXECUTED';
-                  const isRejected = order.status === 'REJECTED';
-                  const isCancelled = order.status === 'CANCELLED';
-                  const isPending = order.status === 'PENDING';
+                  const statusUpper = (order.status || '').toUpperCase();
+                  const isExecuted = statusUpper === 'EXECUTED';
+                  const isRejected = statusUpper === 'REJECTED';
+                  const isCancelled = statusUpper === 'CANCELLED';
+                  const isPending = isPendingOrder(order.status);
 
                   return (
                     <div
@@ -344,7 +352,7 @@ export default function OrderPage() {
                       </div>
                       <div className="ord-row ord-row-status">
                         <div className={`ord-status-text ${isPending ? 'status-open' : isExecuted ? 'status-filled' : isCancelled ? 'status-cancelled' : 'status-rejected'}`}>
-                          {isPending && <><i className="fas fa-circle" /> PENDING</>}
+                          {isPending && <><i className="fas fa-circle" /> {statusUpper === 'TRIGGER_PENDING' ? 'TRIGGER PENDING' : 'PENDING'}</>}
                           {isExecuted && <><i className="fas fa-check-circle" /> EXECUTED</>}
                           {isCancelled && <><i className="fas fa-ban" /> CANCELLED</>}
                           {isRejected && <><i className="fas fa-times-circle" /> REJECTED</>}

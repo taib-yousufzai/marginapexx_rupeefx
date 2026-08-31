@@ -61,10 +61,10 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
       }
     } catch (e) {}
 
-    // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel
+    // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel with a fast timeout
     const [bookRes, priceRes] = await Promise.all([
-      fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store' }).catch(() => null),
-      fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store' }).catch(() => null),
+      fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(2500) }).catch(() => null),
+      fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(2500) }).catch(() => null),
     ]);
 
     const isForexUsd = ['GBPUSD', 'EURUSD'].includes(cleanSym.replace('USDT', ''));
@@ -121,7 +121,7 @@ async function fetchKiteQuotes(instruments: string[]): Promise<Record<string, Se
     try {
       const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || 'http://localhost:8080';
       const params = new URLSearchParams({ symbols: instruments.join(',') });
-      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store' });
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(2000) });
       if (resTicker.ok) {
         const json = await resTicker.json();
         if (json.success && json.data) {
@@ -162,6 +162,7 @@ async function fetchKiteQuotes(instruments: string[]): Promise<Record<string, Se
           Authorization: `token ${apiKey}:${session.accessToken}`,
         },
         cache: 'no-store',
+        signal: AbortSignal.timeout(2500),
       });
 
       if (!res.ok) return result;

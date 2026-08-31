@@ -696,10 +696,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         if (orderType === 'LIMIT') {
           resolvedOrderType = 'LIMIT';
           resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
+        } else if (orderType === 'SL') {
+          resolvedOrderType = 'SL';
+          resolvedTriggerPrice = parseFloat(triggerPrice) || undefined;
+          resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
+          resolvedStopLoss = resolvedTriggerPrice;
         } else if (orderType === 'SLM') {
-          // User intends to buy at Market and attach a Stop Loss
-          resolvedOrderType = 'MARKET';
-          resolvedStopLoss = parseFloat(triggerPrice) || undefined;
+          resolvedOrderType = 'SLM';
+          resolvedTriggerPrice = parseFloat(triggerPrice) || undefined;
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
           resolvedOrderType = 'GTT';

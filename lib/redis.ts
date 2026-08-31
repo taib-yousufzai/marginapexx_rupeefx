@@ -128,7 +128,9 @@ if (redisUrl) {
     if (!globalForRedis.realClient) {
       logger.info('Connecting to Valkey/Redis instance...');
       globalForRedis.realClient = new Redis(redisUrl, {
-        maxRetriesPerRequest: null, // Allow infinite reconnect attempts
+        maxRetriesPerRequest: 3,
+        enableOfflineQueue: false,
+        connectTimeout: 2000,
         retryStrategy(times) {
           reconnectCount++;
           lastReconnectAt = new Date();
@@ -154,14 +156,36 @@ if (redisUrl) {
   logger.info('No REDIS_URL configured. Using in-memory MockRedis.');
 }
 
-// Proxy client to transparently route commands
+// Proxy client to transparently route commands with a 500ms safety timeout
 const redisProxyClient = new Proxy({}, {
   get(target, propKey) {
     const isReady = realClient && realClient.status === 'ready';
     const activeClient = isReady ? realClient : mockClient;
     const prop = (activeClient as any)[propKey];
     if (typeof prop === 'function') {
-      return prop.bind(activeClient);
+      return function (...args: any[]) {
+        try {
+          const res = prop.apply(activeClient, args);
+          if (res && typeof res.then === 'function') {
+            return Promise.race([
+              res,
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Redis command timeout (500ms)')), 500))
+            ]).catch((err) => {
+              if (process.env.NODE_ENV === 'development') {
+                logger.warn({ err: err?.message || err, command: String(propKey) }, 'Redis command timed out/failed, falling back to mock');
+              }
+              const mockProp = (mockClient as any)[propKey];
+              if (typeof mockProp === 'function') {
+                return mockProp.apply(mockClient, args);
+              }
+              return null;
+            });
+          }
+          return res;
+        } catch {
+          return null;
+        }
+      };
     }
     return prop;
   }
