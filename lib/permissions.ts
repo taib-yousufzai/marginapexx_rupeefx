@@ -85,6 +85,8 @@ export const ROLE_PERMISSIONS: Record<AppRole, Permission[]> = {
  * Check if a given role has a specific permission.
  */
 export function hasPermission(role: string, permission: Permission): boolean {
-  if (!role || !(role in ROLE_PERMISSIONS)) return false;
-  return ROLE_PERMISSIONS[role as AppRole].includes(permission);
+  if (!role) return false;
+  const normalizedRole = (role === 'trader' ? 'user' : role) as AppRole;
+  if (!(normalizedRole in ROLE_PERMISSIONS)) return false;
+  return ROLE_PERMISSIONS[normalizedRole].includes(permission);
 }

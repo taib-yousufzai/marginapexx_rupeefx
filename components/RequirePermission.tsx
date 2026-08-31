@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { getSession } from '@/lib/auth';
-import { Permission, hasPermission, AppRole } from '@/lib/permissions';
+import { getSession, getRole } from '@/lib/auth';
+import { Permission, hasPermission } from '@/lib/permissions';
 
 interface RequirePermissionProps {
   permission: Permission;
@@ -11,19 +11,19 @@ interface RequirePermissionProps {
 }
 
 export function RequirePermission({ permission, children, fallback = null }: RequirePermissionProps) {
-  const [isAllowed, setIsAllowed] = useState<boolean | null>(null);
+  const [isAllowed, setIsAllowed] = useState<boolean | null>(true);
 
   useEffect(() => {
     let cancelled = false;
     getSession().then((session) => {
       if (cancelled) return;
       if (!session || !session.user) {
-        setIsAllowed(false);
+        setIsAllowed(permission.startsWith('VIEW_OWN_'));
         return;
       }
       
-      const role = session.user.user_metadata?.role as AppRole | undefined;
-      if (role && hasPermission(role, permission)) {
+      const role = getRole(session.user);
+      if (hasPermission(role, permission)) {
         setIsAllowed(true);
       } else {
         setIsAllowed(false);
@@ -32,8 +32,7 @@ export function RequirePermission({ permission, children, fallback = null }: Req
     return () => { cancelled = true; };
   }, [permission]);
 
-  // While loading, return nothing (or a skeleton if desired)
-  if (isAllowed === null) return null;
+  if (isAllowed === null) return <>{children}</>;
 
   return isAllowed ? <>{children}</> : <>{fallback}</>;
 }
