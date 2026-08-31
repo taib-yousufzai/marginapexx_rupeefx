@@ -103,6 +103,26 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     if (data.session && data.user) {
       _cachedSession = data.session;
       _cacheTimestamp = Date.now();
+
+      if (typeof window !== 'undefined') {
+        try {
+          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+          let projectRef = '';
+          if (supabaseUrl) {
+            try { projectRef = new URL(supabaseUrl).hostname.split('.')[0]; } catch {}
+          }
+          if (projectRef) {
+            localStorage.setItem(`sb-${projectRef}-auth-token`, JSON.stringify(data.session));
+          }
+          supabase.auth.setSession({
+            access_token: data.session.access_token,
+            refresh_token: data.session.refresh_token || '',
+          }).catch(() => {});
+        } catch (e) {
+          console.warn('[signIn] Failed to persist fallback session to localStorage:', e);
+        }
+      }
+
       return { session: data.session, user: data.user };
     }
   } catch (err: any) {
@@ -236,6 +256,9 @@ export async function getSession(): Promise<Session | null> {
       const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError || !sessionData?.session) {
+        if (_cachedSession) {
+          return _cachedSession;
+        }
         _cachedSession = null;
         return null;
       }

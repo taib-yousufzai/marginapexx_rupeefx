@@ -7,6 +7,26 @@ const DB_URL =
   process.env.DATABASE_URL ||
   'postgresql://postgres:9NGKXKwLoXHyUF2c@db.cpcvklekwwawgtgbyrmp.supabase.co:5432/postgres';
 
+function createSignedJwt(payload: Record<string, any>): string {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const encodeB64Url = (obj: any) =>
+    Buffer.from(JSON.stringify(obj))
+      .toString('base64')
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+
+  const headerB64 = encodeB64Url(header);
+  const payloadB64 = encodeB64Url(payload);
+  const dummySignature = Buffer.from('margin-apex-secret-signature')
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+
+  return `${headerB64}.${payloadB64}.${dummySignature}`;
+}
+
 export async function POST(req: Request) {
   try {
     const { email, password } = await req.json();
@@ -81,10 +101,23 @@ export async function POST(req: Request) {
           },
         };
 
+        const now = Math.floor(Date.now() / 1000);
+        const jwtPayload = {
+          sub: user.id,
+          email: user.email,
+          role: 'authenticated',
+          aud: 'authenticated',
+          exp: now + 86400,
+          iat: now,
+          user_metadata: userObj.user_metadata,
+          app_metadata: { provider: 'email' },
+        };
+
         const sessionObj = {
-          access_token: `direct-db-session-${user.id}-${Date.now()}`,
+          access_token: createSignedJwt(jwtPayload),
           token_type: 'bearer',
           expires_in: 86400,
+          expires_at: now + 86400,
           refresh_token: `refresh-${user.id}`,
           user: userObj,
         };
@@ -166,10 +199,24 @@ export async function POST(req: Request) {
           client_id: 'DEMO123',
         },
       };
+
+      const now = Math.floor(Date.now() / 1000);
+      const demoJwtPayload = {
+        sub: demoUser.id,
+        email: demoUser.email,
+        role: 'authenticated',
+        aud: 'authenticated',
+        exp: now + 86400,
+        iat: now,
+        user_metadata: demoUser.user_metadata,
+        app_metadata: { provider: 'email' },
+      };
+
       const demoSession = {
-        access_token: `demo-session-${Date.now()}`,
+        access_token: createSignedJwt(demoJwtPayload),
         token_type: 'bearer',
         expires_in: 86400,
+        expires_at: now + 86400,
         refresh_token: `demo-refresh-${Date.now()}`,
         user: demoUser,
       };
