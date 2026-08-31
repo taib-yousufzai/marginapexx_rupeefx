@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
           .order('updated_at', { ascending: false });
 
         if (lowerStatus === 'closed' && historyResetAt) {
-          positionsQuery = positionsQuery.gt('updated_at', historyResetAt);
+          positionsQuery = positionsQuery.gt('updated_at', new Date(historyResetAt).toISOString());
         }
 
         // For closed positions, default to today-only unless 'all' param or 'from' date is passed

@@ -275,7 +275,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       .eq('id', user.id)
       .maybeSingle();
 
-    const historyResetAt = userProfile?.history_reset_at;
+    const historyResetAt = userProfile?.history_reset_at ? new Date(userProfile.history_reset_at).toISOString() : null;
 
     let ordersQuery = admin
       .from('orders')
