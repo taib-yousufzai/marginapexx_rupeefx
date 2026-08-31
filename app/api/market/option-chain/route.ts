@@ -192,10 +192,33 @@ export async function GET(request: Request) {
 
     // ── 5. Resolve ATM price ──────────────────────────────────────────────────
     let atmPrice = spotParam ? parseFloat(spotParam) || 0 : 0;
+    let usedFallback = false;
+
     if (!atmPrice && atmRedisRaw) {
       try { atmPrice = JSON.parse(atmRedisRaw as string).last_price || 0; } catch { /* ignore */ }
     }
-    let usedFallback = false;
+
+    // Try alternative Redis keys if primary underlyingKiteId had no price
+    if (!atmPrice) {
+      try {
+        const altKeys = [
+          symbol,
+          underlyingKiteId.replace(/\s+/g, '_'),
+          underlyingKiteId.split(':').pop() || '',
+        ].filter(Boolean);
+        const altQuotes = await redis.hmget('market:quotes', ...altKeys);
+        for (const raw of altQuotes) {
+          if (raw) {
+            const parsed = JSON.parse(raw as string);
+            if (parsed.last_price > 0) {
+              atmPrice = parsed.last_price;
+              break;
+            }
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
     if (!atmPrice) {
       console.warn(`[option-chain] No ATM price for ${symbol}, using median strike fallback`);
       usedFallback = true;
@@ -267,6 +290,7 @@ export async function GET(request: Request) {
       strikes: sortedStrikes,
       underlyingPrice: atmPrice,
       underlyingSymbol: underlyingKiteId,
+      usedFallback,
     };
 
     if (!usedFallback) {

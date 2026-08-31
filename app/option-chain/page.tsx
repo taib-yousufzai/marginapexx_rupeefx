@@ -323,29 +323,36 @@ function OptionChainContent() {
     }
   }, [spotPrice]);
 
-  // Re-fetch when live spot price diverges significantly from the API's underlyingPrice.
-  // This fixes cold-load cases where Redis has no spot quote and the server falls back
-  // to a median-strike ATM, returning strikes far from the actual market price.
+  // Reset refetch tracking whenever symbol or expiry changes
+  useEffect(() => {
+    hasRefetchedRef.current = false;
+  }, [normalizedSymbol, selectedExpiry]);
+
+  // Re-fetch when live spot price diverges from the API's underlyingPrice
+  // or when the server used a median fallback due to missing cold-start Redis quotes.
   const hasRefetchedRef = useRef(false);
   useEffect(() => {
     if (hasRefetchedRef.current || !data?.underlyingPrice || !spotPrice || spotPrice <= 0) return;
     const apiAtm = data.underlyingPrice;
-    const divergence = Math.abs(spotPrice - apiAtm) / apiAtm;
-    if (divergence > 0.01) {
+    const absDiff = Math.abs(spotPrice - apiAtm);
+    const strikeStep = normalizedSymbol.includes('MIDCP') ? 25 : (normalizedSymbol.includes('NIFTY') ? 50 : 100);
+    const usedFallback = (data as any)?.usedFallback;
+
+    // Trigger re-fetch if server used median fallback OR if spot differs by >= 1 strike step
+    if (usedFallback || absDiff >= strikeStep || (absDiff / apiAtm) > 0.0015) {
       hasRefetchedRef.current = true;
       lastSpotPriceRef.current = spotPrice;
-      // Re-fetch with the correct spot price
       (async () => {
         try {
           const url = `/api/market/option-chain?symbol=${normalizedSymbol}${selectedExpiry ? `&expiry=${selectedExpiry}` : ''}&spotPrice=${spotPrice}&_t=${Date.now()}`;
-          const json = await api.get<{ success: boolean; expiry: string; error?: string; strikes: any[]; expiries: string[]; underlyingPrice?: number; underlyingSymbol?: string }>(url);
+          const json = await api.get<{ success: boolean; expiry: string; error?: string; strikes: any[]; expiries: string[]; underlyingPrice?: number; underlyingSymbol?: string; usedFallback?: boolean }>(url);
           if (json.success) {
             setData(json);
           }
         } catch { /* non-fatal — original data still displayed */ }
       })();
     }
-  }, [spotPrice, data?.underlyingPrice, normalizedSymbol, selectedExpiry]);
+  }, [spotPrice, data, normalizedSymbol, selectedExpiry]);
 
   const handleTrade = (instrSymbol: string, side: 'BUY' | 'SELL') => {
     const strikeMatch = data?.strikes.find(s => s.ce?.symbol === instrSymbol || s.pe?.symbol === instrSymbol);
