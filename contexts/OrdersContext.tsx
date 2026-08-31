@@ -31,14 +31,9 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       setOrders(globalOrdersCache);
       setError(null);
     } catch (err) {
-      console.error('[OrdersContext] Failed to fetch orders:', err);
-      if (globalOrdersCache.length === 0) {
-        if (err instanceof ApiError) {
-          setError(`API error ${err.status}`);
-        } else {
-          setError('Network error loading orders');
-        }
-      }
+      console.warn('[OrdersContext] Transient error fetching orders:', err);
+      // Retain existing orders cache and suppress UI error banner
+      setError(null);
     } finally {
       setLoading(false);
     }

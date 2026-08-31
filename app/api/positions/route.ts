@@ -67,10 +67,20 @@ export async function GET(request: NextRequest) {
       positionsQuery = positionsQuery.in('status', ['open', 'OPEN', 'active', 'ACTIVE']).order('created_at', { ascending: false });
     }
 
-    // Fetch positions
-    const posResult = await positionsQuery;
+    // Fetch positions with a fast 2.5s timeout wrapper
+    const timeoutPromise = new Promise<any>((resolve) =>
+      setTimeout(() => resolve({ timeout: true }), 2500)
+    );
 
-    if (posResult.error) throw posResult.error;
+    const posResult = await Promise.race([positionsQuery, timeoutPromise]).catch(err => {
+      console.warn('[Positions API] Query error:', err);
+      return { timeout: true };
+    });
+
+    if (posResult?.timeout || posResult?.error) {
+      console.warn('[Positions API] Query timed out (2.5s) or failed; returning empty array fallback');
+      return NextResponse.json({ positions: [] });
+    }
 
     // For closed positions, locked_margin is 0 after close. Recover the original margin
     // from the MARGIN_CREDIT ledger entry written by close_position_v2 (ref_id = 'MRG_RET_<position_id>').

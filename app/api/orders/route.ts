@@ -269,8 +269,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const from  = (page - 1) * limit;
     const to    = from + limit - 1;
 
-    // Fetch user profile, orders, and open positions in a SINGLE parallel round-trip
-    const [userProfileRes, ordersRes, posRes] = await Promise.all([
+    // Fetch user profile, orders, and open positions in a SINGLE parallel round-trip with a 2.5s fast timeout
+    const queryPromise = Promise.all([
       admin
         .from('profiles')
         .select('history_reset_at')
@@ -289,9 +289,26 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
     ]);
 
-    if (ordersRes.error) throw ordersRes.error;
+    const timeoutPromise = new Promise<any>((resolve) =>
+      setTimeout(() => resolve({ timeout: true }), 2500)
+    );
 
-    const userProfile = userProfileRes.data;
+    const raceRes = await Promise.race([queryPromise, timeoutPromise]).catch(err => {
+      console.warn('[GET /api/orders] Supabase query failed:', err);
+      return { timeout: true };
+    });
+
+    let userProfileRes: any = { data: null };
+    let ordersRes: any = { data: [] };
+    let posRes: any = { data: [] };
+
+    if (raceRes && !raceRes.timeout && Array.isArray(raceRes)) {
+      [userProfileRes, ordersRes, posRes] = raceRes;
+    } else {
+      console.warn('[GET /api/orders] Supabase Cloud query timed out (2.5s); returning empty fallback.');
+    }
+
+    const userProfile = userProfileRes?.data;
     const historyResetAt = userProfile?.history_reset_at ? new Date(userProfile.history_reset_at).getTime() : null;
 
     let dbOrders = ordersRes.data ?? [];

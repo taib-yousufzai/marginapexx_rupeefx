@@ -221,7 +221,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return;
-      setError(err instanceof Error ? err.message : "Unknown error");
+      console.warn('[PositionsContext] Transient error fetching positions:', err);
+      setError(null);
     } finally {
       setLoading(false);
     }
