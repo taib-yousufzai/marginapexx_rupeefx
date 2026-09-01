@@ -28,6 +28,7 @@ import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { mapSymbolToSegment } from '@/lib/trading/SymbolMapping';
 import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
 import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
+import { OrderService } from '@/lib/trading/OrderService';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -804,17 +805,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // Validate SL and SLM trigger price constraints relative to LTP
-    if (order_type === 'SL' || order_type === 'SLM') {
-      const trigPrice = trigger_price ? parseFloat(trigger_price.toString()) : null;
-      if (trigPrice !== null && !isNaN(trigPrice)) {
-        if (side === 'BUY' && trigPrice <= baseLtp) {
-          return NextResponse.json({ error: 'Trigger price must be higher than current market price for BUY SL/SLM.' }, { status: 400 });
-        }
-        if (side === 'SELL' && trigPrice >= baseLtp) {
-          return NextResponse.json({ error: 'Trigger price must be lower than current market price for SELL SL/SLM.' }, { status: 400 });
-        }
-      }
+    // Validate SL and SLM trigger price constraints relative to LTP using OrderService
+    const slErr = OrderService.validateStopLoss(
+      order_type ?? 'MARKET',
+      side as 'BUY' | 'SELL',
+      trigger_price ? parseFloat(trigger_price.toString()) : null,
+      baseLtp,
+      is_exit ?? false
+    );
+    if (slErr) {
+      return NextResponse.json({ error: slErr }, { status: 400 });
     }
 
     // Validate Target and Stop Loss rules
