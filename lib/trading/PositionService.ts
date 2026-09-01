@@ -50,6 +50,7 @@ export class PositionService {
         p_ltp:                baseLtp,
         p_fill_price:         fillPrice,
         p_is_exit:            false,
+        p_buffer_fee:         0,
         p_status:             isImmediate ? 'EXECUTED' : 'PENDING',
         p_expected_margin:    expectedMargin,
         p_expected_brokerage: expectedBrokerage,
@@ -133,7 +134,7 @@ export class PositionService {
           .update({ status: 'CANCELLED', updated_at: now })
           .eq('user_id', userId)
           .in('status', ['PENDING', 'OPEN', 'TRIGGER_PENDING', 'VALIDATION_PENDING'])
-          .or(`linked_position_id.eq.${positionId},info.eq.${positionId}`);
+          .eq('info', positionId);
       }
 
       // 2. Cancel by symbol (if no open positions remain for that symbol)
