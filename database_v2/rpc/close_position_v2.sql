@@ -115,8 +115,8 @@ BEGIN
         UPDATE public.orders
         SET status = 'CANCELLED', updated_at = now()
         WHERE user_id = v_user_id
-          AND LOWER(status) = 'pending'
-          AND (info = p_position_id::text OR linked_position_id = p_position_id OR (symbol = v_symbol AND is_exit = true));
+          AND UPPER(status) IN ('PENDING', 'OPEN', 'TRIGGER_PENDING', 'VALIDATION_PENDING')
+          AND (info = p_position_id::text OR linked_position_id = p_position_id OR symbol = v_symbol);
     END IF;
 
     -- Determine lot size to calculate lots
