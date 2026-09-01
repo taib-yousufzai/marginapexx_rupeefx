@@ -707,8 +707,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
           resolvedOrderType = 'GTT';
-          resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
-          resolvedTriggerPrice = parseFloat(limitPrice) || undefined;
+          resolvedClientPrice = limitPrice && !isNaN(parseFloat(limitPrice)) && parseFloat(limitPrice) > 0 ? parseFloat(limitPrice) : undefined;
+          resolvedTriggerPrice = limitPrice && !isNaN(parseFloat(limitPrice)) && parseFloat(limitPrice) > 0 ? parseFloat(limitPrice) : undefined;
           resolvedStopLoss = parseFloat(slPrice) || undefined;
           resolvedTarget = parseFloat(tpPrice) || undefined;
         } else {
@@ -858,8 +858,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             }
           }
           if (resolvedTarget !== undefined && !isNaN(resolvedTarget)) {
-            if (resolvedTarget <= currentLtp) {
-              showOrderError('Target price must be above the current market price.');
+            const targetRef = hasLimitPrice ? resolvedClientPrice! : currentLtp;
+            if (resolvedTarget <= targetRef) {
+              showOrderError(`Target price must be above the ${hasLimitPrice ? 'limit' : 'market'} price.`);
               return;
             }
           }
@@ -872,8 +873,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             }
           }
           if (resolvedTarget !== undefined && !isNaN(resolvedTarget)) {
-            if (resolvedTarget >= currentLtp) {
-              showOrderError('Target price must be below the current market price.');
+            const targetRef = hasLimitPrice ? resolvedClientPrice! : currentLtp;
+            if (resolvedTarget >= targetRef) {
+              showOrderError(`Target price must be below the ${hasLimitPrice ? 'limit' : 'market'} price.`);
               return;
             }
           }
@@ -896,7 +898,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
       if (resolvedOrderType === 'GTT' && !isExitTrade) {
         if (resolvedClientPrice === undefined || isNaN(resolvedClientPrice) || resolvedClientPrice <= 0) {
-          showOrderError('Limit price is required for GTT orders.');
+          showOrderError(placeSide === 'BUY' ? 'Limit price is required for a GTT Buy order.' : 'Limit price is required for a GTT Sell order.');
           return;
         }
         if (placeSide === 'BUY' && resolvedClientPrice > currentLtp) {
@@ -1462,11 +1464,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
         .ts2-toast {
           position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(20px);
-          background: #181C28; color: #F8FAFC; padding: 10px 22px; border-radius: 30px;
-          border: 1px solid rgba(255, 255, 255, 0.14);
+          background: #2C313F; color: #F8FAFC; padding: 10px 22px; border-radius: 30px;
+          border: 1px solid rgba(255, 255, 255, 0.18);
           font-size: 0.82rem; font-weight: 600; z-index: 10002;
           opacity: 0; transition: opacity 0.3s, transform 0.3s;
-          white-space: nowrap; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+          white-space: nowrap; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
           backdrop-filter: blur(10px);
         }
         .ts2-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -1752,13 +1754,19 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                               value={slPrice}
                               onChange={e => setSlPrice(e.target.value)}
                             />
-                            {currentLtp > 0 && (
-                              <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary, #6B7280)', marginTop: 4, fontWeight: 600 }}>
-                                {isLongPosition
-                                  ? `less than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : `more than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                              </div>
-                            )}
+                            {(() => {
+                              const parsedLimit = parseFloat(limitPrice);
+                              const refPrice = (!isNaN(parsedLimit) && parsedLimit > 0) ? parsedLimit : currentLtp;
+                              if (refPrice <= 0) return null;
+                              const labelSuffix = (!isNaN(parsedLimit) && parsedLimit > 0) ? ' (limit)' : '';
+                              return (
+                                <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary, #6B7280)', marginTop: 4, fontWeight: 600 }}>
+                                  {isLongPosition
+                                    ? `less than ${currencySymbol}${refPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${labelSuffix}`
+                                    : `more than ${currencySymbol}${refPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${labelSuffix}`}
+                                </div>
+                              );
+                            })()}
                           </div>
                           <div style={{ flex: 1 }}>
                             <div className="ts2-label" style={{ marginBottom: 6 }}>Target <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol})</span></div>
@@ -1769,13 +1777,19 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                               value={tpPrice}
                               onChange={e => setTpPrice(e.target.value)}
                             />
-                            {currentLtp > 0 && (
-                              <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary, #6B7280)', marginTop: 4, fontWeight: 600 }}>
-                                {isLongPosition
-                                  ? `more than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                  : `less than ${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                              </div>
-                            )}
+                            {(() => {
+                              const parsedLimit = parseFloat(limitPrice);
+                              const refPrice = (!isNaN(parsedLimit) && parsedLimit > 0) ? parsedLimit : currentLtp;
+                              if (refPrice <= 0) return null;
+                              const labelSuffix = (!isNaN(parsedLimit) && parsedLimit > 0) ? ' (limit)' : '';
+                              return (
+                                <div style={{ fontSize: '0.65rem', color: 'var(--text-secondary, #6B7280)', marginTop: 4, fontWeight: 600 }}>
+                                  {isLongPosition
+                                    ? `more than ${currencySymbol}${refPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${labelSuffix}`
+                                    : `less than ${currencySymbol}${refPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${labelSuffix}`}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                         <div>

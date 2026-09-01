@@ -46,7 +46,7 @@
   function showToast(msg, isError) {
     if (toastTimeout) clearTimeout(toastTimeout);
     toastEl.textContent = msg;
-    toastEl.style.background = isError ? "#C62E2E" : "#2C8E5A";
+    toastEl.style.background = isError ? "#C62E2E" : "#2C313F";
     toastEl.style.opacity = "1";
     toastTimeout = setTimeout(function () { toastEl.style.opacity = "0"; }, 2000);
   }

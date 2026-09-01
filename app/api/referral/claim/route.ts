@@ -8,22 +8,16 @@ function createAdminClient() {
   return createClient(url, serviceKey, { auth: { autoRefreshToken: false, persistSession: false } });
 }
 
+import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+
 export async function POST(request: NextRequest) {
   try {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const user = await getUserFromRequest(request);
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const token = authHeader.replace('Bearer ', '').trim();
-    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const supabase = createAdminClient();
-    const { data: userData, error: userError } = await supabase.auth.getUser(token);
-    
-    if (userError || !userData?.user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const user = userData.user;
+    const supabase = getAdminClient();
 
     const { data: rpcData, error: rpcError } = await supabase.rpc('claim_referral_earnings', {
       p_user_id: user.id

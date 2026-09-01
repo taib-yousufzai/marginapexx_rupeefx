@@ -114,7 +114,7 @@ export async function signIn(email: string, password: string): Promise<SignInRes
           if (projectRef) {
             localStorage.setItem(`sb-${projectRef}-auth-token`, JSON.stringify(data.session));
           }
-          supabase.auth.setSession({
+          await supabase.auth.setSession({
             access_token: data.session.access_token,
             refresh_token: data.session.refresh_token || '',
           }).catch(() => {});
@@ -140,23 +140,30 @@ export async function signIn(email: string, password: string): Promise<SignInRes
  * Validates: Requirements 4.1, 4.2, 4.3
  */
 export async function signOut(): Promise<void> {
-  try {
-    // Keep the watchlist intact even after logging out
-    // if (_cachedSession && (_cachedSession.user?.email === 'demo@gmail.com' || _cachedSession.user?.user_metadata?.demo_user)) {
-    //   localStorage.setItem('marginApex_watchlist', '[]');
-    // }
-  } catch (e) {
-    console.error('Failed to clear demo watchlist on signout:', e);
-  }
   clearAuthCache();
-  const { error } = await supabase.auth.signOut();
-  if (error) {
-    console.error('signOut error:', error);
+  if (typeof window !== 'undefined') {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+          keysToRemove.push(key);
+        }
+      }
+      keysToRemove.forEach((k) => localStorage.removeItem(k));
+    } catch {}
+  }
+  try {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error('signOut error:', error);
+    }
+  } catch (err) {
+    console.error('signOut catch error:', err);
   }
   if (typeof window !== 'undefined') {
     window.location.href = '/login';
   }
-
 }
 
 /**

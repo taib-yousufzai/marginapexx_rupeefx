@@ -36,36 +36,21 @@ function createAdminClient() {
 // Route handler
 // ---------------------------------------------------------------------------
 
+import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+
 export async function GET(request: Request): Promise<Response> {
   try {
-    // Step 1: Extract Bearer token and authenticate the user
-    // Validates: Requirements 28.1
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const token = authHeader.slice('Bearer '.length).trim();
-    if (!token) {
+    const user = await getUserFromRequest(request);
+    if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    let adminClient;
-    try {
-      adminClient = createAdminClient();
-    } catch (e) {
-      console.error('[GET /api/pay/active-account] createAdminClient failed:', e);
-      return Response.json({ error: 'Internal server error' }, { status: 500 });
-    }
-
-    const { data: userData, error: userError } = await adminClient.auth.getUser(token);
-    if (userError || !userData?.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const adminClient = getAdminClient();
 
     const { data: userProfile } = await adminClient
       .from('profiles')
       .select('parent_id')
-      .eq('id', userData.user.id)
+      .eq('id', user.id)
       .single();
     
     const parentId = userProfile?.parent_id;

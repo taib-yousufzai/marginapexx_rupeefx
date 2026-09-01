@@ -809,7 +809,8 @@ body.black .market-rect-expired-badge {
   bottom: 5.625rem;
   left: 50%;
   transform: translateX(-50%);
-  background: rgba(30, 35, 45, 0.95);
+  background: #2C313F;
+  border: 1px solid rgba(255, 255, 255, 0.18);
   backdrop-filter: blur(0.5rem);
   color: #FFFFFF !important;
   padding: 0.875rem 1.5rem;

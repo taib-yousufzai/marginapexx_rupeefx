@@ -1,33 +1,18 @@
-import { createClient } from '@supabase/supabase-js';
-
-function createAdminClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url) throw new Error('Missing env: NEXT_PUBLIC_SUPABASE_URL');
-  if (!serviceKey) throw new Error('Missing env: SUPABASE_SERVICE_ROLE_KEY');
-  return createClient(url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
-}
+import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 
 export async function GET(request: Request): Promise<Response> {
   try {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const user = await getUserFromRequest(request);
+    if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const token = authHeader.slice('Bearer '.length).trim();
-    
-    const adminClient = createAdminClient();
-    const { data: userData, error: userError } = await adminClient.auth.getUser(token);
-    if (userError || !userData?.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+
+    const adminClient = getAdminClient();
 
     const { data, error } = await adminClient
       .from('user_bank_accounts')
       .select('*')
-      .eq('user_id', userData.user.id)
+      .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -44,17 +29,12 @@ export async function GET(request: Request): Promise<Response> {
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const user = await getUserFromRequest(request);
+    if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const token = authHeader.slice('Bearer '.length).trim();
-    
-    const adminClient = createAdminClient();
-    const { data: userData, error: userError } = await adminClient.auth.getUser(token);
-    if (userError || !userData?.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+
+    const adminClient = getAdminClient();
 
     const body = await request.json();
     const { account_name, account_no, ifsc, bank_name, upi_id, is_primary } = body;
@@ -68,13 +48,13 @@ export async function POST(request: Request): Promise<Response> {
       await adminClient
         .from('user_bank_accounts')
         .update({ is_primary: false })
-        .eq('user_id', userData.user.id);
+        .eq('user_id', user.id);
     }
 
     const { data, error } = await adminClient
       .from('user_bank_accounts')
       .insert({
-        user_id: userData.user.id,
+        user_id: user.id,
         account_name,
         account_no,
         ifsc,
@@ -99,17 +79,12 @@ export async function POST(request: Request): Promise<Response> {
 
 export async function PATCH(request: Request): Promise<Response> {
   try {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const user = await getUserFromRequest(request);
+    if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const token = authHeader.slice('Bearer '.length).trim();
-    
-    const adminClient = createAdminClient();
-    const { data: userData, error: userError } = await adminClient.auth.getUser(token);
-    if (userError || !userData?.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+
+    const adminClient = getAdminClient();
 
     const body = await request.json();
     const { id, account_name, account_no, ifsc, bank_name, upi_id, is_primary } = body;
@@ -122,7 +97,7 @@ export async function PATCH(request: Request): Promise<Response> {
       await adminClient
         .from('user_bank_accounts')
         .update({ is_primary: false })
-        .eq('user_id', userData.user.id);
+        .eq('user_id', user.id);
     }
 
     const updateData: any = {};
@@ -137,7 +112,7 @@ export async function PATCH(request: Request): Promise<Response> {
       .from('user_bank_accounts')
       .update(updateData)
       .eq('id', id)
-      .eq('user_id', userData.user.id)
+      .eq('user_id', user.id)
       .select()
       .single();
 
@@ -155,17 +130,12 @@ export async function PATCH(request: Request): Promise<Response> {
 
 export async function DELETE(request: Request): Promise<Response> {
   try {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const user = await getUserFromRequest(request);
+    if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const token = authHeader.slice('Bearer '.length).trim();
-    
-    const adminClient = createAdminClient();
-    const { data: userData, error: userError } = await adminClient.auth.getUser(token);
-    if (userError || !userData?.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+
+    const adminClient = getAdminClient();
 
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
@@ -178,7 +148,7 @@ export async function DELETE(request: Request): Promise<Response> {
       .from('user_bank_accounts')
       .delete()
       .eq('id', id)
-      .eq('user_id', userData.user.id);
+      .eq('user_id', user.id);
 
     if (error) {
       console.error('[DELETE /api/pay/bank-accounts] error:', error.message);

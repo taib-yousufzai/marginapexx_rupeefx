@@ -35,33 +35,17 @@ function createAdminClient() {
 // Route handler
 // ---------------------------------------------------------------------------
 
+import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+
 export async function GET(request: Request): Promise<Response> {
   try {
-    // Step 1: Extract Bearer token
-    // Validates: Requirements 9.2
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const token = authHeader.slice('Bearer '.length).trim();
-    if (!token) {
+    const user = await getUserFromRequest(request);
+    if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Step 2: Resolve user from token
-    let adminClient;
-    try {
-      adminClient = createAdminClient();
-    } catch (e) {
-      console.error('[GET /api/pay/ledger] createAdminClient failed:', e);
-      return Response.json({ error: 'Internal server error' }, { status: 500 });
-    }
-
-    const { data: userData, error: userError } = await adminClient.auth.getUser(token);
-    if (userError || !userData?.user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const userId = userData.user.id;
+    const adminClient = getAdminClient();
+    const userId = user.id;
 
     // Step 3: Query ledger_entries for this user, ordered by created_at DESC
     // Validates: Requirements 9.1, 9.3

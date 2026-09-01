@@ -15,6 +15,11 @@ export class OrderService {
         return 'Limit price must be higher than the current market price (LTP).';
       }
     } else if (orderType === 'GTT' && !isExit) {
+      if (!clientPrice || isNaN(clientPrice) || clientPrice <= 0) {
+        return side === 'BUY'
+          ? 'Limit price is required for a GTT Buy order.'
+          : 'Limit price is required for a GTT Sell order.';
+      }
       if (side === 'BUY' && clientPrice > baseLtp) {
         return 'Limit price must be lower than or equal to the current market price (LTP).';
       }
@@ -108,8 +113,13 @@ export class OrderService {
             return 'Stop loss price must be below the limit price.';
           }
         }
-        if (orderTarget !== null && orderTarget < baseLtp) {
-          return `Target price must be above or equal to the current market price (LTP: ${baseLtp.toFixed(2)}).`;
+        if (orderTarget !== null) {
+          const targetRef = hasLimitPrice ? clientPrice : baseLtp;
+          if (orderTarget <= targetRef) {
+            return hasLimitPrice
+              ? 'Target price must be above the limit price.'
+              : `Target price must be above or equal to the current market price (LTP: ${baseLtp.toFixed(2)}).`;
+          }
         }
       } else {
         if (orderSL !== null) {
@@ -120,8 +130,13 @@ export class OrderService {
             return 'Stop loss price must be above the limit price.';
           }
         }
-        if (orderTarget !== null && orderTarget > baseLtp) {
-          return `Target price must be below or equal to the current market price (LTP: ${baseLtp.toFixed(2)}).`;
+        if (orderTarget !== null) {
+          const targetRef = hasLimitPrice ? clientPrice : baseLtp;
+          if (orderTarget >= targetRef) {
+            return hasLimitPrice
+              ? 'Target price must be below the limit price.'
+              : `Target price must be below or equal to the current market price (LTP: ${baseLtp.toFixed(2)}).`;
+          }
         }
       }
     }

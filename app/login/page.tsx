@@ -35,6 +35,9 @@ export default function LoginPage() {
 
   // Redirect based on role if already authenticated
   useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search.includes('expired=1')) {
+      return;
+    }
     getSession().then((session) => {
       if (session && !isLoggingInRef.current) {
         const role = getRole(session.user);

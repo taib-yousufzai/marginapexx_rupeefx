@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { evaluateOrderTriggerCondition } from '../lib/orderMatching';
+import { OrderService } from '../lib/trading/OrderService';
 
 /**
  * MarginApex Trading Lifecycle Verification Matrix
@@ -399,6 +400,81 @@ describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', (
     expect(gttOrder.status).toBe('EXECUTED');
     expect(sim.positions.length).toBe(1);
     expect(sim.positions[0].qty_open).toBe(5);
+  });
+
+  it('Test 8a: GTT Buy Validation — Missing limit price is strictly rejected', () => {
+    const err = OrderService.validateLimitPrice('GTT', 'BUY', 0, 100, false);
+    expect(err).toBe('Limit price is required for a GTT Buy order.');
+  });
+
+  it('Test 8b: Full GTT Buy Lifecycle State Machine — GTT Created -> Limit Pending -> Position Active -> Exit Conditions Active', () => {
+    const sim = new TradingEngineSimulator();
+    const cmp = 100;
+    const limitPrice = 90;
+    const stopLoss = 80;
+    const target = 120;
+
+    // Stage 1: GTT CREATED
+    const gttOrder = sim.placePendingOrder({
+      userId,
+      symbol,
+      side: 'BUY',
+      orderType: 'GTT',
+      qty: 10,
+      price: limitPrice,
+      stopLoss,
+      target,
+      ltpAtEntry: cmp,
+    });
+
+    expect(gttOrder.status).toBe('PENDING');
+    expect(sim.positions.length).toBe(0); // 0 positions created
+
+    // Stage 2: WAITING FOR LIMIT ENTRY — Price moves to 95 and 120 (above limit entry 90)
+    let triggered = sim.evaluatePendingOrders(symbol, 95);
+    expect(triggered.length).toBe(0);
+    expect(gttOrder.status).toBe('PENDING');
+    expect(sim.positions.length).toBe(0); // SL/Target remain INACTIVE, no positions
+
+    triggered = sim.evaluatePendingOrders(symbol, 120);
+    expect(triggered.length).toBe(0);
+    expect(gttOrder.status).toBe('PENDING');
+    expect(sim.positions.length).toBe(0); // Target 120 DOES NOT trigger prematurely!
+
+    // Stage 3: LIMIT ENTRY TRIGGERED — Market price drops to 90
+    triggered = sim.evaluatePendingOrders(symbol, 90);
+    expect(triggered.length).toBe(1);
+    expect(gttOrder.status).toBe('EXECUTED');
+
+    // Stage 4: ACTIVE POSITION CREATED — Position is now open with SL and Target attached
+    expect(sim.positions.length).toBe(1);
+    const activePos = sim.positions[0];
+    expect(activePos.status).toBe('open');
+    expect(activePos.entry_price).toBe(90);
+    expect(activePos.qty_open).toBe(10);
+
+    // Stage 5: EXIT CONDITIONS ACTIVATED — Position closes when SL (80) is hit
+    // Attach SL exit order to active position as created by system
+    const slExitOrder = sim.placePendingOrder({
+      userId,
+      symbol,
+      side: 'SELL',
+      orderType: 'SLM',
+      qty: 10,
+      triggerPrice: stopLoss,
+      isExit: true,
+      linkedPositionId: activePos.id,
+    });
+
+    expect(slExitOrder.status).toBe('PENDING');
+    expect(activePos.status).toBe('open');
+
+    // Price drops to 80 -> Stop Loss fires and closes position
+    const exitTriggered = sim.evaluatePendingOrders(symbol, 80, 79, 81);
+    expect(exitTriggered.length).toBe(1);
+    expect(slExitOrder.status).toBe('EXECUTED');
+    expect(activePos.status).toBe('closed');
+    expect(activePos.qty_open).toBe(0);
   });
 
   it('Test 9: Position Full Exit — Executing exit order equal to qty_open closes position and releases margin', () => {

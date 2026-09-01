@@ -22,26 +22,14 @@ function createAdminClient() {
 // POST — original submit handler (unchanged)
 // ---------------------------------------------------------------------------
 
+import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+
 export async function POST(request: Request): Promise<Response> {
   try {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const token = authHeader.slice('Bearer '.length).trim();
-    if (!token) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    const user = await getUserFromRequest(request);
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    let adminClient;
-    try {
-      adminClient = createAdminClient();
-    } catch (e) {
-      console.error('[POST /api/pay/request] createAdminClient failed:', e);
-      return Response.json({ error: 'Internal server error' }, { status: 500 });
-    }
-
-    const { data: userData, error: userError } = await adminClient.auth.getUser(token);
-    if (userError || !userData?.user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    const user = userData.user;
+    const adminClient = getAdminClient();
 
     const { data: rulesData, error: rulesError } = await adminClient
       .from('wallet_rules').select('*').eq('id', 1).single();
@@ -126,23 +114,10 @@ export async function POST(request: Request): Promise<Response> {
 
 export async function PATCH(request: Request): Promise<Response> {
   try {
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    const token = authHeader.slice('Bearer '.length).trim();
-    if (!token) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    const user = await getUserFromRequest(request);
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    let adminClient;
-    try {
-      adminClient = createAdminClient();
-    } catch (e) {
-      return Response.json({ error: 'Internal server error' }, { status: 500 });
-    }
-
-    const { data: userData, error: userError } = await adminClient.auth.getUser(token);
-    if (userError || !userData?.user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    const user = userData.user;
+    const adminClient = getAdminClient();
 
     let body: Record<string, any>;
     try { body = await request.clone().json(); } catch {

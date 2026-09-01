@@ -790,7 +790,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     } else if (order_type === 'GTT' && !is_exit) {
       if (!client_price || isNaN(Number(client_price)) || Number(client_price) <= 0) {
-        return NextResponse.json({ error: 'Limit price is required for GTT orders.' }, { status: 400 });
+        const errorMsg = side === 'BUY'
+          ? 'Limit price is required for a GTT Buy order.'
+          : 'Limit price is required for a GTT Sell order.';
+        return NextResponse.json({ error: errorMsg }, { status: 400 });
       }
       if (side === 'BUY' && client_price > baseLtp) {
         return NextResponse.json({ error: 'Limit price must be lower than or equal to the current market price (LTP).' }, { status: 400 });
@@ -890,30 +893,37 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     } else {
       // First-time purchase validations
-      const hasLimitPrice = ['LIMIT', 'SL', 'GTT'].includes(order_type ?? 'MARKET');
+      const hasLimitPrice = ['LIMIT', 'SL', 'GTT'].includes(order_type ?? 'MARKET') && client_price !== undefined && !isNaN(Number(client_price)) && Number(client_price) > 0;
+      const clientPriceNum = Number(client_price);
       if (isLong) {
         if (orderSL !== null) {
           if (orderSL >= baseLtp) {
             return NextResponse.json({ error: 'Stop loss price must be below the current market price (LTP).' }, { status: 400 });
           }
-          if (hasLimitPrice && orderSL >= client_price) {
+          if (hasLimitPrice && orderSL >= clientPriceNum) {
             return NextResponse.json({ error: 'Stop loss price must be below the limit price.' }, { status: 400 });
           }
         }
-        if (orderTarget !== null && orderTarget < baseLtp) {
-          return NextResponse.json({ error: 'Target price must be above or equal to the current market price (LTP).' }, { status: 400 });
+        if (orderTarget !== null) {
+          const targetRef = hasLimitPrice ? clientPriceNum : baseLtp;
+          if (orderTarget <= targetRef) {
+            return NextResponse.json({ error: `Target price must be above the ${hasLimitPrice ? 'limit' : 'current market'} price.` }, { status: 400 });
+          }
         }
       } else {
         if (orderSL !== null) {
           if (orderSL <= baseLtp) {
             return NextResponse.json({ error: 'Stop loss price must be above the current market price (LTP).' }, { status: 400 });
           }
-          if (hasLimitPrice && orderSL <= client_price) {
+          if (hasLimitPrice && orderSL <= clientPriceNum) {
             return NextResponse.json({ error: 'Stop loss price must be above the limit price.' }, { status: 400 });
           }
         }
-        if (orderTarget !== null && orderTarget > baseLtp) {
-          return NextResponse.json({ error: 'Target price must be below or equal to the current market price (LTP).' }, { status: 400 });
+        if (orderTarget !== null) {
+          const targetRef = hasLimitPrice ? clientPriceNum : baseLtp;
+          if (orderTarget >= targetRef) {
+            return NextResponse.json({ error: `Target price must be below the ${hasLimitPrice ? 'limit' : 'current market'} price.` }, { status: 400 });
+          }
         }
       }
     }

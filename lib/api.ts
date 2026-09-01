@@ -139,7 +139,17 @@ async function apiCall<T>(
         if (path !== '/login' && path !== '/register' && path !== '/forgot-password' && path !== '/reset-password') {
           clearSharedSession();
           clearAuthCache();
-          window.location.href = '/login';
+          try {
+            const keysToRemove: string[] = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+                keysToRemove.push(key);
+              }
+            }
+            keysToRemove.forEach((k) => localStorage.removeItem(k));
+          } catch {}
+          window.location.href = '/login?expired=1';
           // Return pending promise to prevent throwing uncaught ApiError during page unload
           return new Promise<T>(() => {});
         }
