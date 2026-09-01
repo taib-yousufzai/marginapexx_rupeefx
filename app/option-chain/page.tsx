@@ -957,7 +957,6 @@ function OptionChainContent() {
                   item={tradeSheetItem} 
                   side={sheetSide} 
                   onClose={closeTradeSheet} 
-                  productType="INTRADAY"
                 />
               </div>
             </div>

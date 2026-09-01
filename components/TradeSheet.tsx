@@ -11,6 +11,7 @@ import { useActivePositions } from '@/hooks/useActivePositions';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
 import { useComexQuotes } from '@/hooks/useComexQuotes';
 import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
+import { calculateOrderBrokerage } from '@/lib/trading/BrokerageCalculator';
 import { ErrorModal } from '@/components/ErrorModal';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { useBalance } from '@/hooks/useBalance';
@@ -318,12 +319,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const chargeQty = orderUnit === 'lot' ? orderQty * lotSize : orderQty;
   const chargeExposure = chargeQty * chargePrice;
 
-  const computeCharge = (commType: string, commVal: number) => {
-    if (commType === 'Per Crore') return (chargeExposure * commVal) / 10000000;
-    if (commType === 'Per Lot') return (chargeQty / lotSize) * commVal;
-    if (commType === 'Per Trade' || commType === 'Flat') return commVal;
-    return chargeExposure * 0.001;
-  };
   const anyPosForSymbol = activePositions.find(p => (p.symbol === item?.symbol || (item?.symbol && (p.symbol?.includes(item.symbol) || item.symbol.includes(p.symbol)))) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active'));
   const effectiveProductType = propProductType || (linkedPosId ? activePositions.find(p => p.id === linkedPosId)?.product_type : undefined) || (exitMode && anyPosForSymbol ? anyPosForSymbol.product_type : undefined) || productType;
   const targetPT = effectiveProductType as 'INTRADAY' | 'CARRY';
@@ -336,7 +331,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const hasBuyPos = existingPos?.side === 'BUY' || false;
 
   const isExitTrade = exitMode || (activeSide === 'BUY' && hasSellPos) || (activeSide === 'SELL' && hasBuyPos);
-  const multiplier = isExitTrade ? 1 : 2;
 
   // Fallback defaults if segSetting is completely missing
   const fallbackCommType = 'Per Crore';
@@ -348,53 +342,38 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     fallbackCommVal = 1000;
   }
 
-  const rawIntradayCharge = segSetting ? computeCharge(
-    segSetting.intraday_commission_type || segSetting.commission_type || 'Per Crore',
-    segSetting.intraday_commission_value ?? segSetting.commission_value ?? fallbackCommVal
-  ) : computeCharge(fallbackCommType, fallbackCommVal);
+  const chargeLots = orderUnit === 'lot' ? orderQty : (totalQty / (lotSize > 0 ? lotSize : 1));
 
-  const rawCarryCharge = segSetting ? computeCharge(
-    segSetting.carry_commission_type || segSetting.commission_type || 'Per Crore',
-    segSetting.carry_commission_value ?? segSetting.commission_value ?? fallbackCommVal
-  ) : computeCharge(fallbackCommType, fallbackCommVal);
+  const brokerageResult = calculateOrderBrokerage({
+    exposure: chargeExposure,
+    lots: chargeLots,
+    productType: targetPT,
+    orderType: orderType,
+    isExit: isExitTrade,
+    segSetting: segSetting,
+    dbSegment: dbSeg,
+    fallbackCommType,
+    fallbackCommVal,
+  });
 
-  const gttCharge = (orderType === 'GTT' && segSetting ? computeCharge(
-    segSetting.gtt_commission_type || 'Per Trade',
-    segSetting.gtt_commission_value ?? 10
-  ) : (orderType === 'GTT' ? computeCharge('Per Trade', 15) : 0));
+  const calculatedBrokerage = brokerageResult.totalBrokerage;
 
-  // Brokerage model (matches TradeEngine):
-  //   INTRADAY open: entry + exit charged upfront = rawIntradayCharge * 2
-  //   CARRY open:    entry + exit + carry conversion = (rawIntradayCharge * 2) + (rawCarryCharge * 2)
-  //   GTT open:      carry + intraday + GTT fee = (rawIntradayCharge * 2) + (rawCarryCharge * 2) + gttCharge
-  //   Exit order:    0 (already collected at open)
+  // For charges breakdown UI when in exit mode: compute leg breakdown with isExit: false
+  const displayBrokerageResult = isExitTrade ? calculateOrderBrokerage({
+    exposure: chargeExposure,
+    lots: chargeLots,
+    productType: targetPT,
+    orderType: orderType,
+    isExit: false,
+    segSetting: segSetting,
+    dbSegment: dbSeg,
+    fallbackCommType,
+    fallbackCommVal,
+  }) : brokerageResult;
 
-  const intradayLegCharge = rawIntradayCharge * multiplier;
-  const carryLegCharge = rawCarryCharge * multiplier;
-
-  let displayIntraday = 0;
-  let displayCarry = 0;
-  let displayGtt = 0;
-
-  if (isExitTrade) {
-    displayIntraday = intradayLegCharge;
-    displayCarry = (targetPT === 'CARRY' || orderType === 'GTT') ? carryLegCharge : 0;
-    displayGtt = orderType === 'GTT' ? gttCharge : 0;
-  } else if (orderType === 'GTT') {
-    displayIntraday = intradayLegCharge;
-    displayCarry = carryLegCharge;
-    displayGtt = gttCharge;
-  } else if (targetPT === 'CARRY') {
-    displayIntraday = intradayLegCharge;
-    displayCarry = carryLegCharge;
-    displayGtt = 0;
-  } else {
-    displayIntraday = intradayLegCharge;
-    displayCarry = 0;
-    displayGtt = 0;
-  }
-
-  const calculatedBrokerage = isExitTrade ? 0 : (displayIntraday + displayCarry + displayGtt);
+  const displayIntraday = displayBrokerageResult.intradayCharge;
+  const displayCarry = displayBrokerageResult.carryCharge;
+  const displayGtt = displayBrokerageResult.gttCharge;
 
   const intradayType = segSetting?.intraday_type ?? 'Multiplier';
   const holdingType = segSetting?.holding_type ?? 'Multiplier';
