@@ -131,6 +131,7 @@ export async function GET(request: Request) {
 
     const results = {
       intradayClosed: 0,
+      intradayErrors: 0,
       errors: [] as string[]
     };
 
