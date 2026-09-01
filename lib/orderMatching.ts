@@ -60,12 +60,22 @@ export function evaluateOrderTriggerCondition(
       fillPrice = limitPrice;
     }
   } else if ((orderType === 'SL' || orderType === 'SLM') && triggerPrice !== null) {
-    if (side === 'BUY' && ltp <= triggerPrice) {
-      shouldTrigger = true;
-      fillPrice = effective.effectiveAsk;
-    } else if (side === 'SELL' && ltp >= triggerPrice) {
-      shouldTrigger = true;
-      fillPrice = effective.effectiveBid;
+    if (order.is_exit === true) {
+      if (side === 'SELL' && ltp <= triggerPrice) {
+        shouldTrigger = true;
+        fillPrice = effective.effectiveBid;
+      } else if (side === 'BUY' && ltp >= triggerPrice) {
+        shouldTrigger = true;
+        fillPrice = effective.effectiveAsk;
+      }
+    } else {
+      if (side === 'BUY' && ltp <= triggerPrice) {
+        shouldTrigger = true;
+        fillPrice = effective.effectiveAsk;
+      } else if (side === 'SELL' && ltp >= triggerPrice) {
+        shouldTrigger = true;
+        fillPrice = effective.effectiveBid;
+      }
     }
   } else if (orderType === 'GTT') {
     // Evaluate entry trigger (limitPrice or triggerPrice)
@@ -99,12 +109,12 @@ export function evaluateOrderTriggerCondition(
       const stopLoss = order.stop_loss ? Number(order.stop_loss) : null;
       const target = order.target ? Number(order.target) : null;
       if (stopLoss !== null) {
-        if (side === 'BUY' && ltp <= stopLoss) shouldTrigger = true;
-        else if (side === 'SELL' && ltp >= stopLoss) shouldTrigger = true;
+        if (side === 'SELL' && ltp <= stopLoss) shouldTrigger = true;
+        else if (side === 'BUY' && ltp >= stopLoss) shouldTrigger = true;
       }
       if (!shouldTrigger && target !== null) {
-        if (side === 'BUY' && ltp >= target) shouldTrigger = true;
-        else if (side === 'SELL' && ltp <= target) shouldTrigger = true;
+        if (side === 'SELL' && ltp >= target) shouldTrigger = true;
+        else if (side === 'BUY' && ltp <= target) shouldTrigger = true;
       }
     }
 

@@ -46,6 +46,13 @@ interface TradeSheetProps {
 }
 
 export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = false, productType: propProductType, initialOrder, isModify = false, modifyingOrderId, isFromPositions = false, linkedPosId = null, initialExitQty: propInitialExitQty, hideLotText = false }: TradeSheetProps) {
+  const effectiveExitMode = Boolean(
+    exitMode ||
+    initialOrder?.is_exit ||
+    initialOrder?.isExit ||
+    Boolean(modifyingOrderId && (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-') || modifyingOrderId.startsWith('pos-gtt-')))
+  );
+
   const { placeOrder, loading: placingOrder } = useOrderEntry();
 
   const [isClosing, setIsClosing] = useState(false);
@@ -87,13 +94,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   // isBusy gates the BUY/SELL footer buttons â€” also checks the hook's own loading flag
   const isBusy = placingOrder || isSubmitting;
   const isExpired = useMemo(() => {
-    if (!item?.expiry || exitMode || isModify) return false;
+    if (!item?.expiry || effectiveExitMode || isModify) return false;
     const expiryDate = new Date(item.expiry);
     const now = new Date();
     expiryDate.setUTCHours(0, 0, 0, 0);
     now.setUTCHours(0, 0, 0, 0);
     return expiryDate < now;
-  }, [item?.expiry, exitMode, isModify]);
+  }, [item?.expiry, effectiveExitMode, isModify]);
 
   const isSpotIndex = useMemo(() => {
     if (!item) return false;
@@ -320,7 +327,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const chargeExposure = chargeQty * chargePrice;
 
   const anyPosForSymbol = activePositions.find(p => (p.symbol === item?.symbol || (item?.symbol && (p.symbol?.includes(item.symbol) || item.symbol.includes(p.symbol)))) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active'));
-  const effectiveProductType = propProductType || (linkedPosId ? activePositions.find(p => p.id === linkedPosId)?.product_type : undefined) || (exitMode && anyPosForSymbol ? anyPosForSymbol.product_type : undefined) || productType;
+  const effectiveProductType = propProductType || (linkedPosId ? activePositions.find(p => p.id === linkedPosId)?.product_type : undefined) || (effectiveExitMode && anyPosForSymbol ? anyPosForSymbol.product_type : undefined) || productType;
   const targetPT = effectiveProductType as 'INTRADAY' | 'CARRY';
   const existingPos = activePositions.find(p => (p.symbol === item?.symbol || (item?.symbol && (p.symbol?.includes(item.symbol) || item.symbol.includes(p.symbol)))) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active') && p.product_type === targetPT) || anyPosForSymbol;
   // Total qty across all open lots for this symbol+product_type (for multi-lot exit validation)
@@ -330,7 +337,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const hasSellPos = existingPos?.side === 'SELL' || false;
   const hasBuyPos = existingPos?.side === 'BUY' || false;
 
-  const isExitTrade = exitMode || (activeSide === 'BUY' && hasSellPos) || (activeSide === 'SELL' && hasBuyPos);
+  const isExitTrade = effectiveExitMode || (!isModify && ((activeSide === 'BUY' && hasSellPos) || (activeSide === 'SELL' && hasBuyPos)));
 
   // Fallback defaults if segSetting is completely missing
   const fallbackCommType = 'Per Crore';
@@ -384,7 +391,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     : (totalQty * (priceOfScript > 0 ? priceOfScript : 0));
 
   let marginPortion = 0;
-  if (!exitMode) {
+  if (!effectiveExitMode) {
     marginPortion = calculateMarginPortion({
       segment: dbSeg,
       side: activeSide,
@@ -437,8 +444,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         setOrderQty(initialOrder.qty);
         setQtyInput(String(initialOrder.qty));
         setOrderUnit('qty');
-        const isExitFlow = Boolean(exitMode || initialOrder.is_exit || initialOrder.isExit || (modifyingOrderId && modifyingOrderId.startsWith('pos-')) || linkedPosId);
-        const initialOrderType = (isExitFlow && (initialOrder.order_type === 'LIMIT' || initialOrder.order_type === 'TARGET')) ? 'TARGET' : initialOrder.order_type;
+        const isExitFlow = effectiveExitMode;
+        const initialOrderType = (isExitFlow && (initialOrder.order_type === 'LIMIT' || initialOrder.order_type === 'TARGET')) ? 'TARGET' : (isExitFlow && initialOrder.order_type === 'SLM' ? 'SL' : initialOrder.order_type);
         setOrderType(initialOrderType);
         setProductType(initialOrder.product_type);
         setLimitPrice(initialOrder.client_price ? String(initialOrder.client_price) : (initialOrder.target ? String(initialOrder.target) : ''));
@@ -467,11 +474,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         setTriggerPrice('');
         setSlPrice('');
         setTpPrice('');
-        setGttSubOption((exitMode || Boolean(linkedPosId)) ? 'TARGET' : 'LIMIT');
+        setGttSubOption(effectiveExitMode ? 'TARGET' : 'LIMIT');
         userHasEditedQty.current = false;
       }
     }
-  }, [item?.symbol, propProductType, exitMode, isModify, initialOrder, modifyingOrderId]);
+  }, [item?.symbol, propProductType, exitMode, isModify, initialOrder, modifyingOrderId, linkedPosId, effectiveExitMode]);
 
   // Sync maximum position quantity when opening against an existing position
   useEffect(() => {
@@ -501,7 +508,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     // Intentionally exclude activePositions â€” only run when sheet opens or side changes,
     // never on background polls (which would stomp user-edited qty)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [side, isOpen, item?.symbol, propProductType, exitMode, linkedPosId]);
+  }, [side, isOpen, item?.symbol, propProductType, exitMode, linkedPosId, effectiveExitMode]);
 
   // Fetch balance and refresh active positions when the sheet opens
   useEffect(() => {
@@ -531,7 +538,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   let maxAllowedPrice = topLimit > 0 ? currentLtp * (1 + topLimit / 100) : Infinity;
   let minAllowedPrice = minLimit > 0 ? currentLtp * (1 - minLimit / 100) : 0;
 
-  if (orderType === 'LIMIT' || orderType === 'TARGET' || (orderType === 'GTT' && !exitMode)) {
+  if (orderType === 'LIMIT' || orderType === 'TARGET' || (orderType === 'GTT' && !effectiveExitMode)) {
     if (side === 'BUY') {
       maxAllowedPrice = Math.min(maxAllowedPrice, currentLtp);
     } else if (side === 'SELL') {
@@ -550,8 +557,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const formattedLtp = `${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-  const isExitOrModify = exitMode || isModify || Boolean(initialOrder?.is_exit || initialOrder?.isExit) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-'));
-  const isLongPosition = isExitOrModify ? activeSide === 'SELL' : activeSide === 'BUY';
+  const isLongPosition = effectiveExitMode ? activeSide === 'SELL' : activeSide === 'BUY';
 
   let priceRangeText = '';
   if (orderType === 'TARGET') {
@@ -563,7 +569,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       ? `less than ${formattedLtp}`
       : `more than ${formattedLtp}`;
   } else if (orderType === 'SL' || orderType === 'SLM') {
-    priceRangeText = activeSide === 'BUY'
+    priceRangeText = isLongPosition
       ? `less than ${formattedLtp}`
       : `more than ${formattedLtp}`;
   } else {
@@ -598,7 +604,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       let rawQty = orderUnit === 'lot' ? parsedInputQty * lotSize : parsedInputQty;
 
       // â”€â”€ Quantity Snapping & Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-      if (exitMode) {
+      if (effectiveExitMode) {
         let maxExitQty = 0;
         if (linkedPosId) {
           // Specific-position exit: cap to that position's qty_open only
@@ -642,7 +648,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       let resolvedStopLoss: number | undefined = undefined;
       let resolvedTarget: number | undefined = undefined;
 
-      const isExitOrModifyFlow = exitMode || isModify || Boolean(initialOrder && (initialOrder.is_exit || initialOrder.isExit)) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-'));
+      const isExitOrModifyFlow = effectiveExitMode || isModify;
 
       if (isExitOrModifyFlow) {
         if (orderType === 'TARGET') {
@@ -714,7 +720,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           showOrderError('Sell at limit price must be above the current market price.');
           return;
         }
-      } else if (resolvedOrderType === 'GTT' && !exitMode && hasExplicitLimit) {
+      } else if (resolvedOrderType === 'GTT' && !effectiveExitMode && hasExplicitLimit) {
         const limitVal = parseFloat(limitPrice);
         if (placeSide === 'BUY' && limitVal >= currentLtp) {
           showOrderError('Buy at limit price must be below the current market price.');
@@ -726,7 +732,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       }
 
-      const isExitOrder = exitMode || (placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos);
+      const isExitOrder = effectiveExitMode || (!isModify && ((placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos)));
 
       // Pre-check strike range for fresh entry/add-more orders on options
       if (!isExitOrder && item?.symbol && (item.symbol.endsWith('CE') || item.symbol.endsWith('PE'))) {
@@ -777,20 +783,34 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         if (orderType === 'SL' || orderType === 'SLM') {
           const trigVal = resolvedTriggerPrice !== undefined ? resolvedTriggerPrice : (resolvedStopLoss !== undefined ? resolvedStopLoss : undefined);
           if (trigVal !== undefined && !isNaN(trigVal)) {
-            if (placeSide === 'BUY' && trigVal >= currentLtp) {
-              showOrderError('Trigger price must be lower than current market price for BUY SL/SLM.');
-              return;
-            }
-            if (placeSide === 'SELL' && trigVal <= currentLtp) {
-              showOrderError('Trigger price must be higher than current market price for SELL SL/SLM.');
-              return;
+            const isExitTrade = effectiveExitMode || isExitOrder;
+            const isLong = existingPos ? (existingPos.side === 'BUY') : (isExitTrade ? (placeSide === 'SELL') : (placeSide === 'BUY'));
+
+            if (isExitTrade) {
+              if (isLong && trigVal >= currentLtp) {
+                showOrderError('Trigger price must be below current market price for BUY position exit SL/SLM.');
+                return;
+              }
+              if (!isLong && trigVal <= currentLtp) {
+                showOrderError('Trigger price must be above current market price for SELL position exit SL/SLM.');
+                return;
+              }
+            } else {
+              if (placeSide === 'BUY' && trigVal >= currentLtp) {
+                showOrderError('Trigger price must be lower than current market price for BUY SL/SLM.');
+                return;
+              }
+              if (placeSide === 'SELL' && trigVal <= currentLtp) {
+                showOrderError('Trigger price must be higher than current market price for SELL SL/SLM.');
+                return;
+              }
             }
           }
         }
       }
 
       // Resolve reference entry price and position side (Long vs Short)
-      const isExitTrade = Boolean(exitMode || isExitOrder || initialOrder?.is_exit || initialOrder?.isExit || (modifyingOrderId && modifyingOrderId.startsWith('pos-')) || linkedPosId);
+      const isExitTrade = effectiveExitMode || isExitOrder;
       const refEntry = (isExitTrade && existingPos) ? Number(existingPos.avg_price) : resolvedClientPrice;
       const isLong = existingPos ? (existingPos.side === 'BUY') : (isExitTrade ? (placeSide === 'SELL') : (placeSide === 'BUY'));
 
@@ -864,7 +884,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       }
 
-      if (resolvedOrderType === 'GTT' && !isExitTrade) {
+      if (resolvedOrderType === 'GTT' && !effectiveExitMode) {
         if (resolvedClientPrice === undefined || isNaN(resolvedClientPrice) || resolvedClientPrice <= 0) {
           showOrderError(placeSide === 'BUY' ? 'Limit price is required for a GTT Buy order.' : 'Limit price is required for a GTT Sell order.');
           return;
@@ -963,7 +983,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       }
 
-      if (exitMode) {
+      if (effectiveExitMode && !isModify) {
         // Exit mode: show the full-screen overlay and await the order
         const loadingDetail = (orderType === 'TARGET' || orderType === 'SL' || orderType === 'GTT')
           ? 'Modifying Position...'
@@ -1465,7 +1485,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
       <div id="tradeSheetOverlay" className={`ts2-overlay${(isOpen && !isClosing) ? ' active' : ''}`} onClick={handleCloseAnimation} />
 
-      <div id="tradeSheet" className={`ts2-sheet${(isOpen && !isClosing) ? ' open' : ''}${exitMode ? ' ts2-exit-mode' : ''} ts2-sheet--${(activeSide === 'SELL' || exitMode) ? 'sell' : 'buy'}`}>
+      <div id="tradeSheet" className={`ts2-sheet${(isOpen && !isClosing) ? ' open' : ''}${effectiveExitMode ? ' ts2-exit-mode' : ''} ts2-sheet--${(activeSide === 'SELL' || effectiveExitMode) ? 'sell' : 'buy'}`}>
         {item && (
           <>
             {/* Header */}
@@ -1482,10 +1502,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 {/* Row 2: Badge + Change% */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '3px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    {exitMode && (
+                    {effectiveExitMode && (
                       <span className="ts2-status-badge neg">Exit Position</span>
                     )}
-                    {!exitMode && isFromPositions && (
+                    {!effectiveExitMode && isFromPositions && (
                       <span className="ts2-status-badge pos">Add More</span>
                     )}
                   </div>
@@ -1615,14 +1635,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 <div className="ts2-card">
                   <div className="ts2-label">Order Type</div>
                   <div className="ts2-pills">
-                    {((exitMode || Boolean(initialOrder?.is_exit || initialOrder?.isExit) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-')) || Boolean(linkedPosId)) ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT']).map(t => (
+                    {(effectiveExitMode ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT']).map(t => (
                       <button
                         key={t}
                         className={`ts2-pill${orderType === t ? ' active' : ''}`}
                         onClick={() => {
                           setOrderType(t);
                           if (t === 'GTT') {
-                            setGttSubOption((exitMode || Boolean(initialOrder?.is_exit || initialOrder?.isExit) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-')) || Boolean(linkedPosId)) ? 'TARGET' : 'LIMIT');
+                            setGttSubOption(effectiveExitMode ? 'TARGET' : 'LIMIT');
                           }
                         }}
                       >
@@ -1651,7 +1671,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 {(orderType === 'SL' || orderType === 'SLM') && (
                   <div className="ts2-card">
                     <div className="ts2-label">
-                      {exitMode
+                      {effectiveExitMode
                         ? <>Stop Loss <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) order executes at market price</span></>
                         : (orderType === 'SLM' 
                             ? <>Stop Loss <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) attached to Market order</span></> 
@@ -1672,7 +1692,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 {/* GTT — Stop Loss / Target / Limit sub-options */}
                 {orderType === 'GTT' && (
                   <div className="ts2-card">
-                    {(exitMode || Boolean(initialOrder?.is_exit || initialOrder?.isExit) || Boolean(modifyingOrderId && modifyingOrderId.startsWith('pos-')) || Boolean(linkedPosId)) ? (
+                    {effectiveExitMode ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         <div className="ts2-label" style={{ marginBottom: 0 }}>SL / TARGET</div>
                         <div style={{ display: 'flex', gap: '12px' }}>
@@ -1780,7 +1800,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 )}
 
                 {/* Product Type */}
-                {!exitMode && (
+                {!effectiveExitMode && (
                   <div className="ts2-card">
                     <div className="ts2-label">Product Type</div>
                     <div className="ts2-pills">
@@ -1819,7 +1839,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                     <span className="ts2-ml" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 700 }}>
                       Charges Breakdown {showCharges ? '▲' : '▼'}
                     </span>
-                    <span className="ts2-mv" style={{ color: (activeSide === 'SELL' || exitMode) ? '#C62E2E' : '#15803D', fontWeight: 800 }}>
+                    <span className="ts2-mv" style={{ color: (activeSide === 'SELL' || effectiveExitMode) ? '#C62E2E' : '#15803D', fontWeight: 800 }}>
                       {currencySymbol} {calculatedBrokerage.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
@@ -1835,13 +1855,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                       </div>
                       <div className="ts2-margin-row">
                         <span className="ts2-ml">Carry Charges</span>
-                        <span className="ts2-mv" style={displayCarry > 0 ? { color: (activeSide === 'SELL' || exitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
+                        <span className="ts2-mv" style={displayCarry > 0 ? { color: (activeSide === 'SELL' || effectiveExitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
                           {currencySymbol} {displayCarry.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="ts2-margin-row">
                         <span className="ts2-ml">GTT Charges</span>
-                        <span className="ts2-mv" style={displayGtt > 0 ? { color: (activeSide === 'SELL' || exitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
+                        <span className="ts2-mv" style={displayGtt > 0 ? { color: (activeSide === 'SELL' || effectiveExitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
                           {currencySymbol} {displayGtt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
@@ -1888,17 +1908,17 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                         style={(isBusy || isExpired) ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
                         onClick={() => handlePlace('SELL')}
                       >
-                        {isModify ? 'MODIFY' : exitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'SELL' : `SELL ${actionText}${sellPriceLabel}`}
+                        {isModify ? 'MODIFY' : effectiveExitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'SELL' : `SELL ${actionText}${sellPriceLabel}`}
                       </button>
                     )}
                     {(side === 'BUY' || side === 'BOTH') && (
                       <button
-                        className={`ts2-btn${exitMode ? ' ts2-btn-sell' : ' ts2-btn-buy'}`}
+                        className={`ts2-btn${effectiveExitMode ? ' ts2-btn-sell' : ' ts2-btn-buy'}`}
                         disabled={isBusy || isExpired}
                         style={(isBusy || isExpired) ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
                         onClick={() => handlePlace('BUY')}
                       >
-                        {isModify ? 'MODIFY' : exitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'BUY' : `BUY ${actionText}${buyPriceLabel}`}
+                        {isModify ? 'MODIFY' : effectiveExitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'BUY' : `BUY ${actionText}${buyPriceLabel}`}
                       </button>
                     )}
                   </div>

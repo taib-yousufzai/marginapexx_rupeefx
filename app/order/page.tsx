@@ -106,6 +106,7 @@ export default function OrderPage() {
       stop_loss: order.stop_loss,
       target: order.target,
       is_exit: order.is_exit,
+      linked_position_id: order.linked_position_id,
     });
   };
 
@@ -566,7 +567,8 @@ export default function OrderPage() {
               initialOrder={tradeSheetInitialOrder}
               isModify={!!modifyingOrderId}
               modifyingOrderId={modifyingOrderId}
-              exitMode={modifyingOrderId ? (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-')) : false}
+              exitMode={modifyingOrderId ? (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-') || modifyingOrderId.startsWith('pos-gtt-') || Boolean(tradeSheetInitialOrder?.is_exit)) : false}
+              linkedPosId={tradeSheetInitialOrder?.linked_position_id}
               onSuccess={() => {
                 refresh();
                 if (modifyingOrderId) {
