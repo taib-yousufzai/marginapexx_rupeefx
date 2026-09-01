@@ -533,32 +533,37 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
 
 
+  const realExitOrder = Boolean(exitMode || initialOrder?.is_exit || initialOrder?.isExit || (modifyingOrderId && (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-') || modifyingOrderId.startsWith('pos-gtt-'))));
+
+  const isLongPosition = realExitOrder ? activeSide === 'SELL' : activeSide === 'BUY';
+
   const topLimit = segSetting?.top_limit ?? 0;
   const minLimit = segSetting?.min_limit ?? 0;
 
   let maxAllowedPrice = topLimit > 0 ? currentLtp * (1 + topLimit / 100) : Infinity;
   let minAllowedPrice = minLimit > 0 ? currentLtp * (1 - minLimit / 100) : 0;
 
-  if (orderType === 'LIMIT' || orderType === 'TARGET' || (orderType === 'GTT' && !effectiveExitMode)) {
-    if (side === 'BUY') {
+  if (orderType === 'LIMIT') {
+    if (activeSide === 'BUY') {
       maxAllowedPrice = Math.min(maxAllowedPrice, currentLtp);
-    } else if (side === 'SELL') {
+    } else if (activeSide === 'SELL') {
       minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
     }
-  } else if (orderType === 'SL' || orderType === 'SLM') {
-    // For SL / SLM (Stop Loss):
-    // BUY side: Trigger price must be LOWER than current market price (< LTP)
-    // SELL side: Trigger price must be HIGHER than current market price (> LTP)
-    if (side === 'BUY') {
+  } else if (orderType === 'TARGET') {
+    if (isLongPosition) {
+      minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
+    } else {
       maxAllowedPrice = Math.min(maxAllowedPrice, currentLtp);
-    } else if (side === 'SELL') {
+    }
+  } else if (orderType === 'SL' || orderType === 'SLM') {
+    if (isLongPosition) {
+      maxAllowedPrice = Math.min(maxAllowedPrice, currentLtp);
+    } else {
       minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
     }
   }
 
   const formattedLtp = `${currencySymbol}${currentLtp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-  const isLongPosition = effectiveExitMode ? activeSide === 'SELL' : activeSide === 'BUY';
 
   let priceRangeText = '';
   if (orderType === 'TARGET') {
@@ -644,7 +649,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
       // Resolve order_type, trigger_price, stop_loss, target, client_price under the hood
       let resolvedOrderType = orderType;
-      let resolvedClientPrice = currentLtp;
+      let resolvedClientPrice: number | undefined = currentLtp;
       let resolvedTriggerPrice: number | undefined = undefined;
       let resolvedStopLoss: number | undefined = undefined;
       let resolvedTarget: number | undefined = undefined;
@@ -784,7 +789,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         if (orderType === 'SL' || orderType === 'SLM') {
           const trigVal = resolvedTriggerPrice !== undefined ? resolvedTriggerPrice : (resolvedStopLoss !== undefined ? resolvedStopLoss : undefined);
           if (trigVal !== undefined && !isNaN(trigVal)) {
-            const isExitTrade = effectiveExitMode || isExitOrder;
+            const isExitTrade = realExitOrder;
             const isLong = existingPos ? (existingPos.side === 'BUY') : (isExitTrade ? (placeSide === 'SELL') : (placeSide === 'BUY'));
 
             if (isExitTrade) {
@@ -811,7 +816,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
 
       // Resolve reference entry price and position side (Long vs Short)
-      const isExitTrade = effectiveExitMode || isExitOrder;
+      const isExitTrade = realExitOrder;
       const refEntry = (isExitTrade && existingPos) ? Number(existingPos.avg_price) : resolvedClientPrice;
       const isLong = existingPos ? (existingPos.side === 'BUY') : (isExitTrade ? (placeSide === 'SELL') : (placeSide === 'BUY'));
 
