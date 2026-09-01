@@ -167,32 +167,97 @@ async function handleModifyOrder(
       return NextResponse.json({ error: `Cannot modify order with status '${existingOrder.status}'. Only pending orders can be modified.` }, { status: 400 });
     }
 
-    // 2. Prepare update payload
+    // 2. Determine target order type and check for Market transition
+    const targetOrderType = (payload.order_type || existingOrder.order_type || '').toUpperCase();
+    const isChangingToMarket = targetOrderType === 'MARKET';
+
+    let fillPrice: number | null = null;
+    if (isChangingToMarket) {
+      // Resolve live market quote for immediate market execution
+      let baseLtp: number | null = null;
+      let rawBid: number | null = null;
+      let rawAsk: number | null = null;
+
+      if (payload.frontend_ask && Number(payload.frontend_ask) > 0) rawAsk = Number(payload.frontend_ask);
+      if (payload.frontend_bid && Number(payload.frontend_bid) > 0) rawBid = Number(payload.frontend_bid);
+      if (payload.frontend_ltp && Number(payload.frontend_ltp) > 0) baseLtp = Number(payload.frontend_ltp);
+
+      const kiteInst = existingOrder.kite_instrument || existingOrder.symbol || '';
+      const symbol = existingOrder.symbol || '';
+      const segment = existingOrder.segment || '';
+
+      try {
+        if (segment.toUpperCase().includes('CRYPTO') || ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].some(c => symbol.toUpperCase().startsWith(c))) {
+          const { fetchBinanceQuote } = await import('@/lib/datafeed/MarketDataService');
+          const bQuote = await fetchBinanceQuote(symbol);
+          if (bQuote) {
+            baseLtp = bQuote.ltp;
+            rawBid = bQuote.bid;
+            rawAsk = bQuote.ask;
+          }
+        } else if (kiteInst) {
+          const { fetchSpeedQuotes } = await import('@/lib/datafeed/MarketDataService');
+          const quotes = await fetchSpeedQuotes([kiteInst]);
+          if (quotes[kiteInst]) {
+            baseLtp = quotes[kiteInst];
+            rawBid = quotes[`${kiteInst}_bid`] ?? baseLtp;
+            rawAsk = quotes[`${kiteInst}_ask`] ?? baseLtp;
+          }
+        }
+      } catch (quoteErr) {
+        console.warn('[handleModifyOrder] Failed to fetch live market quote, falling back:', quoteErr);
+      }
+
+      if (!baseLtp || baseLtp <= 0) {
+        baseLtp = payload.price || existingOrder.price || existingOrder.trigger_price || existingOrder.ltp_at_entry || 0;
+      }
+
+      const side = existingOrder.side;
+      if (side === 'BUY') {
+        fillPrice = rawAsk && rawAsk > 0 ? rawAsk : baseLtp;
+      } else {
+        fillPrice = rawBid && rawBid > 0 ? rawBid : baseLtp;
+      }
+      fillPrice = Math.round(fillPrice * 100) / 100;
+    }
+
+    // 3. Prepare update payload
     const updateData: any = {
       updated_at: new Date().toISOString(),
     };
 
-    if (payload.price !== undefined && payload.price !== null) {
-      updateData.price = payload.price;
-      updateData.fill_price = payload.price;
+    if (payload.order_type !== undefined) {
+      updateData.order_type = payload.order_type;
     }
-    if (payload.trigger_price !== undefined) {
-      updateData.trigger_price = payload.trigger_price;
+
+    if (isChangingToMarket) {
+      updateData.status = 'EXECUTED';
+      updateData.fill_price = fillPrice;
+      updateData.price = fillPrice;
+      updateData.trigger_price = null; // ATOMICALLY NEUTRALIZE OLD GTT TRIGGER CONDITION
+      updateData.stop_loss = payload.stop_loss !== undefined ? payload.stop_loss : existingOrder.stop_loss;
+      updateData.target = payload.target !== undefined ? payload.target : existingOrder.target;
+    } else {
+      if (payload.price !== undefined && payload.price !== null) {
+        updateData.price = payload.price;
+        updateData.fill_price = payload.price;
+      }
+      if (payload.trigger_price !== undefined) {
+        updateData.trigger_price = payload.trigger_price;
+      }
+      if (payload.stop_loss !== undefined) {
+        updateData.stop_loss = payload.stop_loss;
+      }
+      if (payload.target !== undefined) {
+        updateData.target = payload.target;
+      }
     }
-    if (payload.stop_loss !== undefined) {
-      updateData.stop_loss = payload.stop_loss;
-    }
-    if (payload.target !== undefined) {
-      updateData.target = payload.target;
-    }
+
     if (payload.qty !== undefined && payload.qty > 0) {
       updateData.qty = payload.qty;
     }
     if (payload.lots !== undefined && payload.lots > 0) {
       updateData.lots = payload.lots;
-    }
-    if (payload.order_type !== undefined) {
-      updateData.order_type = payload.order_type;
     }
 
     const { data: updatedOrder, error: updateErr } = await admin
@@ -207,7 +272,19 @@ async function handleModifyOrder(
       return NextResponse.json({ error: updateErr.message || 'Failed to update order' }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, order: updatedOrder });
+    // 4. If transitioning to Market, trigger immediate position creation via process_executed_position RPC
+    if (isChangingToMarket) {
+      const linkedInfo = existingOrder.linked_position_id || existingOrder.info || null;
+      const { error: rpcErr } = await admin.rpc('process_executed_position', {
+        p_order_id: id,
+        p_info: linkedInfo,
+      });
+      if (rpcErr) {
+        console.error(`[handleModifyOrder] Failed process_executed_position RPC for order ${id}:`, rpcErr);
+      }
+    }
+
+    return NextResponse.json({ success: true, order: updatedOrder, executed: isChangingToMarket });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }

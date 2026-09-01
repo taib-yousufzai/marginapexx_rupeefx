@@ -250,7 +250,7 @@ class TradingEngineSimulator {
   modifyOrder(
     orderId: string,
     userId: string,
-    updates: { price?: number; triggerPrice?: number; qty?: number; orderType?: 'LIMIT' | 'SL' | 'SLM' | 'GTT' }
+    updates: { price?: number; triggerPrice?: number; qty?: number; orderType?: 'MARKET' | 'LIMIT' | 'SL' | 'SLM' | 'GTT' }
   ): { success: boolean; order?: Order; error?: string } {
     const order = this.orders.find(o => o.id === orderId && o.user_id === userId);
     if (!order) return { success: false, error: 'Order not found' };
@@ -272,6 +272,49 @@ class TradingEngineSimulator {
     }
     if (updates.orderType !== undefined) {
       order.order_type = updates.orderType;
+    }
+
+    if (updates.orderType === 'MARKET') {
+      order.order_type = 'MARKET';
+      order.status = 'EXECUTED';
+      order.trigger_price = undefined;
+      const fillPrice = updates.price ?? order.client_price ?? order.price ?? 2300;
+      order.fill_price = fillPrice;
+      order.price = fillPrice;
+
+      this.trades.push({
+        id: `trd_${Math.random().toString(36).substring(2, 9)}`,
+        order_id: order.id,
+        qty: order.qty,
+        price: fillPrice,
+      });
+
+      if (order.is_exit) {
+        const pos = this.positions.find(
+          p => p.user_id === order.user_id && p.symbol === order.symbol && p.status === 'open'
+        );
+        if (pos) {
+          if (order.qty >= pos.qty_open) {
+            pos.qty_open = 0;
+            pos.status = 'closed';
+          } else {
+            pos.qty_open -= order.qty;
+          }
+        }
+      } else {
+        this.positions.push({
+          id: `pos_${Math.random().toString(36).substring(2, 9)}`,
+          user_id: order.user_id,
+          symbol: order.symbol,
+          side: order.side,
+          qty_open: order.qty,
+          qty_total: order.qty,
+          entry_price: fillPrice,
+          status: 'open',
+          stop_loss: order.stop_loss,
+          target: order.target,
+        });
+      }
     }
 
     return { success: true, order };
@@ -531,5 +574,79 @@ describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', (
     const invalidModRes = sim.modifyOrder(order.id, userId, { price: 2450 });
     expect(invalidModRes.success).toBe(false);
     expect(invalidModRes.error).toContain('Order cannot be modified. Current status: EXECUTED');
+  });
+
+  it('Test 13: GTT to Market Transition — Modifying pending GTT to MARKET triggers immediate execution, creates position, clears trigger condition, and prevents double execution', () => {
+    const sim = new TradingEngineSimulator();
+    
+    // 1. User creates a pending GTT Buy order (ETH @ 2300, SL 2200, Target 2500)
+    const gttOrder = sim.placePendingOrder({
+      userId,
+      symbol: 'ETHUSDT',
+      side: 'BUY',
+      orderType: 'GTT',
+      qty: 2,
+      price: 2300,
+      triggerPrice: 2300,
+      stopLoss: 2200,
+      target: 2500,
+    });
+
+    expect(gttOrder.status).toBe('PENDING');
+    expect(gttOrder.order_type).toBe('GTT');
+    expect(sim.positions.length).toBe(0);
+
+    // 2. User modifies GTT -> MARKET
+    const modRes = sim.modifyOrder(gttOrder.id, userId, {
+      orderType: 'MARKET',
+      price: 2350, // Current market fill price
+    });
+
+    expect(modRes.success).toBe(true);
+    expect(gttOrder.status).toBe('EXECUTED');
+    expect(gttOrder.order_type).toBe('MARKET');
+    expect(gttOrder.trigger_price).toBeUndefined(); // Trigger condition cleared!
+    expect(gttOrder.fill_price).toBe(2350);
+
+    // 3. Verify position was created immediately
+    expect(sim.positions.length).toBe(1);
+    const pos = sim.positions[0];
+    expect(pos.status).toBe('open');
+    expect(pos.entry_price).toBe(2350);
+    expect(pos.qty_open).toBe(2);
+    expect(pos.stop_loss).toBe(2200);
+    expect(pos.target).toBe(2500);
+
+    // 4. Verify background matching loop DOES NOT re-trigger the old GTT condition if price hits 2300
+    const triggeredLater = sim.evaluatePendingOrders('ETHUSDT', 2300);
+    expect(triggeredLater.length).toBe(0);
+    expect(sim.positions.length).toBe(1); // STILL exactly 1 position, no duplicate position created!
+  });
+
+  it('Test 14: GTT to Market Transition with SL/Target — Modifying GTT to MARKET preserves SL and Target exit conditions on the newly opened position', () => {
+    const sim = new TradingEngineSimulator();
+    
+    const gttOrder = sim.placePendingOrder({
+      userId,
+      symbol: 'NSE:INFY',
+      side: 'BUY',
+      orderType: 'GTT',
+      qty: 50,
+      price: 1500,
+      triggerPrice: 1500,
+      stopLoss: 1450,
+      target: 1600,
+    });
+
+    const modRes = sim.modifyOrder(gttOrder.id, userId, {
+      orderType: 'MARKET',
+      price: 1510,
+    });
+
+    expect(modRes.success).toBe(true);
+    expect(sim.positions.length).toBe(1);
+    const activePos = sim.positions[0];
+    expect(activePos.stop_loss).toBe(1450);
+    expect(activePos.target).toBe(1600);
   });
 });
