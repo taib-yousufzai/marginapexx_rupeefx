@@ -63,7 +63,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       setToastMsg(String(msg));
       setToastVisible(true);
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-      toastTimerRef.current = setTimeout(() => setToastVisible(false), 4000);
+      toastTimerRef.current = setTimeout(() => setToastVisible(false), 1800);
     };
 
     const onOrderError = (e: Event) => {
@@ -108,6 +108,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       {/* Global toast for async order failure messages */}
       <div
         className={`global-toast${toastVisible ? ' show' : ''}`}
+        onClick={() => setToastVisible(false)}
         style={{
           position: 'fixed',
           bottom: 90,
@@ -122,7 +123,7 @@ export default function ClientShell({ children }: { children: React.ReactNode })
           zIndex: 200000,
           opacity: toastVisible ? 1 : 0,
           transition: 'opacity 0.3s, transform 0.3s',
-          pointerEvents: 'none',
+          cursor: 'pointer',
           whiteSpace: 'nowrap',
           maxWidth: '90vw',
           overflow: 'hidden',

@@ -80,3 +80,16 @@ export function isContractExpired(kiteSymbol: string): boolean {
 
   return false;
 }
+
+const MONTH_CODES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+/**
+ * Generates the current active monthly futures symbol for a given prefix and base.
+ * e.g. prefix="CDS", base="USDINR" → "CDS:USDINR26SEPFUT" (for Sep 2026)
+ */
+export function getCurrentFuturesSymbol(prefix: string, base: string, date = new Date()): string {
+  const yy = String(date.getFullYear()).slice(-2);
+  const mmm = MONTH_CODES[date.getMonth()];
+  return `${prefix}:${base}${yy}${mmm}FUT`;
+}
+

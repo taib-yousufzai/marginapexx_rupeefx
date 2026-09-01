@@ -7,7 +7,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { getSession, getRole } from '@/lib/auth';
 import { api, ApiError } from '@/lib/api';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
-import { isContractExpired } from '@/lib/contractExpiry';
+import { isContractExpired, getCurrentFuturesSymbol } from '@/lib/contractExpiry';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 
 import AnimatedLoader from '@/components/AnimatedLoader';
@@ -16,29 +16,43 @@ import { getSavedTheme, applyTheme, cycleTheme, Theme } from '@/lib/theme';
 import './page.css';
 
 // --- Kite instrument keys for the market overview ---
-const KITE_INSTRUMENTS_ROW1 = [
+const getInitialMarketRow1 = () => [
   'NSE:NIFTY 50',
   'BSE:SENSEX',
   'NSE:NIFTY BANK',
-  'CDS:USDINR26JULFUT',
-];
-const KITE_INSTRUMENTS_ROW2 = [
-  'MCX:CRUDEOIL26AUGFUT',
-  'MCX:GOLD26OCTFUT',
-  'MCX:SILVER26SEPFUT',
-  'MCX:NATURALGAS26AUGFUT',
+  getCurrentFuturesSymbol('CDS', 'USDINR'),
 ];
 
-const KITE_DISPLAY_MAP: Record<string, { name: string; icon: string }> = {
-  'NSE:NIFTY 50': { name: 'NIFTY 50', icon: 'fas fa-chart-line' },
-  'BSE:SENSEX': { name: 'SENSEX', icon: 'fas fa-chart-area' },
-  'NSE:NIFTY BANK': { name: 'BANK NIFTY', icon: 'fas fa-building' },
-  'CDS:USDINR26JULFUT': { name: 'USD/INR', icon: 'fas fa-dollar-sign' },
-  'MCX:CRUDEOIL26AUGFUT': { name: 'CRUDE OIL', icon: 'fas fa-oil-can' },
-  'MCX:GOLD26OCTFUT': { name: 'GOLD', icon: 'fas fa-coins' },
-  'MCX:SILVER26SEPFUT': { name: 'SILVER', icon: 'fas fa-gem' },
-  'MCX:NATURALGAS26AUGFUT': { name: 'NAT GAS', icon: 'fas fa-fire' },
+const getInitialMarketRow2 = () => [
+  getCurrentFuturesSymbol('MCX', 'CRUDEOIL'),
+  getCurrentFuturesSymbol('MCX', 'GOLD'),
+  getCurrentFuturesSymbol('MCX', 'SILVER'),
+  getCurrentFuturesSymbol('MCX', 'NATURALGAS'),
+];
+
+const BASE_DISPLAY_MAP: Record<string, { name: string; icon: string }> = {
+  'NIFTY 50': { name: 'NIFTY 50', icon: 'fas fa-chart-line' },
+  'SENSEX': { name: 'SENSEX', icon: 'fas fa-chart-area' },
+  'NIFTY BANK': { name: 'BANK NIFTY', icon: 'fas fa-building' },
+  'USDINR': { name: 'USD/INR', icon: 'fas fa-dollar-sign' },
+  'CRUDEOIL': { name: 'CRUDE OIL', icon: 'fas fa-oil-can' },
+  'GOLD': { name: 'GOLD', icon: 'fas fa-coins' },
+  'SILVER': { name: 'SILVER', icon: 'fas fa-gem' },
+  'NATURALGAS': { name: 'NAT GAS', icon: 'fas fa-fire' },
 };
+
+function getDisplayInfo(key: string): { name: string; icon: string } {
+  const upper = key.toUpperCase();
+  if (upper.includes('NIFTY 50')) return BASE_DISPLAY_MAP['NIFTY 50'];
+  if (upper.includes('SENSEX')) return BASE_DISPLAY_MAP['SENSEX'];
+  if (upper.includes('NIFTY BANK')) return BASE_DISPLAY_MAP['NIFTY BANK'];
+  if (upper.includes('USDINR')) return BASE_DISPLAY_MAP['USDINR'];
+  if (upper.includes('CRUDEOIL')) return BASE_DISPLAY_MAP['CRUDEOIL'];
+  if (upper.includes('GOLD')) return BASE_DISPLAY_MAP['GOLD'];
+  if (upper.includes('SILVER')) return BASE_DISPLAY_MAP['SILVER'];
+  if (upper.includes('NATURALGAS')) return BASE_DISPLAY_MAP['NATURALGAS'];
+  return { name: key, icon: 'fas fa-chart-line' };
+}
 
 type MarketItem = { name: string; price: number; change: number; changeAmt?: number; type: string; icon: string };
 
@@ -332,63 +346,65 @@ export default function Page() {
     }
   }, [isNotifDrawerOpen, notifications]);
 
-  const [marketRow1Keys, setMarketRow1Keys] = useState<string[]>(KITE_INSTRUMENTS_ROW1);
-  const [marketRow2Keys, setMarketRow2Keys] = useState<string[]>(KITE_INSTRUMENTS_ROW2);
-  const [displayMap, setDisplayMap] = useState<Record<string, { name: string; icon: string }>>(KITE_DISPLAY_MAP);
+  const [marketRow1Keys, setMarketRow1Keys] = useState<string[]>(getInitialMarketRow1);
+  const [marketRow2Keys, setMarketRow2Keys] = useState<string[]>(getInitialMarketRow2);
+  const [isResolvingContracts, setIsResolvingContracts] = useState<boolean>(true);
 
   useEffect(() => {
     async function resolveExpiredContracts() {
-      const bases = [
-        { name: 'USDINR', prefix: 'CDS', type: ['FUT'] },
-        { name: 'CRUDEOIL', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] },
-        { name: 'GOLD', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] },
-        { name: 'SILVER', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] },
-        { name: 'NATURALGAS', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] }
-      ];
+      setIsResolvingContracts(true);
+      try {
+        const bases = [
+          { name: 'USDINR', prefix: 'CDS', type: ['FUT'] },
+          { name: 'CRUDEOIL', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] },
+          { name: 'GOLD', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] },
+          { name: 'SILVER', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] },
+          { name: 'NATURALGAS', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] }
+        ];
 
-      const newMap = { ...KITE_DISPLAY_MAP };
-      const newRow1 = [...KITE_INSTRUMENTS_ROW1];
-      const newRow2 = [...KITE_INSTRUMENTS_ROW2];
-      let changed = false;
+        const initialR1 = getInitialMarketRow1();
+        const initialR2 = getInitialMarketRow2();
+        const newRow1 = [...initialR1];
+        const newRow2 = [...initialR2];
+        let changed = false;
 
-      for (const base of bases) {
-        // If the base is in row1 or row2 and expired (or we just want to forcefully fetch the active one)
-        const row1Idx = newRow1.findIndex(k => k.includes(base.name));
-        const row2Idx = newRow2.findIndex(k => k.includes(base.name));
-        
-        if (row1Idx !== -1 || row2Idx !== -1) {
-          const { data } = await supabase
-            .from('instruments')
-            .select('tradingsymbol')
-            .eq('name', base.name)
-            .in('instrument_type', base.type)
-            .gte('expiry', new Date().toISOString().split('T')[0])
-            .order('expiry', { ascending: true })
-            .limit(1)
-            .maybeSingle();
+        for (const base of bases) {
+          const row1Idx = newRow1.findIndex(k => k.includes(base.name));
+          const row2Idx = newRow2.findIndex(k => k.includes(base.name));
+          
+          if (row1Idx !== -1 || row2Idx !== -1) {
+            const { data } = await supabase
+              .from('instruments')
+              .select('tradingsymbol')
+              .eq('name', base.name)
+              .in('instrument_type', base.type)
+              .gte('expiry', new Date().toISOString().split('T')[0])
+              .order('expiry', { ascending: true })
+              .limit(1)
+              .maybeSingle();
 
-          if (data?.tradingsymbol) {
-            const resolvedKey = `${base.prefix}:${data.tradingsymbol}`;
-            if (row1Idx !== -1 && newRow1[row1Idx] !== resolvedKey) {
-              const oldKey = newRow1[row1Idx];
-              newRow1[row1Idx] = resolvedKey;
-              newMap[resolvedKey] = newMap[oldKey];
-              changed = true;
-            }
-            if (row2Idx !== -1 && newRow2[row2Idx] !== resolvedKey) {
-              const oldKey = newRow2[row2Idx];
-              newRow2[row2Idx] = resolvedKey;
-              newMap[resolvedKey] = newMap[oldKey];
-              changed = true;
+            if (data?.tradingsymbol) {
+              const resolvedKey = `${base.prefix}:${data.tradingsymbol}`;
+              if (row1Idx !== -1 && newRow1[row1Idx] !== resolvedKey) {
+                newRow1[row1Idx] = resolvedKey;
+                changed = true;
+              }
+              if (row2Idx !== -1 && newRow2[row2Idx] !== resolvedKey) {
+                newRow2[row2Idx] = resolvedKey;
+                changed = true;
+              }
             }
           }
         }
-      }
 
-      if (changed) {
-        setDisplayMap(newMap);
-        setMarketRow1Keys(newRow1);
-        setMarketRow2Keys(newRow2);
+        if (changed) {
+          setMarketRow1Keys(newRow1);
+          setMarketRow2Keys(newRow2);
+        }
+      } catch (err) {
+        console.error('Error resolving expired contracts:', err);
+      } finally {
+        setIsResolvingContracts(false);
       }
     }
 
@@ -410,8 +426,8 @@ export default function Page() {
   const buildRow = (instruments: string[]): (MarketItem & { expired?: boolean })[] => {
     return instruments.map((key) => {
       const q = quotes[key];
-      const display = displayMap[key] ?? { name: key, icon: 'fas fa-chart-line' };
-      const expired = isContractExpired(key);
+      const display = getDisplayInfo(key);
+      const expired = !isResolvingContracts && isContractExpired(key);
       if (expired) {
         // Don't show stale 0/0 values — surface expiry to the user instead
         return { name: display.name, price: 0, change: 0, changeAmt: 0, type: 'positive', icon: display.icon, expired: true };

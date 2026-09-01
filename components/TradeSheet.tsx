@@ -527,14 +527,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     setToast(msg);
     setOrderErrorMsg(null);
     window.dispatchEvent(new CustomEvent('toast_msg', { detail: msg }));
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), 1800);
   };
 
   const showOrderError = (msg: string) => {
     setToast(msg);
     setOrderErrorMsg(msg);
     window.dispatchEvent(new CustomEvent('order_error', { detail: msg }));
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => setToast(null), 2500);
   };
 
 
@@ -1922,7 +1922,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         )}
       </div>
 
-      <div className={`ts2-toast${toast ? ' show' : ''}`}>{toast}</div>
+      <div className={`ts2-toast${toast ? ' show' : ''}`} onClick={() => setToast(null)} style={{ cursor: 'pointer' }}>{toast}</div>
     </>
   );
 };

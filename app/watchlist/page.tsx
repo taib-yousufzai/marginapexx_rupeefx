@@ -15,6 +15,7 @@ import dynamic from 'next/dynamic';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { mapSegmentToDbSegment, mapSymbolToSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import { isForexSymbol } from '@/lib/datafeed/symbolResolver';
+import { getCurrentFuturesSymbol } from '@/lib/contractExpiry';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { generateRealisticFallbackQuote } from '@/lib/quoteFallback';
@@ -102,20 +103,20 @@ const DEFAULT_FOREX_ITEMS: WatchlistItem[] = [
   { name: 'USD/CAD', symbol: 'USDCAD', kiteSymbol: '', comexSymbol: 'USDCAD=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
   { name: 'AUD/USD', symbol: 'AUDUSD', kiteSymbol: '', comexSymbol: 'AUDUSD=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
   { name: 'NZD/USD', symbol: 'NZDUSD', kiteSymbol: '', comexSymbol: 'NZDUSD=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'USD/INR', symbol: 'CDS:USDINR26AUGFUT', kiteSymbol: 'CDS:USDINR26AUGFUT', price: 0, change: '0%', segment: 'CDS - Futures', contractDate: 'Aug 2026', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'EUR/INR', symbol: 'CDS:EURINR26AUGFUT', kiteSymbol: 'CDS:EURINR26AUGFUT', price: 0, change: '0%', segment: 'CDS - Futures', contractDate: 'Aug 2026', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'GBP/INR', symbol: 'CDS:GBPINR26AUGFUT', kiteSymbol: 'CDS:GBPINR26AUGFUT', price: 0, change: '0%', segment: 'CDS - Futures', contractDate: 'Aug 2026', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'JPY/INR', symbol: 'CDS:JPYINR26AUGFUT', kiteSymbol: 'CDS:JPYINR26AUGFUT', price: 0, change: '0%', segment: 'CDS - Futures', contractDate: 'Aug 2026', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
+  { name: 'USD/INR', symbol: getCurrentFuturesSymbol('CDS', 'USDINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'USDINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
+  { name: 'EUR/INR', symbol: getCurrentFuturesSymbol('CDS', 'EURINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'EURINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
+  { name: 'GBP/INR', symbol: getCurrentFuturesSymbol('CDS', 'GBPINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'GBPINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
+  { name: 'JPY/INR', symbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
 ];
 
 // ── Default COMEX Items (MCX ₹ via Kite + COMEX $ via Yahoo proxy) ──────────────
 // Rows with both kiteSymbol + comexSymbol show a ₹⇄$ toggle pill
 
 const DEFAULT_COMEX_ITEMS: WatchlistItem[] = [
-  { name: 'GOLD', symbol: 'MCX:GOLD26OCTFUT', kiteSymbol: 'MCX:GOLD26OCTFUT', comexSymbol: 'GC=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: 'Oct 2026', open: 0, high: 0, low: 0, close: 0 },
-  { name: 'SILVER', symbol: 'MCX:SILVER26SEPFUT', kiteSymbol: 'MCX:SILVER26SEPFUT', comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: 'Sep 2026', open: 0, high: 0, low: 0, close: 0 },
-  { name: 'CRUDEOIL', symbol: 'MCX:CRUDEOIL26AUGFUT', kiteSymbol: 'MCX:CRUDEOIL26AUGFUT', comexSymbol: 'CL=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: 'Aug 2026', open: 0, high: 0, low: 0, close: 0 },
-  { name: 'COPPER', symbol: 'MCX:COPPER26AUGFUT', kiteSymbol: 'MCX:COPPER26AUGFUT', comexSymbol: 'HG=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: 'Aug 2026', open: 0, high: 0, low: 0, close: 0 },
+  { name: 'GOLD', symbol: getCurrentFuturesSymbol('MCX', 'GOLD'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'GOLD'), comexSymbol: 'GC=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
+  { name: 'SILVER', symbol: getCurrentFuturesSymbol('MCX', 'SILVER'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'SILVER'), comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
+  { name: 'CRUDEOIL', symbol: getCurrentFuturesSymbol('MCX', 'CRUDEOIL'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'CRUDEOIL'), comexSymbol: 'CL=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
+  { name: 'COPPER', symbol: getCurrentFuturesSymbol('MCX', 'COPPER'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'COPPER'), comexSymbol: 'HG=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
 ];
 
 const DEFAULT_US_ITEMS: WatchlistItem[] = [
@@ -2667,6 +2668,7 @@ function WatchlistContent() {
 
           {/* React-driven order toast */}
           <div
+            onClick={() => setToast(t => ({ ...t, visible: false }))}
             style={{
               position: 'fixed',
               bottom: '90px',
@@ -2688,6 +2690,7 @@ function WatchlistContent() {
               opacity: toast.visible ? 1 : 0,
               visibility: toast.visible ? 'visible' : 'hidden',
               transition: 'opacity 0.2s ease, visibility 0.2s ease',
+              cursor: 'pointer',
             }}
           >
             {toast.msg}

@@ -326,7 +326,7 @@ export default function PositionPage() {
 
   const showToast = (msg: string) => {
     setToast(msg);
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), 1800);
   };
 
   const toggleProductType = async (pos: EnrichedPosition) => {
@@ -1659,7 +1659,7 @@ export default function PositionPage() {
               )}
             </div>
 
-            <div className={`pos-toast${toast ? ' show' : ''}`}>
+            <div className={`pos-toast${toast ? ' show' : ''}`} onClick={() => setToast(null)} style={{ cursor: 'pointer' }}>
               <i className="fas fa-circle-info" />
               <span>{toast}</span>
             </div>
