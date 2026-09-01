@@ -225,49 +225,55 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
     'FOREX': 'USDINR',
   };
 
+  const fetchLiveResults = async (q: string, tab: string, signal: AbortSignal) => {
+    try {
+      const url = tab === 'All'
+        ? `/api/market/instruments/search?q=${encodeURIComponent(q)}`
+        : `/api/market/instruments/search?q=${encodeURIComponent(q)}&tab=${encodeURIComponent(tab)}`;
+      const data = await api.get<any[]>(url, { signal });
+      return Array.isArray(data) ? data : [];
+    } catch (err: any) {
+      if (err.name !== 'AbortError') console.error('Chart search API error:', err);
+      return [];
+    }
+  };
+
   useEffect(() => {
     setIsSearching(true);
+    setSearchResults([]);
     const abortController = new AbortController();
 
     const timer = setTimeout(async () => {
-      const actualQuery = normalizedQuery.length >= 1 ? normalizedQuery : (SEGMENT_DEFAULTS[activeSearchTab] || 'NIFTY');
-      const qLower = actualQuery.toLowerCase();
-
-      const localMatches = localScripts.filter(s => {
-        const match = wordStartMatch(s.name, qLower) || wordStartMatch(s.symbol, qLower);
-        if (!match) return false;
-        if (activeSearchTab === 'All') return true;
-        return getTabForItem(s) === activeSearchTab;
-      });
-
-      let liveMatches: any[] = [];
       try {
-        const url = activeSearchTab === 'All'
-          ? `/api/market/instruments/search?q=${encodeURIComponent(actualQuery)}`
-          : `/api/market/instruments/search?q=${encodeURIComponent(actualQuery)}&tab=${encodeURIComponent(activeSearchTab)}`;
-        const res = await fetch(url, { signal: abortController.signal });
-        if (res.ok) {
-          const data = await res.json();
-          liveMatches = Array.isArray(data) ? data : [];
+        const actualQuery = normalizedQuery.length >= 1 ? normalizedQuery : (SEGMENT_DEFAULTS[activeSearchTab] || 'NIFTY');
+        const qLower = actualQuery.toLowerCase();
+
+        const localMatches = localScripts.filter(s => {
+          const match = wordStartMatch(s.name, qLower) || wordStartMatch(s.symbol, qLower);
+          if (!match) return false;
+          if (activeSearchTab === 'All') return true;
+          return getTabForItem(s) === activeSearchTab;
+        });
+
+        const liveMatches = await fetchLiveResults(actualQuery, activeSearchTab, abortController.signal);
+        if (abortController.signal.aborted) return;
+
+        const merged = [...liveMatches];
+        const liveSymbols = new Set(liveMatches.map((r: any) => r.symbol));
+
+        for (const local of localMatches) {
+          if (!liveSymbols.has(local.symbol)) {
+            merged.push(local);
+            liveSymbols.add(local.symbol);
+          }
         }
-      } catch (err: any) {
-        if (err.name !== 'AbortError') console.error(err);
-      }
 
-      if (abortController.signal.aborted) return;
-
-      const merged = [...liveMatches];
-      const liveSymbols = new Set(liveMatches.map((r: any) => r.symbol));
-
-      for (const local of localMatches) {
-        if (!liveSymbols.has(local.symbol)) {
-          merged.push(local);
-          liveSymbols.add(local.symbol);
+        setSearchResults(merged);
+      } finally {
+        if (!abortController.signal.aborted) {
+          setIsSearching(false);
         }
       }
-
-      setSearchResults(merged);
-      setIsSearching(false);
     }, 180);
 
     return () => {
