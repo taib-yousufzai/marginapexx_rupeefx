@@ -1462,10 +1462,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
         .ts2-toast {
           position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(20px);
-          background: #1F2937; color: #fff; padding: 10px 20px; border-radius: 30px;
+          background: #181C28; color: #F8FAFC; padding: 10px 22px; border-radius: 30px;
+          border: 1px solid rgba(255, 255, 255, 0.14);
           font-size: 0.82rem; font-weight: 600; z-index: 10002;
-          opacity: 0; transition: opacity 0.3s, transform 0.3s; pointer-events: none;
-          white-space: nowrap;
+          opacity: 0; transition: opacity 0.3s, transform 0.3s;
+          white-space: nowrap; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+          backdrop-filter: blur(10px);
         }
         .ts2-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 

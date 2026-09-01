@@ -114,8 +114,9 @@ export default function ClientShell({ children }: { children: React.ReactNode })
           bottom: 90,
           left: '50%',
           transform: `translateX(-50%) translateY(${toastVisible ? 0 : 20}px)`,
-          background: '#B91C1C',
-          color: '#fff',
+          background: '#181C28',
+          border: '1px solid rgba(255, 255, 255, 0.14)',
+          color: '#F8FAFC',
           padding: '10px 22px',
           borderRadius: 30,
           fontSize: '0.84rem',
@@ -128,7 +129,8 @@ export default function ClientShell({ children }: { children: React.ReactNode })
           maxWidth: '90vw',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
-          boxShadow: '0 4px 16px rgba(185,28,28,0.4)',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
+          backdropFilter: 'blur(10px)',
         }}
       >
         {toastMsg}

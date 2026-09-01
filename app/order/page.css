@@ -445,10 +445,12 @@
   bottom: 1.5rem;
   left: 50%;
   transform: translateX(-50%) scale(0.9);
-  background: rgba(31, 41, 55, 0.95);
-  color: #FFFFFF;
+  background: #181C28;
+  color: #F8FAFC;
   padding: 0.5rem 1.125rem;
   border-radius: 2.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   font-size: 0.75rem;
   font-weight: 500;
   display: flex;
