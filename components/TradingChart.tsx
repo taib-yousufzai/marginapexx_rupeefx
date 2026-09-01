@@ -1590,17 +1590,18 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const gttCharge = (segSetting ? computeCharge(
     segSetting.gtt_commission_type || 'Per Trade',
     segSetting.gtt_commission_value ?? 10
-  ) : 0) * multiplier;
+  ) : computeCharge('Per Trade', 15));
 
   const carryCharge = (segSetting ? computeCharge(
     segSetting.carry_commission_type || segSetting.commission_type || 'Per Crore',
-    segSetting.carry_commission_value ?? segSetting.commission_value ?? 0
-  ) : 0) * multiplier;
+    segSetting.carry_commission_value ?? segSetting.commission_value ?? fallbackCommVal
+  ) : computeCharge(fallbackCommType, fallbackCommVal)) * multiplier;
 
-  const totalBrokerage = (
-    intradayCharge +
-    (orderCarry === 'carry' ? carryCharge : 0) +
-    (orderType === 'gtt' ? gttCharge : 0)
+  const activeCarryCharge = (orderCarry === 'carry' || orderType === 'gtt') ? carryCharge : 0;
+  const activeGttCharge = orderType === 'gtt' ? gttCharge : 0;
+
+  const totalBrokerage = isExitFlow ? 0 : (
+    intradayCharge + activeCarryCharge + activeGttCharge
   );
   const marginPortion = calculateMarginPortion({
     segment: dbSeg,
@@ -2734,15 +2735,15 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                             </span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Carry Charges</span>
-                            <span style={{ color: (orderCarry === 'carry' || orderType === 'gtt') ? 'var(--green)' : 'var(--text-muted)', fontWeight: 700 }}>
-                              ₹{(orderCarry === 'carry' || orderType === 'gtt' ? carryCharge : 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            <span style={{ color: 'var(--text-muted)' }}>Carry Charges <span style={{ opacity: 0.7 }}>(+ Intraday)</span></span>
+                            <span style={{ color: activeCarryCharge > 0 ? 'var(--green)' : 'var(--text-muted)', fontWeight: 700 }}>
+                              ₹{activeCarryCharge.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>GTT Charges</span>
-                            <span style={{ color: orderType === 'gtt' ? 'var(--green)' : 'var(--text-muted)', fontWeight: 700 }}>
-                              ₹{(orderType === 'gtt' ? gttCharge : 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            <span style={{ color: 'var(--text-muted)' }}>GTT Charges <span style={{ opacity: 0.7 }}>(+ Carry + Intraday)</span></span>
+                            <span style={{ color: activeGttCharge > 0 ? 'var(--green)' : 'var(--text-muted)', fontWeight: 700 }}>
+                              ₹{activeGttCharge.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </span>
                           </div>
                         </div>

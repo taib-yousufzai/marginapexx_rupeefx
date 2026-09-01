@@ -364,32 +364,37 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   ) : (orderType === 'GTT' ? computeCharge('Per Trade', 15) : 0));
 
   // Brokerage model (matches TradeEngine):
-  //   INTRADAY open: entry + exit charged upfront = rawIntradayCharge Ã— 2
-  //   CARRY open:    entry + exit + carry conversion = rawIntradayCharge Ã— 2 + rawCarryCharge
+  //   INTRADAY open: entry + exit charged upfront = rawIntradayCharge * 2
+  //   CARRY open:    entry + exit + carry conversion = (rawIntradayCharge * 2) + (rawCarryCharge * 2)
+  //   GTT open:      carry + intraday + GTT fee = (rawIntradayCharge * 2) + (rawCarryCharge * 2) + gttCharge
   //   Exit order:    0 (already collected at open)
-  //   GTT:           shows both legs breakdown
+
+  const intradayLegCharge = rawIntradayCharge * multiplier;
+  const carryLegCharge = rawCarryCharge * multiplier;
 
   let displayIntraday = 0;
   let displayCarry = 0;
+  let displayGtt = 0;
 
   if (isExitTrade) {
-    // Exit: show single leg exit brokerage for UI reference (already collected upfront at open)
-    displayIntraday = targetPT === 'CARRY' ? 0 : rawIntradayCharge;
-    displayCarry = targetPT === 'CARRY' ? rawCarryCharge : 0;
+    displayIntraday = intradayLegCharge;
+    displayCarry = (targetPT === 'CARRY' || orderType === 'GTT') ? carryLegCharge : 0;
+    displayGtt = orderType === 'GTT' ? gttCharge : 0;
   } else if (orderType === 'GTT') {
-    displayIntraday = rawIntradayCharge;
-    displayCarry = rawCarryCharge;
+    displayIntraday = intradayLegCharge;
+    displayCarry = carryLegCharge;
+    displayGtt = gttCharge;
   } else if (targetPT === 'CARRY') {
-    // CARRY open: only carry conversion brokerage is shown
-    displayIntraday = 0;
-    displayCarry = rawCarryCharge;
+    displayIntraday = intradayLegCharge;
+    displayCarry = carryLegCharge;
+    displayGtt = 0;
   } else {
-    // INTRADAY open: show entry brokerage only for UI
-    displayIntraday = rawIntradayCharge;
+    displayIntraday = intradayLegCharge;
     displayCarry = 0;
+    displayGtt = 0;
   }
 
-  const calculatedBrokerage = displayIntraday + displayCarry + gttCharge;
+  const calculatedBrokerage = isExitTrade ? 0 : (displayIntraday + displayCarry + displayGtt);
 
   const intradayType = segSetting?.intraday_type ?? 'Multiplier';
   const holdingType = segSetting?.holding_type ?? 'Multiplier';
@@ -804,14 +809,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           }
         } else {
           // Entry stop loss order:
-          // - BUY SL/SLM entry: breakout buy above market price
-          // - SELL SL/SLM entry: breakout sell below market price
-          if (placeSide === 'BUY' && trigVal <= currentLtp) {
-            showOrderError('Trigger price must be above the current market price for stop buy.');
+          // - BUY SL/SLM entry: Stop Loss trigger must be below current market price
+          // - SELL SL/SLM entry: Stop Loss trigger must be above current market price
+          if (placeSide === 'BUY' && trigVal >= currentLtp) {
+            showOrderError('Stop loss trigger price must be lower than the current market price.');
             return;
           }
-          if (placeSide === 'SELL' && trigVal >= currentLtp) {
-            showOrderError('Trigger price must be below the current market price for stop sell.');
+          if (placeSide === 'SELL' && trigVal <= currentLtp) {
+            showOrderError('Stop loss trigger price must be higher than the current market price.');
             return;
           }
         }
@@ -1855,22 +1860,22 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                     <>
                       <div className="ts2-margin-row" style={{ paddingTop: '8px' }}>
                         <span className="ts2-ml">
-                          Intraday Carry
+                          Intraday Brokerage
                         </span>
                         <span className="ts2-mv" style={displayIntraday > 0 ? {} : { opacity: 0.4 }}>
                           {currencySymbol} {displayIntraday.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="ts2-margin-row">
-                        <span className="ts2-ml">Carry Charges</span>
+                        <span className="ts2-ml">Carry Charges <span style={{ fontSize: '0.65rem', color: '#9CA3AF', fontWeight: 500 }}>(+ Intraday)</span></span>
                         <span className="ts2-mv" style={displayCarry > 0 ? { color: (activeSide === 'SELL' || exitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
                           {currencySymbol} {displayCarry.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="ts2-margin-row">
-                        <span className="ts2-ml">GTT Charges</span>
-                        <span className="ts2-mv" style={orderType === 'GTT' ? { color: (activeSide === 'SELL' || exitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
-                          {currencySymbol} {(orderType === 'GTT' ? gttCharge : 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <span className="ts2-ml">GTT Charges <span style={{ fontSize: '0.65rem', color: '#9CA3AF', fontWeight: 500 }}>(+ Carry + Intraday)</span></span>
+                        <span className="ts2-mv" style={displayGtt > 0 ? { color: (activeSide === 'SELL' || exitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
+                          {currencySymbol} {displayGtt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                     </>

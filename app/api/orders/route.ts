@@ -21,7 +21,7 @@ import type {
   PlaceOrderResponse,
   MyOrder,
 } from '@/lib/types/order';
-import { calculateSingleLegCharge } from '@/lib/trading/BrokerageCalculator';
+import { calculateSingleLegCharge, calculateOrderBrokerage } from '@/lib/trading/BrokerageCalculator';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 
@@ -757,15 +757,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     let expectedBrokerage = 0;
     if (!is_exit) {
-      const isCustomCalc = segSetting.use_custom_calc;
-      if (dbSegment === 'CRYPTO' && isCustomCalc) {
-        expectedBrokerage = 0;
-      } else {
-        const commType = segSetting.commission_type || 'Per Crore';
-        const commVal  = Number(segSetting.commission_value ?? 0);
-        const singleLeg = calculateSingleLegCharge({ exposure, lots: newOrderLots, commissionType: commType, commissionValue: commVal });
-        expectedBrokerage = Math.round(singleLeg * 2 * 100) / 100;
-      }
+      const brokerageRes = calculateOrderBrokerage({
+        exposure,
+        lots: newOrderLots,
+        productType: targetProductType,
+        orderType: rpcOrderType,
+        isExit: false,
+        segSetting,
+        dbSegment,
+      });
+      expectedBrokerage = brokerageRes.totalBrokerage;
     }
 
     if (balance < (requiredMargin + expectedBrokerage) && !is_exit) {
@@ -816,18 +817,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         } else {
           if (order_type === 'SLM') {
-            if (side === 'BUY' && trigPrice <= baseLtp) {
-              return NextResponse.json({ error: 'Trigger price must be above the current market price for stop buy.' }, { status: 400 });
+            if (side === 'BUY' && trigPrice >= baseLtp) {
+              return NextResponse.json({ error: 'Stop loss trigger price must be lower than the current market price for buying.' }, { status: 400 });
             }
-            if (side === 'SELL' && trigPrice >= baseLtp) {
-              return NextResponse.json({ error: 'Trigger price must be below the current market price for stop sell.' }, { status: 400 });
+            if (side === 'SELL' && trigPrice <= baseLtp) {
+              return NextResponse.json({ error: 'Stop loss trigger price must be higher than the current market price for selling.' }, { status: 400 });
             }
           } else { // SL order type
-            if (side === 'BUY' && trigPrice <= baseLtp) {
-              return NextResponse.json({ error: 'Trigger price must be above the current market price for stop limit buy.' }, { status: 400 });
+            if (side === 'BUY' && trigPrice >= baseLtp) {
+              return NextResponse.json({ error: 'Stop loss trigger price must be lower than the current market price for buying.' }, { status: 400 });
             }
-            if (side === 'SELL' && trigPrice >= baseLtp) {
-              return NextResponse.json({ error: 'Trigger price must be below the current market price for stop limit sell.' }, { status: 400 });
+            if (side === 'SELL' && trigPrice <= baseLtp) {
+              return NextResponse.json({ error: 'Stop loss trigger price must be higher than the current market price for selling.' }, { status: 400 });
             }
           }
         }

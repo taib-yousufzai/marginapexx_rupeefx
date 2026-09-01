@@ -52,6 +52,118 @@ export function calculateSingleLegCharge({
   return exposure * 0.001;
 }
 
+// ─── Order Brokerage Aggregator (Intraday + Carry + GTT) ───────────────────
+
+export interface CalculateOrderBrokerageParams {
+  exposure: number;
+  lots: number;
+  productType: 'INTRADAY' | 'CARRY' | string;
+  orderType: 'MARKET' | 'LIMIT' | 'SL' | 'SLM' | 'GTT' | string;
+  isExit?: boolean;
+  segSetting?: {
+    commission_type?: string | null;
+    commission_value?: number | null;
+    intraday_commission_type?: string | null;
+    intraday_commission_value?: number | null;
+    carry_commission_type?: string | null;
+    carry_commission_value?: number | null;
+    gtt_commission_type?: string | null;
+    gtt_commission_value?: number | null;
+    use_custom_calc?: boolean | null;
+  } | null;
+  dbSegment?: string;
+  fallbackCommType?: string;
+  fallbackCommVal?: number;
+}
+
+export interface OrderBrokerageResult {
+  intradayCharge: number;
+  carryCharge: number;
+  gttCharge: number;
+  totalBrokerage: number;
+}
+
+export function calculateOrderBrokerage({
+  exposure,
+  lots,
+  productType,
+  orderType,
+  isExit = false,
+  segSetting,
+  dbSegment,
+  fallbackCommType = 'Per Crore',
+  fallbackCommVal = 4500,
+}: CalculateOrderBrokerageParams): OrderBrokerageResult {
+  if (isExit) {
+    return {
+      intradayCharge: 0,
+      carryCharge: 0,
+      gttCharge: 0,
+      totalBrokerage: 0,
+    };
+  }
+
+  const isCustomCalc = segSetting?.use_custom_calc;
+  if (dbSegment === 'CRYPTO' && isCustomCalc) {
+    return {
+      intradayCharge: 0,
+      carryCharge: 0,
+      gttCharge: 0,
+      totalBrokerage: 0,
+    };
+  }
+
+  const multiplier = 2; // entry + exit legs charged upfront
+
+  // 1. Intraday Charge (always applies to entry orders)
+  const intradayCommType = segSetting?.intraday_commission_type || segSetting?.commission_type || fallbackCommType;
+  const intradayCommVal = segSetting?.intraday_commission_value ?? segSetting?.commission_value ?? fallbackCommVal;
+  const singleIntraday = calculateSingleLegCharge({
+    exposure,
+    lots,
+    commissionType: intradayCommType,
+    commissionValue: Number(intradayCommVal),
+  });
+  const intradayCharge = Math.round(singleIntraday * multiplier * 100) / 100;
+
+  // 2. Carry Charge (applies if CARRY product or GTT order type)
+  let carryCharge = 0;
+  if (productType === 'CARRY' || orderType === 'GTT') {
+    const carryCommType = segSetting?.carry_commission_type || segSetting?.commission_type || fallbackCommType;
+    const carryCommVal = segSetting?.carry_commission_value ?? segSetting?.commission_value ?? fallbackCommVal;
+    const singleCarry = calculateSingleLegCharge({
+      exposure,
+      lots,
+      commissionType: carryCommType,
+      commissionValue: Number(carryCommVal),
+    });
+    carryCharge = Math.round(singleCarry * multiplier * 100) / 100;
+  }
+
+  // 3. GTT Charge (applies if GTT order type)
+  let gttCharge = 0;
+  if (orderType === 'GTT') {
+    const gttCommType = segSetting?.gtt_commission_type || 'Per Trade';
+    const gttCommVal = segSetting?.gtt_commission_value ?? 10;
+    const singleGtt = calculateSingleLegCharge({
+      exposure,
+      lots,
+      commissionType: gttCommType,
+      commissionValue: Number(gttCommVal),
+    });
+    gttCharge = Math.round(singleGtt * 100) / 100;
+  }
+
+  const totalBrokerage = Math.round((intradayCharge + carryCharge + gttCharge) * 100) / 100;
+
+  return {
+    intradayCharge,
+    carryCharge,
+    gttCharge,
+    totalBrokerage,
+  };
+}
+
 // ─── Carry brokerage (legacy interface — backward-compatible) ────────────────
 
 export interface CarryBrokerageParams {
@@ -97,3 +209,4 @@ export function calculateCarryBrokerage(params: CarryBrokerageParams): number {
 
   return Math.max(0, Math.round(singleLeg * 2 * 100) / 100);
 }
+

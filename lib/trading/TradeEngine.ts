@@ -3,7 +3,7 @@ import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { fetchBinanceQuote, fetchKiteQuotes, fetchSpeedQuotes } from '../datafeed/MarketDataService';
 import { calculateBufferedPrice } from './BufferCalculator';
 import { resolveEffectivePrices } from './marketPriceResolver';
-import { calculateSingleLegCharge } from './BrokerageCalculator';
+import { calculateSingleLegCharge, calculateOrderBrokerage } from './BrokerageCalculator';
 import { RiskValidation } from './RiskValidation';
 import { OrderService } from './OrderService';
 import { ExecutionService, ExecutionParams } from './ExecutionService';
@@ -511,12 +511,17 @@ export class TradeEngine {
         : Number(segSetting.intraday_leverage ?? 1);
       marginPortion = exposure / leverage;
 
-      // Brokerage: charge both entry + exit legs up front (× 2), same as old route
-      const commType = segSetting.commission_type || 'Per Crore';
-      const commVal  = Number(segSetting.commission_value ?? 0);
-      console.log(`[TradeEngine] Brokerage calc: segment=${dbSegment} side=${side} commType=${commType} commVal=${commVal} exposure=${exposure} lots=${newOrderLots}`);
-      const singleLeg = calculateSingleLegCharge({ exposure, lots: newOrderLots, commissionType: commType, commissionValue: commVal });
-      brokerage = Math.round(singleLeg * 2 * 100) / 100;
+      // Brokerage: calculate using aggregated model (intraday + carry + gtt)
+      const brokerageRes = calculateOrderBrokerage({
+        exposure,
+        lots: newOrderLots,
+        productType: product_type ?? 'INTRADAY',
+        orderType: order_type,
+        isExit: false,
+        segSetting,
+        dbSegment,
+      });
+      brokerage = brokerageRes.totalBrokerage;
     } else {
       // Exit order: brokerage already collected at entry — charge nothing
       brokerage = 0;
