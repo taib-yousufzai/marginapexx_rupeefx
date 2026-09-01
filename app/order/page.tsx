@@ -151,7 +151,7 @@ export default function OrderPage() {
 
   return (
     <div className="desktop-layout">
-      
+
       <main className="main-viewport">
         <div className="app-container">
           <div className="ord-root">
@@ -380,7 +380,7 @@ export default function OrderPage() {
                 })}
               </div>
 
-                          </div>
+            </div>
 
             {/* Sheet for Closed Orders */}
             <div className={`ord-sheet-overlay${isSheetOpen ? ' open' : ''}`} onClick={() => setIsSheetOpen(false)} />
@@ -567,7 +567,7 @@ export default function OrderPage() {
               initialOrder={tradeSheetInitialOrder}
               isModify={!!modifyingOrderId}
               modifyingOrderId={modifyingOrderId}
-              exitMode={modifyingOrderId ? (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-') || modifyingOrderId.startsWith('pos-gtt-') || Boolean(tradeSheetInitialOrder?.is_exit)) : false}
+              exitMode={modifyingOrderId ? true : false}
               linkedPosId={tradeSheetInitialOrder?.linked_position_id}
               onSuccess={() => {
                 refresh();
