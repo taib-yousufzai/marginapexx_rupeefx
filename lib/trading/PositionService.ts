@@ -166,8 +166,7 @@ export class PositionService {
             .update({ status: 'CANCELLED', updated_at: now })
             .eq('user_id', userId)
             .in('status', ['PENDING', 'OPEN', 'TRIGGER_PENDING', 'VALIDATION_PENDING'])
-            .in('symbol', symbolVariants)
-            .or('is_exit.eq.true,side.ilike.%EXIT%');
+            .in('symbol', symbolVariants);
         }
       }
     } catch (err) {
