@@ -617,7 +617,7 @@ export class TradeEngine {
 
     fillPrice = Math.max(0.01, Math.round(fillPrice * 100) / 100);
 
-    const isImmediate = order_type === 'MARKET' || order_type === 'SLM';
+    const isImmediate = order_type === 'MARKET';
 
     // 5. Execute Order (ExecutionService)
     const executionParams: ExecutionParams = {

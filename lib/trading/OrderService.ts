@@ -41,11 +41,11 @@ export class OrderService {
    */
   static validateStopLoss(orderType: string, side: 'BUY' | 'SELL', triggerPrice: number | null, baseLtp: number, isExit: boolean): string | null {
     if ((orderType === 'SL' || orderType === 'SLM') && triggerPrice !== null && !isNaN(triggerPrice)) {
-      if (side === 'BUY' && triggerPrice >= baseLtp) {
-        return 'Stop loss trigger price must be lower than the current market price (LTP).';
+      if (side === 'BUY' && triggerPrice <= baseLtp) {
+        return 'Trigger price must be higher than current market price (LTP) for BUY SL/SLM.';
       }
-      if (side === 'SELL' && triggerPrice <= baseLtp) {
-        return 'Stop loss trigger price must be higher than the current market price (LTP).';
+      if (side === 'SELL' && triggerPrice >= baseLtp) {
+        return 'Trigger price must be lower than current market price (LTP) for SELL SL/SLM.';
       }
     }
     return null;

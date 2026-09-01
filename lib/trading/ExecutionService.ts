@@ -63,15 +63,9 @@ export class ExecutionService {
     let orderId: string;
 
     try {
-      // SLM orders use MARKET execution; stop_loss is set from trigger_price
-      const rpcOrderType = params.orderType === 'SLM' ? 'MARKET' : params.orderType;
-      let resolvedTriggerPrice = params.triggerPrice;
-      let resolvedStopLoss = params.stopLoss;
-
-      if (params.orderType === 'SLM' && resolvedTriggerPrice !== null) {
-        resolvedStopLoss = resolvedTriggerPrice;
-        resolvedTriggerPrice = null;
-      }
+      const rpcOrderType = params.orderType;
+      const resolvedTriggerPrice = params.triggerPrice;
+      const resolvedStopLoss = params.stopLoss;
 
       const idempotencyKey = randomUUID();
 
@@ -168,16 +162,7 @@ export class ExecutionService {
       } catch { /* non-critical */ }
     }
 
-    // Restore SLM order_type label on the order row (cosmetic, non-critical)
-    if (params.orderType === 'SLM' && orderId) {
-      admin
-        .from('orders')
-        .update({ order_type: 'SLM' })
-        .eq('id', orderId)
-        .then(({ error }) => {
-          if (error) console.error('[ExecutionService] Failed to restore SLM order type:', error);
-        });
-    }
+
 
     return orderId;
   }

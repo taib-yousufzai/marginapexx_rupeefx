@@ -560,12 +560,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     }
   } else if (orderType === 'SL' || orderType === 'SLM') {
     // For SL / SLM (Stop Loss):
-    // BUY side: Trigger price must be LOWER than current market price (< LTP)
-    // SELL side: Trigger price must be HIGHER than current market price (> LTP)
+    // BUY side: Trigger price must be HIGHER than current market price (> LTP)
+    // SELL side: Trigger price must be LOWER than current market price (< LTP)
     if (side === 'BUY') {
-      maxAllowedPrice = Math.min(maxAllowedPrice, currentLtp);
-    } else if (side === 'SELL') {
       minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
+    } else if (side === 'SELL') {
+      maxAllowedPrice = Math.min(maxAllowedPrice, currentLtp);
     }
   }
 
@@ -585,8 +585,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       : `more than ${formattedLtp}`;
   } else if (orderType === 'SL' || orderType === 'SLM') {
     priceRangeText = activeSide === 'BUY'
-      ? `less than ${formattedLtp}`
-      : `more than ${formattedLtp}`;
+      ? `more than ${formattedLtp}`
+      : `less than ${formattedLtp}`;
   } else {
     priceRangeText = `Market price`;
   }
@@ -795,29 +795,17 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           }
         }
 
-        if (isExitOrder) {
-          // Exit stop loss order:
-          // - Exiting LONG (SELL order): stop loss must be below current market price
-          // - Exiting SHORT (BUY order): stop loss must be above current market price
-          if (placeSide === 'BUY' && trigVal <= currentLtp) {
-            showOrderError('Stop loss trigger price must be above the current market price for short exits.');
-            return;
-          }
-          if (placeSide === 'SELL' && trigVal >= currentLtp) {
-            showOrderError('Stop loss trigger price must be below the current market price for long exits.');
-            return;
-          }
-        } else {
-          // Entry stop loss order:
-          // - BUY SL/SLM entry: Stop Loss trigger must be below current market price
-          // - SELL SL/SLM entry: Stop Loss trigger must be above current market price
-          if (placeSide === 'BUY' && trigVal >= currentLtp) {
-            showOrderError('Stop loss trigger price must be lower than the current market price.');
-            return;
-          }
-          if (placeSide === 'SELL' && trigVal <= currentLtp) {
-            showOrderError('Stop loss trigger price must be higher than the current market price.');
-            return;
+        if (orderType === 'SL' || orderType === 'SLM') {
+          const trigVal = resolvedTriggerPrice !== undefined ? resolvedTriggerPrice : (resolvedStopLoss !== undefined ? resolvedStopLoss : undefined);
+          if (trigVal !== undefined && !isNaN(trigVal)) {
+            if (placeSide === 'BUY' && trigVal <= currentLtp) {
+              showOrderError('Trigger price must be higher than current market price for BUY SL/SLM.');
+              return;
+            }
+            if (placeSide === 'SELL' && trigVal >= currentLtp) {
+              showOrderError('Trigger price must be lower than current market price for SELL SL/SLM.');
+              return;
+            }
           }
         }
       }

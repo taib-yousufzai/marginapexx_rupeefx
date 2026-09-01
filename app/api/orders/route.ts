@@ -808,29 +808,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (order_type === 'SL' || order_type === 'SLM') {
       const trigPrice = trigger_price ? parseFloat(trigger_price.toString()) : null;
       if (trigPrice !== null && !isNaN(trigPrice)) {
-        if (is_exit) {
-          if (side === 'BUY' && trigPrice <= baseLtp) {
-            return NextResponse.json({ error: 'Stop loss trigger price must be above the current market price for short exits.' }, { status: 400 });
-          }
-          if (side === 'SELL' && trigPrice >= baseLtp) {
-            return NextResponse.json({ error: 'Stop loss trigger price must be below the current market price for long exits.' }, { status: 400 });
-          }
-        } else {
-          if (order_type === 'SLM') {
-            if (side === 'BUY' && trigPrice >= baseLtp) {
-              return NextResponse.json({ error: 'Stop loss trigger price must be lower than the current market price for buying.' }, { status: 400 });
-            }
-            if (side === 'SELL' && trigPrice <= baseLtp) {
-              return NextResponse.json({ error: 'Stop loss trigger price must be higher than the current market price for selling.' }, { status: 400 });
-            }
-          } else { // SL order type
-            if (side === 'BUY' && trigPrice >= baseLtp) {
-              return NextResponse.json({ error: 'Stop loss trigger price must be lower than the current market price for buying.' }, { status: 400 });
-            }
-            if (side === 'SELL' && trigPrice <= baseLtp) {
-              return NextResponse.json({ error: 'Stop loss trigger price must be higher than the current market price for selling.' }, { status: 400 });
-            }
-          }
+        if (side === 'BUY' && trigPrice <= baseLtp) {
+          return NextResponse.json({ error: 'Trigger price must be higher than current market price for BUY SL/SLM.' }, { status: 400 });
+        }
+        if (side === 'SELL' && trigPrice >= baseLtp) {
+          return NextResponse.json({ error: 'Trigger price must be lower than current market price for SELL SL/SLM.' }, { status: 400 });
         }
       }
     }
