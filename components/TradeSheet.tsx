@@ -1855,13 +1855,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                         </span>
                       </div>
                       <div className="ts2-margin-row">
-                        <span className="ts2-ml">Carry Charges <span style={{ fontSize: '0.65rem', color: '#9CA3AF', fontWeight: 500 }}>(+ Intraday)</span></span>
+                        <span className="ts2-ml">Carry Charges</span>
                         <span className="ts2-mv" style={displayCarry > 0 ? { color: (activeSide === 'SELL' || exitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
                           {currencySymbol} {displayCarry.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="ts2-margin-row">
-                        <span className="ts2-ml">GTT Charges <span style={{ fontSize: '0.65rem', color: '#9CA3AF', fontWeight: 500 }}>(+ Carry + Intraday)</span></span>
+                        <span className="ts2-ml">GTT Charges</span>
                         <span className="ts2-mv" style={displayGtt > 0 ? { color: (activeSide === 'SELL' || exitMode) ? '#C62E2E' : '#15803D', fontWeight: 700 } : { opacity: 0.4 }}>
                           {currencySymbol} {displayGtt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>

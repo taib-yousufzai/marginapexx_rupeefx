@@ -2735,13 +2735,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                             </span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>Carry Charges <span style={{ opacity: 0.7 }}>(+ Intraday)</span></span>
+                            <span style={{ color: 'var(--text-muted)' }}>Carry Charges</span>
                             <span style={{ color: activeCarryCharge > 0 ? 'var(--green)' : 'var(--text-muted)', fontWeight: 700 }}>
                               ₹{activeCarryCharge.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '9px' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>GTT Charges <span style={{ opacity: 0.7 }}>(+ Carry + Intraday)</span></span>
+                            <span style={{ color: 'var(--text-muted)' }}>GTT Charges</span>
                             <span style={{ color: activeGttCharge > 0 ? 'var(--green)' : 'var(--text-muted)', fontWeight: 700 }}>
                               ₹{activeGttCharge.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                             </span>
