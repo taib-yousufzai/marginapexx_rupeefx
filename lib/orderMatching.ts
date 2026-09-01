@@ -60,10 +60,10 @@ export function evaluateOrderTriggerCondition(
       fillPrice = limitPrice;
     }
   } else if ((orderType === 'SL' || orderType === 'SLM') && triggerPrice !== null) {
-    if (side === 'BUY' && ltp >= triggerPrice) {
+    if (side === 'BUY' && ltp <= triggerPrice) {
       shouldTrigger = true;
       fillPrice = effective.effectiveAsk;
-    } else if (side === 'SELL' && ltp <= triggerPrice) {
+    } else if (side === 'SELL' && ltp >= triggerPrice) {
       shouldTrigger = true;
       fillPrice = effective.effectiveBid;
     }

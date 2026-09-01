@@ -560,12 +560,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     }
   } else if (orderType === 'SL' || orderType === 'SLM') {
     // For SL / SLM (Stop Loss):
-    // BUY side: Trigger price must be HIGHER than current market price (> LTP)
-    // SELL side: Trigger price must be LOWER than current market price (< LTP)
+    // BUY side: Trigger price must be LOWER than current market price (< LTP)
+    // SELL side: Trigger price must be HIGHER than current market price (> LTP)
     if (side === 'BUY') {
-      minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
-    } else if (side === 'SELL') {
       maxAllowedPrice = Math.min(maxAllowedPrice, currentLtp);
+    } else if (side === 'SELL') {
+      minAllowedPrice = Math.max(minAllowedPrice, currentLtp);
     }
   }
 
@@ -585,8 +585,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       : `more than ${formattedLtp}`;
   } else if (orderType === 'SL' || orderType === 'SLM') {
     priceRangeText = activeSide === 'BUY'
-      ? `more than ${formattedLtp}`
-      : `less than ${formattedLtp}`;
+      ? `less than ${formattedLtp}`
+      : `more than ${formattedLtp}`;
   } else {
     priceRangeText = `Market price`;
   }
@@ -798,12 +798,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         if (orderType === 'SL' || orderType === 'SLM') {
           const trigVal = resolvedTriggerPrice !== undefined ? resolvedTriggerPrice : (resolvedStopLoss !== undefined ? resolvedStopLoss : undefined);
           if (trigVal !== undefined && !isNaN(trigVal)) {
-            if (placeSide === 'BUY' && trigVal <= currentLtp) {
-              showOrderError('Trigger price must be higher than current market price for BUY SL/SLM.');
+            if (placeSide === 'BUY' && trigVal >= currentLtp) {
+              showOrderError('Trigger price must be lower than current market price for BUY SL/SLM.');
               return;
             }
-            if (placeSide === 'SELL' && trigVal >= currentLtp) {
-              showOrderError('Trigger price must be lower than current market price for SELL SL/SLM.');
+            if (placeSide === 'SELL' && trigVal <= currentLtp) {
+              showOrderError('Trigger price must be higher than current market price for SELL SL/SLM.');
               return;
             }
           }

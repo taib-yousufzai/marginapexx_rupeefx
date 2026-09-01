@@ -409,11 +409,11 @@ describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', (
 
   it('Test 7: SL / SLM Trigger & Execution — Position remains OPEN untouched while SL is PENDING; Trigger hits -> EXECUTED -> Position CLOSED', () => {
     const sim = new TradingEngineSimulator();
-    const entry = sim.placeMarketOrder({ userId, symbol, side: 'BUY', qty: 10, price: 2500 });
+    const entry = sim.placeMarketOrder({ userId, symbol, side: 'SELL', qty: 10, price: 2500 });
     const pos = entry.position!;
 
     const slOrder = sim.placePendingOrder({
-      userId, symbol, side: 'SELL', orderType: 'SLM', qty: 10, triggerPrice: 2400, isExit: true, linkedPositionId: pos.id
+      userId, symbol, side: 'BUY', orderType: 'SLM', qty: 10, triggerPrice: 2400, isExit: true, linkedPositionId: pos.id
     });
 
     expect(slOrder.status).toBe('PENDING');
@@ -651,13 +651,13 @@ describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', (
   });
 
   it('Test 15: Entry SLM vs Exit SLM Directional Validation — Verifies OrderService.validateStopLoss rules for Entry and Exit contexts', () => {
-    // 1. BUY side SL/SLM: Trigger price must be higher than market (trigger > LTP)
-    expect(OrderService.validateStopLoss('SLM', 'BUY', 2350, 2300, false)).toBeNull(); // Valid (2350 > 2300)
-    expect(OrderService.validateStopLoss('SLM', 'BUY', 2250, 2300, false)).toContain('Trigger price must be higher than current market price'); // Invalid
+    // 1. BUY side SL/SLM: Trigger price must be lower than market (trigger < LTP)
+    expect(OrderService.validateStopLoss('SLM', 'BUY', 2250, 2300, false)).toBeNull(); // Valid (2250 < 2300)
+    expect(OrderService.validateStopLoss('SLM', 'BUY', 2350, 2300, false)).toContain('Trigger price must be lower than current market price'); // Invalid
 
-    // 2. SELL side SL/SLM: Trigger price must be lower than market (trigger < LTP)
-    expect(OrderService.validateStopLoss('SLM', 'SELL', 2250, 2300, false)).toBeNull(); // Valid (2250 < 2300)
-    expect(OrderService.validateStopLoss('SLM', 'SELL', 2350, 2300, false)).toContain('Trigger price must be lower than current market price'); // Invalid
+    // 2. SELL side SL/SLM: Trigger price must be higher than market (trigger > LTP)
+    expect(OrderService.validateStopLoss('SLM', 'SELL', 2350, 2300, false)).toBeNull(); // Valid (2350 > 2300)
+    expect(OrderService.validateStopLoss('SLM', 'SELL', 2250, 2300, false)).toContain('Trigger price must be higher than current market price'); // Invalid
   });
 
   it('Test 16: Position Close Cascade Order Cancellation — Closing position automatically cancels associated pending orders', () => {
