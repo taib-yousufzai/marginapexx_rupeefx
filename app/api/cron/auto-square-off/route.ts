@@ -99,7 +99,11 @@ export async function GET(request: Request) {
       if (!th.end_time || !th.is_active) continue;
       // parse end_time "HH:mm"
       const [h, m] = th.end_time.split(':').map(Number);
-      const endTotalMinutes = (h * 60) + m;
+      let endTotalMinutes = (h * 60) + m;
+      // 00:00 midnight represents end of trading day (24:00 = 1440 mins)
+      if (endTotalMinutes === 0) {
+        endTotalMinutes = 1440;
+      }
       
       // Auto-square-off happens 5 minutes before market close for Indian markets.
       const isIndianMarket = ['nse', 'bse', 'nfo', 'cds', 'mcx'].includes(th.id.toLowerCase());

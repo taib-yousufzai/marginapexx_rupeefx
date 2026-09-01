@@ -16,6 +16,19 @@ export class RiskValidation {
 
     if (segUpper.includes('CRYPTO')) return 'crypto';
 
+    if (
+      exchangeName === 'US-EQ' ||
+      exchangeName === 'USEQ' ||
+      segUpper.includes('US-EQ') ||
+      segUpper.includes('USEQ') ||
+      segUpper.includes('US_EQ') ||
+      segUpper.includes('US STOCKS') ||
+      segUpper.includes('US_STOCKS') ||
+      segUpper.includes('STOCKS')
+    ) {
+      return 'us-eq';
+    }
+
     const isCommodity =
       exchangeName === 'MCX' ||
       exchangeName === 'NCO' ||
