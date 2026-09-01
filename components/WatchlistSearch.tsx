@@ -382,7 +382,7 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
   const SEGMENT_DEFAULTS: Record<string, string> = {
     'INDEX-FUT': 'NIFTY', 'INDEX-OPT': 'NIFTY',
     'STOCK-FUT': 'RELIANCE', 'STOCK-OPT': 'RELIANCE',
-    'NSE-EQ': 'RELIANCE', 'STOCKS': 'RELIANCE', 'Equity': 'RELIANCE', 'Stocks': 'RELIANCE', 'MCX-FUT': 'GOLD', 'MCX-OPT': 'GOLD',
+    'NSE-EQ': 'RELIANCE', 'STOCKS': 'RELIANCE', 'Equity': 'RELIANCE', 'Stocks': 'RELIANCE', 'US-EQ': 'TSLA', 'MCX-FUT': 'GOLD', 'MCX-OPT': 'GOLD',
     'COMEX': 'GOLD', 'CRYPTO': 'BTC', 'FOREX': 'USDINR',
   };
 
@@ -403,6 +403,7 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
         });
 
         const liveMatches = await fetchLiveResults(actualQuery, activeTab, abortController.signal);
+        if (abortController.signal.aborted) return;
         const merged = [...liveMatches];
         const liveSymbols = new Set(liveMatches.map((r: any) => r.symbol));
         for (const local of localMatches) {
@@ -410,9 +411,11 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
         }
         setResults(merged);
       } finally {
-        setIsSearching(false);
+        if (!abortController.signal.aborted) {
+          setIsSearching(false);
+        }
       }
-    }, 300);
+    }, 180);
 
     return () => { clearTimeout(timer); abortController.abort(); };
   }, [normalizedQuery, activeTab, token, isOpen]);

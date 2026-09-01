@@ -32,7 +32,7 @@ export async function fetchUSStockQuote(symbol: string): Promise<USStockQuote | 
     const res = await fetch(`https://query2.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?interval=1d`, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
       cache: 'no-store',
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(1200),
     });
 
     if (!res.ok) return null;

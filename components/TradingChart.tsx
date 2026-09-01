@@ -217,6 +217,7 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
     'NSE-EQ': 'RELIANCE',
     'Equity': 'RELIANCE',
     'Stocks': 'RELIANCE',
+    'US-EQ': 'TSLA',
     'MCX-FUT': 'GOLD',
     'MCX-OPT': 'GOLD',
     'COMEX': 'GOLD',
@@ -253,6 +254,8 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
         if (err.name !== 'AbortError') console.error(err);
       }
 
+      if (abortController.signal.aborted) return;
+
       const merged = [...liveMatches];
       const liveSymbols = new Set(liveMatches.map((r: any) => r.symbol));
 
@@ -265,7 +268,7 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
 
       setSearchResults(merged);
       setIsSearching(false);
-    }, 300);
+    }, 180);
 
     return () => {
       clearTimeout(timer);
@@ -300,7 +303,7 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
       </div>
       <div className="tc-search-body-fs">
         <div className="tc-search-tabs">
-          {['All', 'INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'STOCKS', 'CRYPTO', 'COMEX', 'FOREX'].map(tab => (
+          {['All', 'INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'STOCKS', 'US-EQ', 'CRYPTO', 'COMEX', 'FOREX'].map(tab => (
             <div
               key={tab}
               className={`tc-search-tab ${activeSearchTab === tab ? 'active' : ''}`}

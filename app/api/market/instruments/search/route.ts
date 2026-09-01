@@ -294,7 +294,7 @@ async function fetchLivePrices(
 
     // 3. Fallback on-demand fetch from Kite REST API for missing instruments
       const apiKey = process.env.KITE_API_KEY;
-      let accessToken = request.cookies.get('kite_access_token')?.value;
+      let accessToken = request?.cookies?.get('kite_access_token')?.value;
       if (!accessToken) {
         const session = await getSharedKiteSession();
         accessToken = session?.accessToken;
@@ -319,7 +319,7 @@ async function fetchLivePrices(
                 'Authorization': `token ${apiKey}:${accessToken}`,
               },
               cache: 'no-store',
-              signal: AbortSignal.timeout(3000),
+              signal: AbortSignal.timeout(2000),
             });
 
             if (res.ok) {
@@ -373,39 +373,41 @@ async function fetchLivePrices(
       }
     }
 
-    // 4. Fetch missing Binance / Forex quotes
+    // 4. Fetch missing Binance / Forex quotes in parallel
     const usdInrRate = 83.85;
-    for (const id of missingKiteIds) {
-      const cleanSym = id.split(':').pop() || id;
-      if (['GBPUSD', 'EURUSD', 'USDJPY', 'BTCUSDT', 'ETHUSDT', 'DOGEUSDT'].includes(cleanSym) || cleanSym.endsWith('USDT')) {
-        try {
-          const binanceSym = cleanSym.endsWith('USDT') ? cleanSym : `${cleanSym}USDT`;
-          const bRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`, { signal: AbortSignal.timeout(2000) });
-          if (bRes.ok) {
-            const bJson = await bRes.json();
-            let lastP = parseFloat(bJson.lastPrice || '0');
-            let highP = parseFloat(bJson.highPrice || '0');
-            let lowP = parseFloat(bJson.lowPrice || '0');
+    await Promise.all(
+      missingKiteIds.map(async (id) => {
+        const cleanSym = id.split(':').pop() || id;
+        if (['GBPUSD', 'EURUSD', 'USDJPY', 'BTCUSDT', 'ETHUSDT', 'DOGEUSDT'].includes(cleanSym) || cleanSym.endsWith('USDT')) {
+          try {
+            const binanceSym = cleanSym.endsWith('USDT') ? cleanSym : `${cleanSym}USDT`;
+            const bRes = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${binanceSym}`, { signal: AbortSignal.timeout(800) });
+            if (bRes.ok) {
+              const bJson = await bRes.json();
+              let lastP = parseFloat(bJson.lastPrice || '0');
+              let highP = parseFloat(bJson.highPrice || '0');
+              let lowP = parseFloat(bJson.lowPrice || '0');
 
-            if (['GBPUSD', 'EURUSD'].includes(cleanSym)) {
-              lastP *= usdInrRate;
-              highP *= usdInrRate;
-              lowP *= usdInrRate;
-            } else if (cleanSym === 'USDJPY') {
-              lastP = usdInrRate / (lastP || 1);
-              highP = usdInrRate / (highP || 1);
-              lowP = usdInrRate / (lowP || 1);
+              if (['GBPUSD', 'EURUSD'].includes(cleanSym)) {
+                lastP *= usdInrRate;
+                highP *= usdInrRate;
+                lowP *= usdInrRate;
+              } else if (cleanSym === 'USDJPY') {
+                lastP = usdInrRate / (lastP || 1);
+                highP = usdInrRate / (highP || 1);
+                lowP = usdInrRate / (lowP || 1);
+              }
+
+              quoteMap[id] = { price: lastP, high: highP, low: lowP };
+              quoteMap[cleanSym] = { price: lastP, high: highP, low: lowP };
+              quoteMap[binanceSym] = { price: lastP, high: highP, low: lowP };
             }
-
-            quoteMap[id] = { price: lastP, high: highP, low: lowP };
-            quoteMap[cleanSym] = { price: lastP, high: highP, low: lowP };
-            quoteMap[binanceSym] = { price: lastP, high: highP, low: lowP };
+          } catch {
+            // ignore fallback error
           }
-        } catch (e) {
-          // ignore fallback error
         }
-      }
-    }
+      })
+    );
 
     return quoteMap;
   } catch (err) {
@@ -1113,8 +1115,8 @@ export async function GET(request: NextRequest) {
       results.push(...matchingForex);
     }
 
-    // Append matching US Stock items if tab is All, US-EQ, US Equity, or US Stocks
-    if (tab === 'All' || tab === 'US-EQ' || tab === 'US Equity' || tab === 'US Stocks' || tab === 'US') {
+    // Append matching US Stock items if tab is All, STOCKS, US-EQ, US Equity, or US Stocks
+    if (tab === 'All' || tab === 'STOCKS' || tab === 'NSE-EQ' || tab === 'Equity' || tab === 'Stocks' || tab === 'US-EQ' || tab === 'US Equity' || tab === 'US Stocks' || tab === 'US') {
       const searchTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
       const qClean = q.replace(/[\s\/]+/g, '').toLowerCase();
 
