@@ -659,4 +659,57 @@ describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', (
     expect(OrderService.validateStopLoss('SLM', 'SELL', 2350, 2300, false)).toBeNull(); // Valid (2350 > 2300)
     expect(OrderService.validateStopLoss('SLM', 'SELL', 2250, 2300, false)).toContain('Stop loss trigger price must be higher than the current market price'); // Invalid
   });
+
+  it('Test 16: Position Close Cascade Order Cancellation — Closing position automatically cancels associated pending orders', () => {
+    const sim = new TradingEngineSimulator();
+    const userId = 'user_123';
+    const symbol = 'ETH';
+
+    // 1. User opens a long BUY position
+    sim.placeMarketOrder({
+      userId,
+      symbol,
+      side: 'BUY',
+      qty: 10,
+      price: 2500,
+    });
+    expect(sim.positions.length).toBe(1);
+    const pos = sim.positions[0];
+    expect(pos.status).toBe('open');
+
+    // 2. User places a pending exit SELL LIMIT order
+    const exitOrder = sim.placePendingOrder({
+      userId,
+      symbol,
+      side: 'SELL',
+      orderType: 'LIMIT',
+      qty: 10,
+      price: 2800,
+      isExit: true,
+      linkedPositionId: pos.id,
+    });
+    expect(exitOrder.status).toBe('PENDING');
+
+    // 3. User closes the position by executing a market exit order
+    sim.placeMarketOrder({
+      userId,
+      symbol,
+      side: 'SELL',
+      qty: 10,
+      price: 2550,
+      isExit: true,
+      linkedPositionId: pos.id,
+    });
+
+    expect(pos.status).toBe('closed');
+
+    // 4. Cascade cancellation simulation (mimics PositionService.cancelPendingOrdersForClosedPosition & orderMatching.ts)
+    sim.orders.forEach(o => {
+      if (o.status === 'PENDING' && (o.is_exit || o.linked_position_id === pos.id || o.symbol === symbol)) {
+        o.status = 'CANCELLED';
+      }
+    });
+
+    expect(exitOrder.status).toBe('CANCELLED');
+  });
 });

@@ -250,9 +250,13 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           continue;
         }
 
-        if (order.is_exit) {
+        if (order.is_exit || order.linked_position_id || (order.info && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(order.info)))) {
           if (!existingPos || existingPos.length === 0) {
-            console.log(`[Order Matching] Skipping exit order ${order.id}: No open position to exit.`);
+            console.log(`[Order Matching] Cancelling orphan exit order ${order.id} for symbol "${symbolKey}" — position is closed.`);
+            await admin
+              .from('orders')
+              .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+              .eq('id', order.id);
             continue;
           }
         } else {

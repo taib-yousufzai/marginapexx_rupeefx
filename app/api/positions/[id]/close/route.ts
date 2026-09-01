@@ -300,12 +300,8 @@ export async function POST(
 
   // Cancel any open/pending exit or linked orders for this position/symbol
   try {
-    await admin
-      .from('orders')
-      .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-      .eq('user_id', user.id)
-      .eq('status', 'PENDING')
-      .or(`info.eq.${positionId},linked_position_id.eq.${positionId},symbol.eq.${pos.symbol}`);
+    const { PositionService } = await import('@/lib/trading/PositionService');
+    await PositionService.cancelPendingOrdersForClosedPosition(admin, user.id, positionId, pos.symbol);
   } catch (cancelErr) {
     console.warn('[POST /api/positions/[id]/close] Non-fatal error cleaning up pending orders:', cancelErr);
   }

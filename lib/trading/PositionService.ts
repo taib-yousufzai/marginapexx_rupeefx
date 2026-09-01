@@ -100,6 +100,78 @@ export class PositionService {
         },
       },
     );
+
+    // Cancel any pending exit/SL/Target/Limit orders associated with this closed position or symbol
+    try {
+      const admin = getAdminClient();
+      // Fetch symbol from position if not provided
+      const { data: pos } = await admin
+        .from('positions')
+        .select('symbol, status')
+        .eq('id', params.positionId)
+        .maybeSingle();
+
+      if (!pos || pos.status === 'closed') {
+        await PositionService.cancelPendingOrdersForClosedPosition(admin, params.userId, params.positionId, pos?.symbol);
+      }
+    } catch (err) {
+      console.warn('[PositionService] Failed to cleanup pending orders after position close:', err);
+    }
+  }
+
+  /**
+   * Automatically cancels any orphan pending exit/SL/Target/Limit orders associated with a closed position or symbol.
+   */
+  static async cancelPendingOrdersForClosedPosition(admin: any, userId: string, positionId?: string, symbol?: string): Promise<void> {
+    try {
+      const now = new Date().toISOString();
+
+      // 1. Cancel by position ID (if linked via linked_position_id or info)
+      if (positionId) {
+        await admin
+          .from('orders')
+          .update({ status: 'CANCELLED', updated_at: now })
+          .eq('user_id', userId)
+          .in('status', ['PENDING', 'OPEN', 'TRIGGER_PENDING', 'VALIDATION_PENDING'])
+          .or(`linked_position_id.eq.${positionId},info.eq.${positionId}`);
+      }
+
+      // 2. Cancel by symbol (if no open positions remain for that symbol)
+      if (symbol) {
+        const cleanSym = symbol.includes(':') ? symbol.split(':')[1] : symbol;
+        
+        // Check if user has any remaining open positions for this symbol
+        const { data: remainingOpenPos } = await admin
+          .from('positions')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('status', 'open')
+          .or(`symbol.eq.${symbol},symbol.eq.${cleanSym}`);
+
+        if (!remainingOpenPos || remainingOpenPos.length === 0) {
+          // No open positions remain for this symbol -> cancel all pending exit/SL/Target/Limit orders for this symbol
+          const symbolVariants = Array.from(new Set([
+            symbol,
+            cleanSym,
+            cleanSym.replace('/', ''),
+            cleanSym.replace('/USDT', 'USDT'),
+            `NSE:${cleanSym}`,
+            `NFO:${cleanSym}`,
+            `MCX:${cleanSym}`,
+          ])).filter(Boolean);
+
+          await admin
+            .from('orders')
+            .update({ status: 'CANCELLED', updated_at: now })
+            .eq('user_id', userId)
+            .in('status', ['PENDING', 'OPEN', 'TRIGGER_PENDING', 'VALIDATION_PENDING'])
+            .in('symbol', symbolVariants)
+            .or('is_exit.eq.true,side.ilike.%EXIT%');
+        }
+      }
+    } catch (err) {
+      console.warn('[PositionService] Error cancelling pending orders for closed position:', err);
+    }
   }
 
   /**
