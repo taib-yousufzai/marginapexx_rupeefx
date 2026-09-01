@@ -761,7 +761,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         exposure,
         lots: newOrderLots,
         productType: targetProductType,
-        orderType: rpcOrderType,
+        orderType: order_type ?? 'MARKET',
         isExit: false,
         segSetting,
         dbSegment,

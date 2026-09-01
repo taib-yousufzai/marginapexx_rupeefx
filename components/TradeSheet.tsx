@@ -677,7 +677,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedStopLoss = resolvedTriggerPrice;
         } else if (orderType === 'SLM') {
           resolvedOrderType = 'SLM';
-          resolvedTriggerPrice = parseFloat(triggerPrice) || undefined;
+          resolvedTriggerPrice = parseFloat(triggerPrice) || parseFloat(slPrice) || undefined;
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
           resolvedOrderType = 'GTT';
@@ -704,7 +704,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedStopLoss = resolvedTriggerPrice;
         } else if (orderType === 'SLM') {
           resolvedOrderType = 'SLM';
-          resolvedTriggerPrice = parseFloat(triggerPrice) || undefined;
+          resolvedTriggerPrice = parseFloat(triggerPrice) || parseFloat(slPrice) || undefined;
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
           resolvedOrderType = 'GTT';
