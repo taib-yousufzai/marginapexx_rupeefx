@@ -310,21 +310,21 @@ export default function OrderPage() {
                         <span className="ord-date-val">{fmtDate(order.created_at)}</span>
                       </div>
                       {/* SL, Target, Trigger info */}
-                      {(order.trigger_price || order.stop_loss || order.target) && (
+                      {(order.order_type === 'GTT' || order.order_type === 'SL' || order.order_type === 'SLM' || order.is_exit) && (order.trigger_price || order.stop_loss || order.target) && (
                         <div className="ord-row" style={{ marginTop: 4, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                          {order.trigger_price !== undefined && order.trigger_price !== null && (
+                          {order.trigger_price !== undefined && order.trigger_price !== null && (order.order_type === 'GTT' || order.order_type === 'SL' || order.order_type === 'SLM') && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                               <span className="ord-label" style={{ fontSize: '0.6rem' }}>TRIG:</span>
                               <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700 }}>{fmtPrice(order.trigger_price)}</span>
                             </div>
                           )}
-                          {order.stop_loss !== undefined && order.stop_loss !== null && (
+                          {order.stop_loss !== undefined && order.stop_loss !== null && (order.order_type === 'GTT' || order.is_exit) && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                               <span className="ord-label" style={{ fontSize: '0.6rem', color: '#dc2626' }}>SL:</span>
                               <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700, color: '#dc2626' }}>{fmtPrice(order.stop_loss)}</span>
                             </div>
                           )}
-                          {order.target !== undefined && order.target !== null && (
+                          {order.target !== undefined && order.target !== null && (order.order_type === 'GTT' || order.is_exit) && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                               <span className="ord-label" style={{ fontSize: '0.6rem', color: '#059669' }}>TGT:</span>
                               <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700, color: '#059669' }}>{fmtPrice(order.target)}</span>

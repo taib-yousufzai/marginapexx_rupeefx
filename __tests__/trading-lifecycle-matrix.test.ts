@@ -649,4 +649,14 @@ describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', (
     expect(activePos.stop_loss).toBe(1450);
     expect(activePos.target).toBe(1600);
   });
+
+  it('Test 15: Entry SLM vs Exit SLM Directional Validation — Verifies OrderService.validateStopLoss rules for Entry and Exit contexts', () => {
+    // 1. BUY side SL/SLM: Stop Loss must be lower than market (trigger < LTP)
+    expect(OrderService.validateStopLoss('SLM', 'BUY', 2250, 2300, false)).toBeNull(); // Valid (2250 < 2300)
+    expect(OrderService.validateStopLoss('SLM', 'BUY', 2350, 2300, false)).toContain('Stop loss trigger price must be lower than the current market price'); // Invalid
+
+    // 2. SELL side SL/SLM: Stop Loss must be higher than market (trigger > LTP)
+    expect(OrderService.validateStopLoss('SLM', 'SELL', 2350, 2300, false)).toBeNull(); // Valid (2350 > 2300)
+    expect(OrderService.validateStopLoss('SLM', 'SELL', 2250, 2300, false)).toContain('Stop loss trigger price must be higher than the current market price'); // Invalid
+  });
 });

@@ -41,35 +41,11 @@ export class OrderService {
    */
   static validateStopLoss(orderType: string, side: 'BUY' | 'SELL', triggerPrice: number | null, baseLtp: number, isExit: boolean): string | null {
     if ((orderType === 'SL' || orderType === 'SLM') && triggerPrice !== null && !isNaN(triggerPrice)) {
-      if (isExit) {
-        // Exiting a long (SELL stop): trigger must be below LTP
-        // Exiting a short (BUY stop): trigger must be above LTP
-        if (side === 'BUY' && triggerPrice <= baseLtp) {
-          return 'Stop loss trigger price must be above the current market price for short exits.';
-        }
-        if (side === 'SELL' && triggerPrice >= baseLtp) {
-          return 'Stop loss trigger price must be below the current market price for long exits.';
-        }
-      } else if (orderType === 'SLM') {
-        // SLM entry: executes immediately as MARKET, trigger is the SL for the new position.
-        // BUY SLM = going long → SL must be below market
-        // SELL SLM = going short → SL must be above market
-        if (side === 'BUY' && triggerPrice >= baseLtp) {
-          return 'Stop loss price must be below the current market price.';
-        }
-        if (side === 'SELL' && triggerPrice <= baseLtp) {
-          return 'Stop loss price must be above the current market price.';
-        }
-      } else {
-        // SL entry: pending breakout order.
-        // BUY SL = buy above market (breakout buy)
-        // SELL SL = sell below market (breakdown sell)
-        if (side === 'BUY' && triggerPrice <= baseLtp) {
-          return 'Trigger price must be above the current market price for stop limit buy.';
-        }
-        if (side === 'SELL' && triggerPrice >= baseLtp) {
-          return 'Trigger price must be below the current market price for stop limit sell.';
-        }
+      if (side === 'BUY' && triggerPrice >= baseLtp) {
+        return 'Stop loss trigger price must be lower than the current market price (LTP).';
+      }
+      if (side === 'SELL' && triggerPrice <= baseLtp) {
+        return 'Stop loss trigger price must be higher than the current market price (LTP).';
       }
     }
     return null;

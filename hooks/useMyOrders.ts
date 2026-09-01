@@ -15,6 +15,7 @@ interface UseMyOrdersResult {
   error:   string | null;
   refresh: () => void;
   cancelOrder: (id: string) => Promise<{ success: boolean; error?: string }>;
+  updateOrderLocally: (updatedOrder: MyOrder) => void;
 }
 
 export function useMyOrders(refreshInterval?: number): UseMyOrdersResult {

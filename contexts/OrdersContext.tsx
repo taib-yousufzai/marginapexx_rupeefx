@@ -12,6 +12,7 @@ export interface OrdersContextType {
   error: string | null;
   refresh: () => Promise<void>;
   cancelOrder: (id: string) => Promise<{ success: boolean; error?: string }>;
+  updateOrderLocally: (updatedOrder: MyOrder) => void;
 }
 
 const OrdersDataContext = createContext<OrdersContextType | null>(null);
@@ -94,6 +95,17 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
   }, [fetchOrders, refreshInterval]);
 
 
+  const updateOrderLocally = useCallback((updatedOrder: MyOrder) => {
+    setOrders(prev => {
+      const exists = prev.some(o => o.id === updatedOrder.id);
+      const newOrders = exists
+        ? prev.map(o => (o.id === updatedOrder.id ? { ...o, ...updatedOrder } : o))
+        : [updatedOrder, ...prev];
+      globalOrdersCache = newOrders;
+      return newOrders;
+    });
+  }, []);
+
   const cancelOrder = useCallback(async (id: string) => {
     try {
       await api.patch(`/api/orders/${id}`, { status: 'CANCELLED' });
@@ -106,7 +118,7 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
   }, [fetchOrders]);
 
   return (
-    <OrdersDataContext.Provider value={{ orders, loading, error, refresh: fetchOrders, cancelOrder }}>
+    <OrdersDataContext.Provider value={{ orders, loading, error, refresh: fetchOrders, cancelOrder, updateOrderLocally }}>
       {children}
     </OrdersDataContext.Provider>
   );

@@ -1441,7 +1441,7 @@ function WatchlistContent() {
     if (scriptMountedRef.current && typeof (window as any).attachSwipeHandlers === 'function') {
       (window as any).attachSwipeHandlers();
     }
-  }, [watchlistItems]);
+  }, [watchlistItems, activeTab, searchText]);
 
   useEffect(() => {
     window.__addToWatchlistCallback = (item: WatchlistItem) => {
@@ -1735,12 +1735,50 @@ function WatchlistContent() {
     return () => {
       if (document.body.contains(script)) document.body.removeChild(script);
       scriptMountedRef.current = false;
+
+      // Clear event listeners on document
+      if ((window as any).__watchlistInputHandler) {
+        document.removeEventListener('input', (window as any).__watchlistInputHandler);
+        (window as any).__watchlistInputHandler = null;
+      }
+      if ((window as any).__watchlistClickHandler) {
+        document.removeEventListener('click', (window as any).__watchlistClickHandler, true);
+        (window as any).__watchlistClickHandler = null;
+      }
+      if ((window as any).__watchlistChangeHandler) {
+        document.removeEventListener('change', (window as any).__watchlistChangeHandler);
+        (window as any).__watchlistChangeHandler = null;
+      }
+
+      // Clear search timers and intervals
+      if ((window as any).__searchPriceInterval) {
+        clearInterval((window as any).__searchPriceInterval);
+        (window as any).__searchPriceInterval = null;
+      }
+      if ((window as any).__searchDebounceTimer) {
+        clearTimeout((window as any).__searchDebounceTimer);
+        (window as any).__searchDebounceTimer = null;
+      }
+
       // Clean up global state that persists across navigation and blocks other pages
       window.__selectionModeActive = false;
       window.__watchlistEventsAttached = false;
       window.__isBasketModeActive = false;
       document.body.style.overflow = '';
       document.body.style.overflowY = '';
+
+      // Clean up global window bridge function handles
+      (window as any).__reactOpenTradeSheet = null;
+      (window as any).__reactOpenDetailSheet = null;
+      (window as any).__reactOpenChartSheet = null;
+      (window as any).__reactSetChartItem = null;
+      (window as any).__addToWatchlistCallback = null;
+      (window as any).__removeFromWatchlistCallback = null;
+      (window as any).__syncWatchlistSymbols = null;
+      (window as any).__triggerSearch = null;
+      (window as any).__reactSelectAll = null;
+      (window as any).__reactDeleteSelected = null;
+
       // Force close any open drawers/overlays left behind
       const drawerOverlay = document.getElementById('drawerOverlay');
       const folderDrawer = document.getElementById('scriptsFolderDrawer');
@@ -3311,14 +3349,18 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
         }, 300);
       }
 
-      // Use a named function so it can be exposed globally for the React useEffect bridge
+      // Safely disconnect any previously attached input listener before re-binding
+      if (window.__watchlistInputHandler) {
+        document.removeEventListener('input', window.__watchlistInputHandler);
+      }
       function handleSearchInput(e) {
         if (e.target && e.target.id === 'globalSearchInput') {
           runSearch(e.target.value.trim());
         }
       }
-
+      window.__watchlistInputHandler = handleSearchInput;
       document.addEventListener('input', handleSearchInput);
+
       // Expose so React's searchText useEffect can trigger it directly
       window.__triggerSearch = function(query) {
         runSearch(query);
@@ -3393,37 +3435,46 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
         exitSelectionMode();
       };
 
-      if (!window.__watchlistEventsAttached) {
-        window.__watchlistEventsAttached = true;
-        // Capture all clicks when selectionMode is active to toggle checkboxes easily
-        document.addEventListener('click', function(e) {
-          if (!window.__selectionModeActive) return;
-          
-          var card = e.target.closest('.watchlist-card');
-          if (!card) return;
-          
-          // Skip swipe delete buttons or checkbox itself to avoid double-toggling
-          if (e.target.closest('.wc-swipe-actions') || e.target.classList.contains('wc-checkbox') || e.target.closest('.mcx-comex-switch')) {
-            return;
-          }
-          
-          e.preventDefault();
-          e.stopPropagation();
-          
-          var cb = card.querySelector('.wc-checkbox');
-          if (cb) {
-            cb.checked = !cb.checked;
-            if (typeof window.__updateSelectionUI === 'function') window.__updateSelectionUI();
-          }
-        }, true);
-
-        // Handle delegating checkbox change listener to keep count updated
-        document.addEventListener('change', function(e) {
-          if (e.target && e.target.classList.contains('wc-checkbox')) {
-            if (typeof window.__updateSelectionUI === 'function') window.__updateSelectionUI();
-          }
-        });
+      // Safely disconnect existing click and change handlers on document before re-binding
+      if (window.__watchlistClickHandler) {
+        document.removeEventListener('click', window.__watchlistClickHandler, true);
       }
+      if (window.__watchlistChangeHandler) {
+        document.removeEventListener('change', window.__watchlistChangeHandler);
+      }
+
+      function handleWatchlistClick(e) {
+        if (!window.__selectionModeActive) return;
+        
+        var card = e.target.closest('.watchlist-card');
+        if (!card) return;
+        
+        // Skip swipe delete buttons or checkbox itself to avoid double-toggling
+        if (e.target.closest('.wc-swipe-actions') || e.target.classList.contains('wc-checkbox') || e.target.closest('.mcx-comex-switch')) {
+          return;
+        }
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        var cb = card.querySelector('.wc-checkbox');
+        if (cb) {
+          cb.checked = !cb.checked;
+          if (typeof window.__updateSelectionUI === 'function') window.__updateSelectionUI();
+        }
+      }
+
+      function handleWatchlistChange(e) {
+        if (e.target && e.target.classList.contains('wc-checkbox')) {
+          if (typeof window.__updateSelectionUI === 'function') window.__updateSelectionUI();
+        }
+      }
+
+      window.__watchlistClickHandler = handleWatchlistClick;
+      window.__watchlistChangeHandler = handleWatchlistChange;
+      document.addEventListener('click', handleWatchlistClick, true);
+      document.addEventListener('change', handleWatchlistChange);
+      window.__watchlistEventsAttached = true;
 
       var basketModeBtn = document.getElementById('basketModeBtn');
       // basketModeBtn click is handled by React - no JS handler needed

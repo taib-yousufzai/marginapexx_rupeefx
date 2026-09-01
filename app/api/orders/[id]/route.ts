@@ -172,9 +172,9 @@ async function handleModifyOrder(
     const isChangingToMarket = targetOrderType === 'MARKET';
 
     let fillPrice: number | null = null;
+    let baseLtp: number | null = null;
     if (isChangingToMarket) {
       // Resolve live market quote for immediate market execution
-      let baseLtp: number | null = null;
       let rawBid: number | null = null;
       let rawAsk: number | null = null;
 
@@ -219,6 +219,19 @@ async function handleModifyOrder(
         fillPrice = rawBid && rawBid > 0 ? rawBid : baseLtp;
       }
       fillPrice = Math.round(fillPrice * 100) / 100;
+    } else {
+      const targetOrderType = payload.order_type || existingOrder.order_type;
+      const targetTriggerPrice = payload.trigger_price !== undefined ? payload.trigger_price : existingOrder.trigger_price;
+      const targetIsExit = Boolean(existingOrder.is_exit);
+      const targetSide = existingOrder.side;
+      const currentLtp = payload.frontend_ltp || existingOrder.ltp_at_entry || existingOrder.price || 0;
+
+      if ((targetOrderType === 'SL' || targetOrderType === 'SLM') && targetTriggerPrice !== null && targetTriggerPrice !== undefined && currentLtp > 0) {
+        const slErr = OrderService.validateStopLoss(targetOrderType, targetSide, Number(targetTriggerPrice), currentLtp, targetIsExit);
+        if (slErr) {
+          return NextResponse.json({ error: slErr }, { status: 400 });
+        }
+      }
     }
 
     // 3. Prepare update payload
@@ -235,21 +248,22 @@ async function handleModifyOrder(
       updateData.fill_price = fillPrice;
       updateData.price = fillPrice;
       updateData.trigger_price = null; // ATOMICALLY NEUTRALIZE OLD GTT TRIGGER CONDITION
-      updateData.stop_loss = payload.stop_loss !== undefined ? payload.stop_loss : existingOrder.stop_loss;
-      updateData.target = payload.target !== undefined ? payload.target : existingOrder.target;
+      updateData.stop_loss = payload.stop_loss !== undefined ? payload.stop_loss : null;
+      updateData.target = payload.target !== undefined ? payload.target : null;
     } else {
       if (payload.price !== undefined && payload.price !== null) {
         updateData.price = payload.price;
         updateData.fill_price = payload.price;
       }
-      if (payload.trigger_price !== undefined) {
-        updateData.trigger_price = payload.trigger_price;
-      }
-      if (payload.stop_loss !== undefined) {
-        updateData.stop_loss = payload.stop_loss;
-      }
-      if (payload.target !== undefined) {
-        updateData.target = payload.target;
+      if (targetOrderType === 'GTT') {
+        if (payload.trigger_price !== undefined) updateData.trigger_price = payload.trigger_price;
+        if (payload.stop_loss !== undefined) updateData.stop_loss = payload.stop_loss;
+        if (payload.target !== undefined) updateData.target = payload.target;
+      } else {
+        // Non-GTT (LIMIT, SL, SLM, etc.): explicitly strip residual GTT exit/trigger fields
+        updateData.trigger_price = payload.trigger_price !== undefined ? payload.trigger_price : null;
+        updateData.stop_loss = payload.stop_loss !== undefined ? payload.stop_loss : null;
+        updateData.target = payload.target !== undefined ? payload.target : null;
       }
     }
 
@@ -281,6 +295,19 @@ async function handleModifyOrder(
       });
       if (rpcErr) {
         console.error(`[handleModifyOrder] Failed process_executed_position RPC for order ${id}:`, rpcErr);
+        // Rollback order state in DB to prevent orphaned EXECUTED order
+        await admin
+          .from('orders')
+          .update({
+            status: existingOrder.status,
+            fill_price: existingOrder.fill_price,
+            price: existingOrder.price,
+            trigger_price: existingOrder.trigger_price,
+            order_type: existingOrder.order_type,
+          })
+          .eq('id', id);
+
+        return NextResponse.json({ error: rpcErr.message || 'Execution failed during market transition' }, { status: 400 });
       }
     }
 
