@@ -6,7 +6,7 @@
  */
 
 import { requireAdmin } from '../../../_auth';
-import { sanitizeOrderInfo } from '../../../../../lib/trading/orderSanitizer';
+import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
 
 export type OrderItem = {
   id: string;

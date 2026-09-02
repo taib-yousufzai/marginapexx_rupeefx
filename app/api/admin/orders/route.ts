@@ -7,7 +7,7 @@
 import { requireAdmin } from '../_auth';
 import { getRole } from '../../../../lib/auth';
 import { getDescendantUserIds } from '../../../../lib/hierarchy';
-import { sanitizeOrderInfo } from '../../../../lib/trading/orderSanitizer';
+import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
 
 export async function GET(request: Request): Promise<Response> {
   try {

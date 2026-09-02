@@ -2154,7 +2154,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       </div>
 
       {/* Content Split Container */}
-      <div style={{ display: 'flex', flexDirection: (isLandscape || isCssLandscape) ? 'row' : 'column', flex: 1, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: (isLandscape || isCssLandscape) ? 'row' : 'column', flex: 1, overflow: 'hidden', minHeight: 0 }}>
 
         {/* Main Area */}
         <div className="tc-main-area" style={{ flex: 1, minWidth: 0, position: 'relative' }}>
@@ -2238,6 +2238,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
             flexDirection: 'column',
             width: '100%',
             flexShrink: 0,
+            overflow: 'hidden',
             zIndex: 10
           }}
         >

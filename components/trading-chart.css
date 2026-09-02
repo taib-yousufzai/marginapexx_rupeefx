@@ -597,7 +597,8 @@
 
 .tc-wrapper .bottom-section {
   transition: all 0.3s ease;
-  overflow: visible;
+  overflow: hidden;
+  flex-shrink: 0;
   padding-bottom: env(safe-area-inset-bottom, 0);
 }
 
@@ -1199,7 +1200,7 @@
   border: 1px solid var(--border);
   flex-shrink: 0;
   overflow: hidden;
-  max-height: 18.75rem;
+  max-height: min(18.75rem, 40dvh);
   opacity: 1;
   transition: max-height .35s cubic-bezier(.2, .9, .4, 1.1), opacity .25s ease, margin .3s ease, border-width .3s ease;
   display: flex;
@@ -1232,7 +1233,7 @@
   gap: 0.375rem;
   padding: 0.5rem;
   overflow-y: auto;
-  max-height: 13.75rem;
+  max-height: min(13.75rem, 35dvh);
   flex: 1;
   min-height: 0;
 }
