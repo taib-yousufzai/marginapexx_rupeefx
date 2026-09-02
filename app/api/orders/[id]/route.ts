@@ -276,6 +276,8 @@ async function handleModifyOrder(
     }
 
     // --- NON-MARKET MODIFICATION: ATOMIC CANCEL & REPLACE LIFECYCLE ---
+    console.log(`[EXEC_TRACE ${new Date().toISOString()}] MODIFY_START | Old Order ID: ${id} | Current Status: ${existingOrder.status} | Target Type: ${targetOrderType} | Payload:`, JSON.stringify(payload));
+
     const targetTriggerPrice = payload.trigger_price !== undefined ? payload.trigger_price : (payload.stop_loss !== undefined ? payload.stop_loss : existingOrder.trigger_price);
     const targetIsExit = payload.is_exit !== undefined ? Boolean(payload.is_exit) : Boolean(existingOrder.is_exit);
     const targetSide = existingOrder.side;
@@ -292,6 +294,8 @@ async function handleModifyOrder(
       ? `${existingOrder.info} (Modified to ${targetOrderType})`
       : `Modified to ${targetOrderType}`;
 
+    console.log(`[EXEC_TRACE ${new Date().toISOString()}] OLD_ORDER_CANCEL_START | Old Order ID: ${id} | Status BEFORE: ${existingOrder.status} -> Status AFTER: CANCELLED`);
+
     const { data: cancelledOrder, error: cancelErr } = await admin
       .from('orders')
       .update({
@@ -306,8 +310,11 @@ async function handleModifyOrder(
       .single();
 
     if (cancelErr || !cancelledOrder) {
+      console.error(`[EXEC_TRACE ${new Date().toISOString()}] OLD_ORDER_CANCEL_FAILED | Old Order ID: ${id} | Error:`, cancelErr);
       return NextResponse.json({ error: 'Could not modify order. It might already be executed or cancelled.' }, { status: 400 });
     }
+
+    console.log(`[EXEC_TRACE ${new Date().toISOString()}] OLD_ORDER_CANCELLED_SUCCESS | Old Order ID: ${id}`);
 
     // Step B: Construct and insert replacement order (Order B) with status 'PENDING'
     const resolvedLinkedPosId = payload.linked_position_id || existingOrder.info || null;
@@ -350,6 +357,8 @@ async function handleModifyOrder(
       newOrderPayload.target = null;
     }
 
+    console.log(`[EXEC_TRACE ${new Date().toISOString()}] NEW_ORDER_INSERT_START | Target Type: ${targetOrderType} | Payload:`, JSON.stringify(newOrderPayload));
+
     const { data: newOrder, error: insertErr } = await admin
       .from('orders')
       .insert(newOrderPayload)
@@ -357,7 +366,7 @@ async function handleModifyOrder(
       .single();
 
     if (insertErr) {
-      console.error('[handleModifyOrder] Failed to insert replacement order B, reverting Order A cancellation:', insertErr);
+      console.error(`[EXEC_TRACE ${new Date().toISOString()}] NEW_ORDER_INSERT_FAILED | Error:`, insertErr);
       // Restore Order A back to PENDING so user doesn't lose their pending order
       await admin
         .from('orders')
@@ -366,6 +375,8 @@ async function handleModifyOrder(
 
       return NextResponse.json({ error: insertErr.message || 'Failed to create replacement order' }, { status: 500 });
     }
+
+    console.log(`[EXEC_TRACE ${new Date().toISOString()}] NEW_ORDER_INSERTED_SUCCESS | New Order ID: ${newOrder.id} | Status: ${newOrder.status} | Type: ${newOrder.order_type}`);
 
     return NextResponse.json({
       success: true,

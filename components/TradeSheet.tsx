@@ -1082,7 +1082,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               qty: finalQty,
               lots: finalLots,
               order_type: resolvedOrderType,
-              is_exit: currentExitMode,
+              is_exit: initialOrder?.is_exit !== undefined ? Boolean(initialOrder.is_exit) : false,
               linked_position_id: currentLinkedPosId || initialOrder?.linked_position_id || initialOrder?.linkedPosId || null,
             };
             const res: any = await api.put(`/api/orders/${modifyingOrderId}`, updatePayload);

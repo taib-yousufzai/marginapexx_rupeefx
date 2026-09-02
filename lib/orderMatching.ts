@@ -31,6 +31,7 @@ export function evaluateOrderTriggerCondition(
     target?: number | null;
     ltp_at_entry?: number | null;
     is_exit?: boolean | null;
+    info?: any;
   },
   ltp: number,
   bid?: number,
@@ -113,7 +114,7 @@ export function evaluateOrderTriggerCondition(
       }
     }
 
-    if (!shouldTrigger && limitPrice !== null && !isExit) {
+    if (!shouldTrigger && triggerPrice === null && limitPrice !== null && !isExit) {
       if (side === 'BUY' && ltp <= limitPrice) {
         shouldTrigger = true;
       } else if (side === 'SELL' && ltp >= limitPrice) {
@@ -243,8 +244,10 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
         priceObj?.ask
       );
 
+      console.log(`[EXEC_TRACE ${new Date().toISOString()}] EVALUATING | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status: ${order.status} | LTP: ${ltp} | TriggerPrice: ${order.trigger_price} | SL: ${order.stop_loss} | Target: ${order.target} | is_exit: ${order.is_exit} | info: ${order.info} | Result: ${shouldTrigger}`);
+
       if (shouldTrigger) {
-        console.log(`[Order Matching] Triggering order ${order.id} (${order.side} ${order.order_type} ${order.symbol}) at LTP: ${ltp}, Fill: ${fillPrice}`);
+        console.log(`[EXEC_TRACE ${new Date().toISOString()}] TRIGGERED_TRUE | Function: processPendingOrdersAndPositions | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status: ${order.status} | LTP: ${ltp} | FillPrice: ${fillPrice} | TriggerPrice: ${order.trigger_price} | SL: ${order.stop_loss} | Target: ${order.target} | is_exit: ${order.is_exit}`);
 
         const { data: existingPos, error: posErrorCheck } = await admin
           .from('positions')
@@ -260,7 +263,7 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
 
         if (order.is_exit || order.linked_position_id || (order.info && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(order.info)))) {
           if (!existingPos || existingPos.length === 0) {
-            console.log(`[Order Matching] Cancelling orphan exit order ${order.id} for symbol "${symbolKey}" — position is closed.`);
+            console.log(`[EXEC_TRACE ${new Date().toISOString()}] CANCEL_ORPHAN | Order ID: ${order.id} | Symbol: ${symbolKey} | Reason: Position is closed`);
             await admin
               .from('orders')
               .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
@@ -274,15 +277,14 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           if (order.side === 'BUY') {
             const oppSellPos = existingPos && existingPos.find((p: any) => p.side === 'SELL');
             if (oppSellPos) {
-              console.log(`[Order Matching] BUY entry order ${order.id} has opposite SELL position — treating as exit to close short`);
-              // Fall through: let it execute as an exit below by overriding is_exit
+              console.log(`[EXEC_TRACE ${new Date().toISOString()}] OPPOSITE_POS_CONVERT | BUY entry order ${order.id} has opposite SELL position ${oppSellPos.id}`);
               (order as any)._runtimeIsExit = true;
               (order as any)._runtimeLinkedPosId = oppSellPos.id;
             }
           } else if (order.side === 'SELL') {
             const oppBuyPos = existingPos && existingPos.find((p: any) => p.side === 'BUY');
             if (oppBuyPos) {
-              console.log(`[Order Matching] SELL entry order ${order.id} has opposite BUY position — treating as exit to close long`);
+              console.log(`[EXEC_TRACE ${new Date().toISOString()}] OPPOSITE_POS_CONVERT | SELL entry order ${order.id} has opposite BUY position ${oppBuyPos.id}`);
               (order as any)._runtimeIsExit = true;
               (order as any)._runtimeLinkedPosId = oppBuyPos.id;
             }
@@ -322,30 +324,37 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           }
         }
 
-        const { error: updateOrderErr } = await admin
+        console.log(`[EXEC_TRACE ${new Date().toISOString()}] BEFORE_EXEC_UPDATE | Function: processPendingOrdersAndPositions | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status BEFORE: ${order.status} -> Status AFTER: EXECUTED | FillPrice: ${fillPrice}`);
+
+        const { data: updatedDbRecord, error: updateOrderErr } = await admin
           .from('orders')
           .update({
             status: 'EXECUTED',
             fill_price: fillPrice,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', order.id);
+          .eq('id', order.id)
+          .eq('status', 'PENDING')
+          .select();
 
         if (updateOrderErr) {
-          console.error(`[Order Matching] Failed to update order ${order.id} to EXECUTED:`, updateOrderErr);
+          console.error(`[EXEC_TRACE ${new Date().toISOString()}] EXEC_UPDATE_ERROR | Order ID: ${order.id} | Error:`, updateOrderErr);
           continue;
         }
 
+        console.log(`[EXEC_TRACE ${new Date().toISOString()}] AFTER_EXEC_UPDATE | Order ID: ${order.id} | DB Status: ${updatedDbRecord?.[0]?.status}`);
+
         // Explicitly call the RPC to process the position.
-        // This is required because the DB trigger may not fire reliably when
-        // order_type changes (e.g. LIMIT → MARKET via modify).
         const linkedInfo = finalLinkedPosId || null;
+        console.log(`[EXEC_TRACE ${new Date().toISOString()}] CALLING_RPC_PROCESS_EXECUTED | Order ID: ${order.id} | Info: ${linkedInfo}`);
         const { error: rpcErr } = await admin.rpc('process_executed_position', {
           p_order_id: order.id,
           p_info: linkedInfo,
         });
         if (rpcErr) {
-          console.error(`[Order Matching] Failed to process executed position for order ${order.id}:`, rpcErr);
+          console.error(`[EXEC_TRACE ${new Date().toISOString()}] RPC_ERROR | Order ID: ${order.id} | Error:`, rpcErr);
+        } else {
+          console.log(`[EXEC_TRACE ${new Date().toISOString()}] RPC_SUCCESS | Order ID: ${order.id}`);
         }
 
         // 3. Write audit log

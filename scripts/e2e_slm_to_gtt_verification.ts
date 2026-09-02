@@ -1,4 +1,5 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
 import { getAdminClient } from '@/lib/adminClient';
 import { PositionService } from '@/lib/trading/PositionService';
 
