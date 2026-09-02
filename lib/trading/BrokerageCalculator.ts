@@ -81,6 +81,10 @@ export interface OrderBrokerageResult {
   carryCharge: number;
   gttCharge: number;
   totalBrokerage: number;
+  entryIntradayCharge: number;
+  entryCarryCharge: number;
+  entryGttCharge: number;
+  displayBrokerage: number;
 }
 
 export function calculateOrderBrokerage({
@@ -100,6 +104,10 @@ export function calculateOrderBrokerage({
       carryCharge: 0,
       gttCharge: 0,
       totalBrokerage: 0,
+      entryIntradayCharge: 0,
+      entryCarryCharge: 0,
+      entryGttCharge: 0,
+      displayBrokerage: 0,
     };
   }
 
@@ -110,6 +118,10 @@ export function calculateOrderBrokerage({
       carryCharge: 0,
       gttCharge: 0,
       totalBrokerage: 0,
+      entryIntradayCharge: 0,
+      entryCarryCharge: 0,
+      entryGttCharge: 0,
+      displayBrokerage: 0,
     };
   }
 
@@ -117,50 +129,66 @@ export function calculateOrderBrokerage({
 
   // 1. Intraday Charge (always applies to entry orders)
   const intradayCommType = segSetting?.intraday_commission_type || segSetting?.commission_type || fallbackCommType;
-  const intradayCommVal = segSetting?.intraday_commission_value ?? segSetting?.commission_value ?? fallbackCommVal;
+  const rawIntradayVal = segSetting?.intraday_commission_value ?? segSetting?.commission_value;
+  const intradayCommVal = (rawIntradayVal != null && Number(rawIntradayVal) > 0) ? rawIntradayVal : fallbackCommVal;
   const singleIntraday = calculateSingleLegCharge({
     exposure,
     lots,
     commissionType: intradayCommType,
     commissionValue: Number(intradayCommVal),
   });
+  const entryIntradayCharge = Math.round(singleIntraday * 100) / 100;
   const intradayCharge = Math.round(singleIntraday * multiplier * 100) / 100;
 
   // 2. Carry Charge (applies if CARRY product or GTT order type)
+  let singleCarry = 0;
+  let entryCarryCharge = 0;
   let carryCharge = 0;
   if (productType === 'CARRY' || orderType === 'GTT') {
-    const carryCommType = segSetting?.carry_commission_type || segSetting?.commission_type || fallbackCommType;
-    const carryCommVal = segSetting?.carry_commission_value ?? segSetting?.commission_value ?? fallbackCommVal;
-    const singleCarry = calculateSingleLegCharge({
+    const rawCarryVal = segSetting?.carry_commission_value;
+    const isCarryExplicit = rawCarryVal != null && Number(rawCarryVal) > 0 && (Number(rawCarryVal) !== 4500 || Number(intradayCommVal) === 4500);
+    const carryCommType = (isCarryExplicit && segSetting?.carry_commission_type) ? segSetting.carry_commission_type : intradayCommType;
+    const carryCommVal = isCarryExplicit ? Number(rawCarryVal) : intradayCommVal;
+
+    singleCarry = calculateSingleLegCharge({
       exposure,
       lots,
       commissionType: carryCommType,
       commissionValue: Number(carryCommVal),
     });
+    entryCarryCharge = Math.round(singleCarry * 100) / 100;
     carryCharge = Math.round(singleCarry * multiplier * 100) / 100;
   }
 
   // 3. GTT Charge (applies if GTT order type)
+  let singleGtt = 0;
+  let entryGttCharge = 0;
   let gttCharge = 0;
   if (orderType === 'GTT') {
     const gttCommType = segSetting?.gtt_commission_type || 'Per Trade';
     const gttCommVal = segSetting?.gtt_commission_value ?? 10;
-    const singleGtt = calculateSingleLegCharge({
+    singleGtt = calculateSingleLegCharge({
       exposure,
       lots,
       commissionType: gttCommType,
       commissionValue: Number(gttCommVal),
     });
+    entryGttCharge = Math.round(singleGtt * 100) / 100;
     gttCharge = Math.round(singleGtt * 100) / 100;
   }
 
   const totalBrokerage = Math.round((intradayCharge + carryCharge + gttCharge) * 100) / 100;
+  const displayBrokerage = Math.round((entryIntradayCharge + entryCarryCharge + entryGttCharge) * 100) / 100;
 
   return {
     intradayCharge,
     carryCharge,
     gttCharge,
     totalBrokerage,
+    entryIntradayCharge,
+    entryCarryCharge,
+    entryGttCharge,
+    displayBrokerage,
   };
 }
 
@@ -194,8 +222,12 @@ export interface CarryBrokerageParams {
 export function calculateCarryBrokerage(params: CarryBrokerageParams): number {
   if (params.productType !== 'CARRY') return 0;
 
-  const commType = params.carryCommissionType || params.commissionType || 'Per Crore';
-  const commVal = Number(params.carryCommissionValue ?? params.commissionValue ?? 0);
+  const rawCarryVal = params.carryCommissionValue;
+  const intradayVal = Number(params.commissionValue ?? 4500);
+  const isCarryExplicit = rawCarryVal != null && Number(rawCarryVal) > 0 && (Number(rawCarryVal) !== 4500 || intradayVal === 4500);
+
+  const commType = (isCarryExplicit && params.carryCommissionType) ? params.carryCommissionType : (params.commissionType || 'Per Crore');
+  const commVal = isCarryExplicit ? Number(rawCarryVal) : intradayVal;
 
   const exposure = params.qty * params.entryPrice;
   const lots = params.lots ?? params.qty;

@@ -379,9 +379,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     fallbackCommVal,
   }) : brokerageResult;
 
-  const displayIntraday = displayBrokerageResult.intradayCharge;
-  const displayCarry = displayBrokerageResult.carryCharge;
-  const displayGtt = displayBrokerageResult.gttCharge;
+  const displayBrokerage = displayBrokerageResult.displayBrokerage;
+  const displayIntraday = displayBrokerageResult.entryIntradayCharge;
+  const displayCarry = displayBrokerageResult.entryCarryCharge;
+  const displayGtt = displayBrokerageResult.entryGttCharge;
 
   const intradayType = segSetting?.intraday_type ?? 'Multiplier';
   const holdingType = segSetting?.holding_type ?? 'Multiplier';
@@ -1850,7 +1851,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                       Charges Breakdown {showCharges ? '▲' : '▼'}
                     </span>
                     <span className="ts2-mv" style={{ color: (activeSide === 'SELL' || effectiveExitMode) ? '#C62E2E' : '#15803D', fontWeight: 800 }}>
-                      {currencySymbol} {calculatedBrokerage.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {currencySymbol} {displayBrokerage.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </div>
                   {showCharges && (

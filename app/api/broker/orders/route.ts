@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireBroker } from '../_auth';
+import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
 
 export async function GET(req: Request) {
   const auth = await requireBroker(req);
@@ -40,5 +41,10 @@ export async function GET(req: Request) {
     return NextResponse.json([]);
   }
 
-  return NextResponse.json(orders || []);
+  const sanitized = (orders || []).map((o: any) => ({
+    ...o,
+    info: sanitizeOrderInfo(o.info) ?? null,
+  }));
+
+  return NextResponse.json(sanitized);
 }

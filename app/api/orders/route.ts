@@ -28,6 +28,7 @@ import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { mapSymbolToSegment } from '@/lib/trading/SymbolMapping';
 import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
 import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
+import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
 import { OrderService } from '@/lib/trading/OrderService';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -337,7 +338,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ltp_at_entry: Number(r.ltp_at_entry ?? 0),
       order_type:   (r.order_type as MyOrder['order_type']) ?? 'MARKET',
       product_type: (r.product_type as MyOrder['product_type']) ?? 'INTRADAY',
-      info:         (r.info as string) ?? null,
+      info:         sanitizeOrderInfo(r.info as string ?? null),
       brokerage:    Number(r.brokerage ?? 0),
       client_price: r.client_price !== null ? Number(r.client_price) : undefined,
       trigger_price: r.trigger_price !== null ? Number(r.trigger_price) : undefined,

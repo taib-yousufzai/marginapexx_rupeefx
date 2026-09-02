@@ -6,6 +6,7 @@
  */
 
 import { requireAdmin } from '../../../_auth';
+import { sanitizeOrderInfo } from '../../../../../lib/trading/orderSanitizer';
 
 export type OrderItem = {
   id: string;
@@ -102,7 +103,7 @@ export async function GET(
         qty: row.qty,
         price: row.price,
         order_type: row.order_type as 'MARKET' | 'LIMIT',
-        info: row.info ?? '',
+        info: sanitizeOrderInfo(row.info) ?? '',
         time: row.created_at,
       }),
     );

@@ -12,6 +12,7 @@ import type { TradeSheetItem } from '@/components/TradeSheet';
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
 import './page.css';
 import dynamic from 'next/dynamic';
+import { isUserVisibleInfo, sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
 
@@ -338,7 +339,7 @@ export default function OrderPage() {
                       <div className="ord-row" style={{ marginTop: 4 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span className="ord-type-pill" style={{ fontSize: '0.6rem' }}>{order.product_type}</span>
-                          {order.info && order.info !== 'Exit - USER' && !order.info.includes('-') && (
+                          {isUserVisibleInfo(order.info) && (
                             <span style={{ fontSize: '0.6rem', color: 'var(--text-secondary)' }}>
                               {order.info}
                             </span>
@@ -526,7 +527,7 @@ export default function OrderPage() {
                       </div>
                     </div>
                   </div>
-                  {selectedOrder.info && selectedOrder.info !== 'Exit - USER' && (
+                  {isUserVisibleInfo(selectedOrder.info) && (
                     <div className="ord-rejection" style={{ marginTop: 0, marginBottom: '8px' }}>
                       <i className="fas fa-info-circle" /> {selectedOrder.info}
                     </div>

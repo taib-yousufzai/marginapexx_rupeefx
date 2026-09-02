@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { signOut } from '@/lib/auth';
 import { apiCall, Toast, ToastState, ConfirmDialog } from './AdminUtils';
+import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -129,7 +130,7 @@ export default function OrdersPage({ selectedUser, onOpenUserPanel, isDemoMode }
           qty: r.qty,
           price: r.price,
           orderType: r.order_type as Order['orderType'],
-          info: r.info ?? '',
+          info: sanitizeOrderInfo(r.info) ?? '',
           time: r.created_at ?? r.time ?? '',
         }));
 
@@ -408,7 +409,7 @@ export default function OrdersPage({ selectedUser, onOpenUserPanel, isDemoMode }
                 <td>{o.qty}</td>
                 <td>{(o.price ?? 0).toFixed(2)}</td>
                 <td><span className="adm-ord-type-badge">{o.orderType}</span></td>
-                <td className="adm-ord-info">{o.info || '—'}</td>
+                <td className="adm-ord-info">{sanitizeOrderInfo(o.info) || '—'}</td>
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} className="adm-ord-time">
                   {formatTime(o.time)}
                 </td>

@@ -7,6 +7,7 @@
 import { requireAdmin } from '../_auth';
 import { getRole } from '../../../../lib/auth';
 import { getDescendantUserIds } from '../../../../lib/hierarchy';
+import { sanitizeOrderInfo } from '../../../../lib/trading/orderSanitizer';
 
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -118,6 +119,7 @@ export async function GET(request: Request): Promise<Response> {
     // Merge profile info into each order
     const merged = (data ?? []).map((r: any) => ({
       ...r,
+      info: sanitizeOrderInfo(r.info) ?? '',
       user_name: profileMap[r.user_id]?.full_name || profileMap[r.user_id]?.email || r.user_id,
       user_client_id: profileMap[r.user_id]?.client_id || '',
     }));
