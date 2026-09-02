@@ -598,6 +598,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     isExecutingRef.current = true;
     setOrderState('processing');
     let handedOffToOrderFlow = false;
+    let currentExitMode = effectiveExitMode;
+    let currentLinkedPosId = linkedPosId;
     try {
       if (!item) return;
 
@@ -654,7 +656,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       let resolvedStopLoss: number | undefined = undefined;
       let resolvedTarget: number | undefined = undefined;
 
-      const isExitOrModifyFlow = effectiveExitMode || isModify;
+      const isExitOrModifyFlow = currentExitMode || isModify;
 
       if (isExitOrModifyFlow) {
         if (orderType === 'TARGET') {
@@ -726,7 +728,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           showOrderError('Sell at limit price must be above the current market price.');
           return;
         }
-      } else if (resolvedOrderType === 'GTT' && !effectiveExitMode && hasExplicitLimit) {
+      } else if (resolvedOrderType === 'GTT' && !currentExitMode && hasExplicitLimit) {
         const limitVal = parseFloat(limitPrice);
         if (placeSide === 'BUY' && limitVal >= currentLtp) {
           showOrderError('Buy at limit price must be below the current market price.');
@@ -738,7 +740,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       }
 
-      const isExitOrder = effectiveExitMode || (!isModify && ((placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos)));
+      const isExitOrder = currentExitMode || (!isModify && ((placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos)));
 
       // Pre-check strike range for fresh entry/add-more orders on options
       if (!isExitOrder && item?.symbol && (item.symbol.endsWith('CE') || item.symbol.endsWith('PE'))) {
@@ -890,7 +892,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       }
 
-      if (resolvedOrderType === 'GTT' && !effectiveExitMode) {
+      if (resolvedOrderType === 'GTT' && !currentExitMode) {
         if (resolvedClientPrice === undefined || isNaN(resolvedClientPrice) || resolvedClientPrice <= 0) {
           showOrderError(placeSide === 'BUY' ? 'Limit price is required for a GTT Buy order.' : 'Limit price is required for a GTT Sell order.');
           return;
@@ -950,8 +952,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           } catch (e) {
             console.error('[TradeSheet] Error clearing target/SL for market exit:', e);
           }
-          effectiveExitMode = true;
-          linkedPosId = positionId;
+          currentExitMode = true;
+          currentLinkedPosId = positionId;
         } else {
           // User changed/updated pending exit instruction on the position (SL, SLM, TARGET, LIMIT, GTT)
           let positionUpdateData: any = {};
@@ -989,7 +991,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       }
 
-      if (effectiveExitMode && !isModify) {
+      if (currentExitMode && !isModify) {
         // Exit mode: show the full-screen overlay and await the order
         const loadingDetail = (orderType === 'TARGET' || orderType === 'SL' || orderType === 'GTT')
           ? 'Modifying Position...'
@@ -1022,13 +1024,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             qty: finalQty,
             lots: finalLots,
             order_type: resolvedOrderType as any,
-            product_type: ((linkedPosId ? activePositions.find(p => p.id === linkedPosId)?.product_type : undefined) || existingPos?.product_type || targetPT || 'INTRADAY') as 'INTRADAY' | 'CARRY',
+            product_type: ((currentLinkedPosId ? activePositions.find(p => p.id === currentLinkedPosId)?.product_type : undefined) || existingPos?.product_type || targetPT || 'INTRADAY') as 'INTRADAY' | 'CARRY',
             client_price: resolvedClientPrice,
             trigger_price: resolvedTriggerPrice,
             stop_loss: resolvedStopLoss,
             target: resolvedTarget,
             is_exit: true,
-            linked_position_id: linkedPosId || undefined,
+            linked_position_id: currentLinkedPosId || undefined,
             orderAttemptId,
             ...diagnosticFields,
           });
@@ -1080,8 +1082,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               qty: finalQty,
               lots: finalLots,
               order_type: resolvedOrderType,
-              is_exit: effectiveExitMode,
-              linked_position_id: linkedPosId || initialOrder?.linked_position_id || initialOrder?.linkedPosId || null,
+              is_exit: currentExitMode,
+              linked_position_id: currentLinkedPosId || initialOrder?.linked_position_id || initialOrder?.linkedPosId || null,
             };
             const res: any = await api.put(`/api/orders/${modifyingOrderId}`, updatePayload);
             if (res?.order) {
@@ -1142,7 +1144,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             stop_loss: resolvedStopLoss,
             target: resolvedTarget,
             is_exit: (placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos),
-            linked_position_id: linkedPosId || undefined,
+            linked_position_id: currentLinkedPosId || undefined,
             orderAttemptId,
             ...diagnosticFields,
           });

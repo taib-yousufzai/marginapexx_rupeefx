@@ -670,7 +670,7 @@ export default function Page() {
                   </div>
 
                   {/* WhatsApp Support */}
-                  <div className="whatsapp-support" onClick={() => window.open('https://wa.me/916239541970', '_blank')}>
+                  <div className="whatsapp-support" onClick={() => window.open('https://wa.me/918796119115', '_blank')}>
                     <div className="whatsapp-inner">
                       <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
                       <div className="whatsapp-content">

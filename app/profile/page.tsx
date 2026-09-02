@@ -287,7 +287,7 @@ export default function ProfilePage() {
                                 <div className="us-caret"><i className="fas fa-chevron-right"></i></div>
                             </Link>
 
-                            <a href="https://wa.me/916239541970" target="_blank" rel="noopener noreferrer" className="us-item">
+                            <a href="https://wa.me/918796119115" target="_blank" rel="noopener noreferrer" className="us-item">
                                 <div className="us-icon"><i className="fas fa-headset"></i></div>
                                 <div className="us-text">Help &amp; Support</div>
                                 <div className="us-caret"><i className="fas fa-chevron-right"></i></div>
