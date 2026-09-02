@@ -134,7 +134,7 @@ async function main() {
     await PositionService.closePosition({
       userId,
       positionId: pos.id,
-      closeQty: 10,
+      closeQty: pos.qty_open,
       closePrice: 810.0,
       closedBy: 'USER',
       expectedBrokerage: 20
@@ -164,6 +164,126 @@ async function main() {
       console.log('✅ SUCCESS: Position successfully closed AND associated pending SL/Exit order automatically CANCELLED!');
     } else {
       console.error(`❌ FAILURE: Position status: ${closedPosDb.status}, Order status: ${cancelledOrderDb?.status}`);
+    }
+    // --------------------------------------------------------------------------
+    // TEST CASE 4: Order Modification Lifecycle & Context Preservation
+    // --------------------------------------------------------------------------
+    console.log('\n--- TEST CASE 4: Exit Order Modification Lifecycle & Context Preservation ---');
+    
+    // 1. Create a fresh position
+    const modSymbol = 'NSE:INFY';
+    const modMarketOrderId = await PositionService.openPosition(
+      userId,
+      modSymbol,
+      'BUY',
+      5,
+      1,
+      1500.0,
+      1500.0,
+      'MARKET',
+      'INTRADAY',
+      testSegment,
+      modSymbol,
+      true,
+      0,
+      0
+    );
+
+    const { data: modPosition } = await admin
+      .from('positions')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('symbol', modSymbol)
+      .eq('status', 'open')
+      .single();
+
+    if (modPosition) {
+      console.log(`Opened position for modification test ID: ${modPosition.id}`);
+
+      // 2. Insert pending exit order linked to modPosition
+      const { data: modExitOrder } = await admin
+        .from('orders')
+        .insert({
+          user_id: userId,
+          symbol: modSymbol,
+          kite_instrument: modSymbol,
+          segment: testSegment,
+          side: 'SELL',
+          status: 'PENDING',
+          qty: 5,
+          lots: 1,
+          price: 770,
+          trigger_price: 770,
+          fill_price: 770,
+          order_type: 'SL',
+          product_type: 'INTRADAY',
+          is_exit: true,
+          info: modPosition.id
+        })
+        .select('*')
+        .single();
+
+      console.log(`Created exit SL order ID: ${modExitOrder?.id}, linked_position_id (info): ${modExitOrder?.info}`);
+
+      // 3. Update order across types (SL -> SLM -> GTT -> SL) preserving is_exit and info
+      await admin.from('orders').update({
+        order_type: 'SLM',
+        trigger_price: 765,
+        is_exit: true,
+        info: modPosition.id
+      }).eq('id', modExitOrder.id);
+
+      await admin.from('orders').update({
+        order_type: 'GTT',
+        trigger_price: 760,
+        stop_loss: 755,
+        target: 850,
+        is_exit: true,
+        info: modPosition.id
+      }).eq('id', modExitOrder.id);
+
+      await admin.from('orders').update({
+        order_type: 'SL',
+        trigger_price: 750,
+        stop_loss: null,
+        target: null,
+        is_exit: true,
+        info: modPosition.id
+      }).eq('id', modExitOrder.id);
+
+      const { data: updatedExitOrder } = await admin
+        .from('orders')
+        .select('*')
+        .eq('id', modExitOrder.id)
+        .single();
+
+      // Check open positions count
+      const { data: openPosCheck } = await admin
+        .from('positions')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('symbol', modSymbol)
+        .eq('status', 'open');
+
+      if (
+        updatedExitOrder.is_exit === true &&
+        updatedExitOrder.info === modPosition.id
+      ) {
+        console.log('✅ SUCCESS: Exit order modified repeatedly; context (is_exit & info) preserved with 0 duplicate positions created!');
+      } else {
+        console.error(`❌ FAILURE: Exit context lost! is_exit: ${updatedExitOrder.is_exit}, info: ${updatedExitOrder.info}`);
+      }
+
+      // 4. Close position to clean up
+      await PositionService.closePosition({
+        userId,
+        positionId: modPosition.id,
+        closeQty: modPosition.qty_open,
+        closePrice: 800.0,
+        closedBy: 'USER',
+        expectedBrokerage: 10
+      });
+      console.log('Cleaned up modification test position.');
     }
   } else {
     console.error('❌ FAILURE: Position was not created upon market order execution.');

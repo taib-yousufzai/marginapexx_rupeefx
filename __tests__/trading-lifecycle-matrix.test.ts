@@ -153,7 +153,7 @@ class TradingEngineSimulator {
       trigger_price: params.triggerPrice,
       stop_loss: params.stopLoss,
       target: params.target,
-      ltp_at_entry: params.ltpAtEntry,
+      ltp_at_entry: params.ltpAtEntry ?? (params.linkedPositionId ? this.positions.find(p => p.id === params.linkedPositionId)?.entry_price : undefined),
       is_exit: params.isExit ?? false,
       linked_position_id: params.linkedPositionId,
     };
@@ -178,6 +178,7 @@ class TradingEngineSimulator {
           stop_loss: order.stop_loss,
           target: order.target,
           ltp_at_entry: order.ltp_at_entry,
+          is_exit: order.is_exit,
         },
         currentLtp,
         bid,
@@ -250,7 +251,16 @@ class TradingEngineSimulator {
   modifyOrder(
     orderId: string,
     userId: string,
-    updates: { price?: number; triggerPrice?: number; qty?: number; orderType?: 'MARKET' | 'LIMIT' | 'SL' | 'SLM' | 'GTT' }
+    updates: {
+      price?: number;
+      triggerPrice?: number;
+      stopLoss?: number;
+      target?: number;
+      qty?: number;
+      orderType?: 'MARKET' | 'LIMIT' | 'SL' | 'SLM' | 'GTT';
+      isExit?: boolean;
+      linkedPositionId?: string;
+    }
   ): { success: boolean; order?: Order; error?: string } {
     const order = this.orders.find(o => o.id === orderId && o.user_id === userId);
     if (!order) return { success: false, error: 'Order not found' };
@@ -270,14 +280,35 @@ class TradingEngineSimulator {
       if (updates.qty <= 0) return { success: false, error: 'Quantity must be greater than zero.' };
       order.qty = updates.qty;
     }
+    if (updates.isExit !== undefined) {
+      order.is_exit = updates.isExit;
+    }
+    if (updates.linkedPositionId !== undefined) {
+      order.linked_position_id = updates.linkedPositionId;
+    }
+
+    const existingStopLoss = updates.stopLoss ?? order.stop_loss;
+    const existingTarget = updates.target ?? order.target;
+
     if (updates.orderType !== undefined) {
       order.order_type = updates.orderType;
+    }
+
+    if (order.order_type === 'GTT') {
+      order.trigger_price = updates.triggerPrice;
+      if (updates.stopLoss !== undefined) order.stop_loss = updates.stopLoss;
+      if (updates.target !== undefined) order.target = updates.target;
+    } else if (updates.orderType !== undefined && updates.orderType !== 'GTT') {
+      order.stop_loss = undefined;
+      order.target = undefined;
     }
 
     if (updates.orderType === 'MARKET') {
       order.order_type = 'MARKET';
       order.status = 'EXECUTED';
       order.trigger_price = undefined;
+      order.stop_loss = undefined;
+      order.target = undefined;
       const fillPrice = updates.price ?? order.client_price ?? order.price ?? 2300;
       order.fill_price = fillPrice;
       order.price = fillPrice;
@@ -311,8 +342,8 @@ class TradingEngineSimulator {
           qty_total: order.qty,
           entry_price: fillPrice,
           status: 'open',
-          stop_loss: order.stop_loss,
-          target: order.target,
+          stop_loss: existingStopLoss,
+          target: existingTarget,
         });
       }
     }
@@ -711,5 +742,175 @@ describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', (
     });
 
     expect(exitOrder.status).toBe('CANCELLED');
+  });
+
+  it('Test 17: Exit Order Modification Lifecycle (SL -> SLM -> GTT -> SL) — Preserves exit flags and position link without duplicate position creation', () => {
+    const sim = new TradingEngineSimulator();
+    const userId = 'user_mod_17';
+    const symbol = 'NSE:RELIANCE';
+
+    // 1. Create entry position
+    const entry = sim.placeMarketOrder({ userId, symbol, side: 'BUY', qty: 5, price: 2500 });
+    const pos = entry.position!;
+    expect(sim.positions.length).toBe(1);
+
+    // 2. Create pending exit SL order
+    const exitOrder = sim.placePendingOrder({
+      userId,
+      symbol,
+      side: 'SELL',
+      orderType: 'SL',
+      qty: 5,
+      price: 2450,
+      triggerPrice: 2450,
+      isExit: true,
+      linkedPositionId: pos.id,
+    });
+
+    expect(exitOrder.status).toBe('PENDING');
+    expect(exitOrder.is_exit).toBe(true);
+    expect(exitOrder.linked_position_id).toBe(pos.id);
+
+    // 3. Modify SL -> SLM
+    const mod1 = sim.modifyOrder(exitOrder.id, userId, {
+      orderType: 'SLM',
+      triggerPrice: 2440,
+      isExit: true,
+      linkedPositionId: pos.id,
+    });
+    expect(mod1.success).toBe(true);
+    expect(exitOrder.order_type).toBe('SLM');
+    expect(exitOrder.is_exit).toBe(true);
+    expect(exitOrder.linked_position_id).toBe(pos.id);
+    expect(sim.positions.length).toBe(1); // Still exactly 1 position!
+
+    // 4. Modify SLM -> GTT
+    const mod2 = sim.modifyOrder(exitOrder.id, userId, {
+      orderType: 'GTT',
+      triggerPrice: 2435,
+      stopLoss: 2430,
+      target: 2600,
+      isExit: true,
+      linkedPositionId: pos.id,
+    });
+    expect(mod2.success).toBe(true);
+    expect(exitOrder.order_type).toBe('GTT');
+    expect(exitOrder.stop_loss).toBe(2430);
+    expect(exitOrder.target).toBe(2600);
+    expect(sim.positions.length).toBe(1); // Still exactly 1 position!
+
+    // 5. Modify GTT -> SL (residual bracket fields cleared)
+    const mod3 = sim.modifyOrder(exitOrder.id, userId, {
+      orderType: 'SL',
+      triggerPrice: 2420,
+      isExit: true,
+      linkedPositionId: pos.id,
+    });
+    expect(mod3.success).toBe(true);
+    expect(exitOrder.order_type).toBe('SL');
+    expect(exitOrder.stop_loss).toBeUndefined(); // Bracket fields cleared!
+    expect(exitOrder.target).toBeUndefined();
+    expect(sim.positions.length).toBe(1); // Still exactly 1 position!
+  });
+
+  it('Test 18: Rapid Modification & Market Exit Execution — Rapid exit order modifications preserve context; Market execution nets position with zero position duplication', () => {
+    const sim = new TradingEngineSimulator();
+    const userId = 'user_mod_18';
+    const symbol = 'NSE:TATASTEEL';
+
+    // 1. Create entry position
+    const entry = sim.placeMarketOrder({ userId, symbol, side: 'BUY', qty: 100, price: 150 });
+    const pos = entry.position!;
+
+    // 2. Create pending exit SL order
+    const exitOrder = sim.placePendingOrder({
+      userId,
+      symbol,
+      side: 'SELL',
+      orderType: 'SL',
+      qty: 100,
+      price: 145,
+      triggerPrice: 145,
+      isExit: true,
+      linkedPositionId: pos.id,
+    });
+
+    // 3. Perform 5 rapid modifications
+    sim.modifyOrder(exitOrder.id, userId, { orderType: 'SLM', triggerPrice: 144, isExit: true, linkedPositionId: pos.id });
+    sim.modifyOrder(exitOrder.id, userId, { orderType: 'SL', triggerPrice: 143, isExit: true, linkedPositionId: pos.id });
+    sim.modifyOrder(exitOrder.id, userId, { orderType: 'SLM', triggerPrice: 142, isExit: true, linkedPositionId: pos.id });
+    sim.modifyOrder(exitOrder.id, userId, { orderType: 'GTT', triggerPrice: 141, stopLoss: 140, target: 160, isExit: true, linkedPositionId: pos.id });
+    sim.modifyOrder(exitOrder.id, userId, { orderType: 'SL', triggerPrice: 140, isExit: true, linkedPositionId: pos.id });
+
+    expect(exitOrder.status).toBe('PENDING');
+    expect(sim.positions.length).toBe(1);
+    expect(sim.positions[0].status).toBe('open');
+
+    // 4. Modify exit order to MARKET -> Immediate Execution & Position Netting
+    const marketMod = sim.modifyOrder(exitOrder.id, userId, {
+      orderType: 'MARKET',
+      price: 148,
+      isExit: true,
+      linkedPositionId: pos.id,
+    });
+
+    expect(marketMod.success).toBe(true);
+    expect(exitOrder.status).toBe('EXECUTED');
+    expect(pos.status).toBe('closed');
+    expect(pos.qty_open).toBe(0);
+    expect(sim.positions.length).toBe(1); // 1 position total, which is now CLOSED! No duplicate open position created!
+  });
+
+  it('Test 19: SLM to GTT Modification Deferred Execution — Modifying SLM to GTT keeps order PENDING until price reaches trigger thresholds', () => {
+    const sim = new TradingEngineSimulator();
+    const userId = 'user_mod_19';
+    const symbol = 'NSE:RELIANCE';
+
+    // 1. Create open position at LTP = 2500
+    const entry = sim.placeMarketOrder({ userId, symbol, side: 'BUY', qty: 50, price: 2500 });
+    const pos = entry.position!;
+    expect(pos.status).toBe('open');
+
+    // 2. Create pending exit SLM order with trigger_price = 2450
+    const exitOrder = sim.placePendingOrder({
+      userId,
+      symbol,
+      side: 'SELL',
+      orderType: 'SLM',
+      qty: 50,
+      price: 2450,
+      triggerPrice: 2450,
+      isExit: true,
+      linkedPositionId: pos.id,
+      ltpAtEntry: 2500,
+    });
+    expect(exitOrder.status).toBe('PENDING');
+
+    // 3. Modify SLM -> GTT with stop_loss = 2400, target = 2600 at current LTP = 2500
+    const gttMod = sim.modifyOrder(exitOrder.id, userId, {
+      orderType: 'GTT',
+      stopLoss: 2400,
+      target: 2600,
+      isExit: true,
+      linkedPositionId: pos.id,
+      price: 2500,
+    });
+
+    expect(gttMod.success).toBe(true);
+    expect(exitOrder.order_type).toBe('GTT');
+    expect(exitOrder.status).toBe('PENDING'); // Crucial: Must remain PENDING!
+    expect(pos.status).toBe('open'); // Position remains open
+
+    // 4. Simulate market price movement within bracket (LTP = 2450) -> Still PENDING
+    const result1 = sim.evaluatePendingOrders(symbol, 2450);
+    expect(result1.length).toBe(0);
+    expect(exitOrder.status).toBe('PENDING');
+
+    // 5. Simulate market price movement hitting stop_loss (LTP = 2395 <= 2400) -> Triggers execution!
+    const result2 = sim.evaluatePendingOrders(symbol, 2395);
+    expect(result2.length).toBe(1);
+    expect(result2[0].id).toBe(exitOrder.id);
+    expect(exitOrder.status).toBe('EXECUTED');
+    expect(pos.status).toBe('closed');
   });
 });

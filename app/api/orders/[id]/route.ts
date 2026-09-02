@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { logAction, extractClientIp } from '@/lib/actionLogger';
+import { OrderService } from '@/lib/trading/OrderService';
 
 /**
  * PUT /api/orders/[id]
@@ -173,6 +174,8 @@ async function handleModifyOrder(
 
     let fillPrice: number | null = null;
     let baseLtp: number | null = null;
+    const currentLtp = Number(payload.frontend_ltp || existingOrder.ltp_at_entry || existingOrder.price || 0);
+
     if (isChangingToMarket) {
       // Resolve live market quote for immediate market execution
       let rawBid: number | null = null;
@@ -218,77 +221,36 @@ async function handleModifyOrder(
       } else {
         fillPrice = rawBid && rawBid > 0 ? rawBid : baseLtp;
       }
-      fillPrice = Math.round(fillPrice * 100) / 100;
-    } else {
-      const targetOrderType = payload.order_type || existingOrder.order_type;
-      const targetTriggerPrice = payload.trigger_price !== undefined ? payload.trigger_price : existingOrder.trigger_price;
-      const targetIsExit = Boolean(existingOrder.is_exit);
-      const targetSide = existingOrder.side;
-      const currentLtp = payload.frontend_ltp || existingOrder.ltp_at_entry || existingOrder.price || 0;
-
-      if ((targetOrderType === 'SL' || targetOrderType === 'SLM') && targetTriggerPrice !== null && targetTriggerPrice !== undefined && currentLtp > 0) {
-        const slErr = OrderService.validateStopLoss(targetOrderType, targetSide, Number(targetTriggerPrice), currentLtp, targetIsExit);
-        if (slErr) {
-          return NextResponse.json({ error: slErr }, { status: 400 });
-        }
+      if (fillPrice !== null) {
+        fillPrice = Math.round(fillPrice * 100) / 100;
       }
-    }
 
-    // 3. Prepare update payload
-    const updateData: any = {
-      updated_at: new Date().toISOString(),
-    };
+      // Update existing order to EXECUTED
+      const updateData: any = {
+        updated_at: new Date().toISOString(),
+        order_type: 'MARKET',
+        status: 'EXECUTED',
+        fill_price: fillPrice,
+        price: fillPrice,
+        trigger_price: null, // NEUTRALIZE OLD TRIGGER CONDITION
+        stop_loss: payload.stop_loss !== undefined ? payload.stop_loss : null,
+        target: payload.target !== undefined ? payload.target : null,
+      };
 
-    if (payload.order_type !== undefined) {
-      updateData.order_type = payload.order_type;
-    }
+      const { data: updatedOrder, error: updateErr } = await admin
+        .from('orders')
+        .update(updateData)
+        .eq('id', id)
+        .eq('user_id', user.id)
+        .select()
+        .single();
 
-    if (isChangingToMarket) {
-      updateData.status = 'EXECUTED';
-      updateData.fill_price = fillPrice;
-      updateData.price = fillPrice;
-      updateData.trigger_price = null; // ATOMICALLY NEUTRALIZE OLD GTT TRIGGER CONDITION
-      updateData.stop_loss = payload.stop_loss !== undefined ? payload.stop_loss : null;
-      updateData.target = payload.target !== undefined ? payload.target : null;
-    } else {
-      if (payload.price !== undefined && payload.price !== null) {
-        updateData.price = payload.price;
-        updateData.fill_price = payload.price;
+      if (updateErr) {
+        return NextResponse.json({ error: updateErr.message || 'Failed to update order' }, { status: 500 });
       }
-      if (targetOrderType === 'GTT') {
-        if (payload.trigger_price !== undefined) updateData.trigger_price = payload.trigger_price;
-        if (payload.stop_loss !== undefined) updateData.stop_loss = payload.stop_loss;
-        if (payload.target !== undefined) updateData.target = payload.target;
-      } else {
-        // Non-GTT (LIMIT, SL, SLM, etc.): explicitly strip residual GTT exit/trigger fields
-        updateData.trigger_price = payload.trigger_price !== undefined ? payload.trigger_price : null;
-        updateData.stop_loss = payload.stop_loss !== undefined ? payload.stop_loss : null;
-        updateData.target = payload.target !== undefined ? payload.target : null;
-      }
-    }
 
-    if (payload.qty !== undefined && payload.qty > 0) {
-      updateData.qty = payload.qty;
-    }
-    if (payload.lots !== undefined && payload.lots > 0) {
-      updateData.lots = payload.lots;
-    }
-
-    const { data: updatedOrder, error: updateErr } = await admin
-      .from('orders')
-      .update(updateData)
-      .eq('id', id)
-      .eq('user_id', user.id)
-      .select()
-      .single();
-
-    if (updateErr) {
-      return NextResponse.json({ error: updateErr.message || 'Failed to update order' }, { status: 500 });
-    }
-
-    // 4. If transitioning to Market, trigger immediate position creation via process_executed_position RPC
-    if (isChangingToMarket) {
-      const linkedInfo = existingOrder.linked_position_id || existingOrder.info || null;
+      // Trigger immediate position creation / netting via process_executed_position RPC
+      const linkedInfo = existingOrder.info || null;
       const { error: rpcErr } = await admin.rpc('process_executed_position', {
         p_order_id: id,
         p_info: linkedInfo,
@@ -309,9 +271,108 @@ async function handleModifyOrder(
 
         return NextResponse.json({ error: rpcErr.message || 'Execution failed during market transition' }, { status: 400 });
       }
+
+      return NextResponse.json({ success: true, order: updatedOrder, executed: true });
     }
 
-    return NextResponse.json({ success: true, order: updatedOrder, executed: isChangingToMarket });
+    // --- NON-MARKET MODIFICATION: ATOMIC CANCEL & REPLACE LIFECYCLE ---
+    const targetTriggerPrice = payload.trigger_price !== undefined ? payload.trigger_price : (payload.stop_loss !== undefined ? payload.stop_loss : existingOrder.trigger_price);
+    const targetIsExit = payload.is_exit !== undefined ? Boolean(payload.is_exit) : Boolean(existingOrder.is_exit);
+    const targetSide = existingOrder.side;
+
+    if ((targetOrderType === 'SL' || targetOrderType === 'SLM') && targetTriggerPrice !== null && targetTriggerPrice !== undefined && currentLtp > 0) {
+      const slErr = OrderService.validateStopLoss(targetOrderType, targetSide, Number(targetTriggerPrice), currentLtp, targetIsExit);
+      if (slErr) {
+        return NextResponse.json({ error: slErr }, { status: 400 });
+      }
+    }
+
+    // Step A: Atomically mark old order (Order A) as CANCELLED to prevent race condition with order matching loop
+    const cancelNote = existingOrder.info 
+      ? `${existingOrder.info} (Modified to ${targetOrderType})`
+      : `Modified to ${targetOrderType}`;
+
+    const { data: cancelledOrder, error: cancelErr } = await admin
+      .from('orders')
+      .update({
+        status: 'CANCELLED',
+        info: cancelNote,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .eq('status', existingOrder.status)
+      .select()
+      .single();
+
+    if (cancelErr || !cancelledOrder) {
+      return NextResponse.json({ error: 'Could not modify order. It might already be executed or cancelled.' }, { status: 400 });
+    }
+
+    // Step B: Construct and insert replacement order (Order B) with status 'PENDING'
+    const resolvedLinkedPosId = payload.linked_position_id || existingOrder.info || null;
+
+    const newOrderPayload: any = {
+      user_id: user.id,
+      symbol: existingOrder.symbol,
+      kite_instrument: existingOrder.kite_instrument || null,
+      segment: existingOrder.segment || null,
+      side: existingOrder.side,
+      status: 'PENDING',
+      qty: payload.qty !== undefined && Number(payload.qty) > 0 ? Number(payload.qty) : Number(existingOrder.qty),
+      lots: payload.lots !== undefined && Number(payload.lots) > 0 ? Number(payload.lots) : Number(existingOrder.lots || 1),
+      price: payload.price !== undefined && payload.price !== null ? Number(payload.price) : Number(existingOrder.price || currentLtp),
+      fill_price: payload.price !== undefined && payload.price !== null ? Number(payload.price) : Number(existingOrder.fill_price || currentLtp),
+      ltp_at_entry: currentLtp > 0 ? currentLtp : Number(existingOrder.ltp_at_entry || currentLtp),
+      order_type: targetOrderType,
+      product_type: existingOrder.product_type || 'INTRADAY',
+      is_exit: targetIsExit,
+      info: resolvedLinkedPosId,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    // Explicitly set/clear fields based on targetOrderType to eliminate stale trigger state
+    if (targetOrderType === 'GTT') {
+      newOrderPayload.trigger_price = payload.trigger_price !== undefined && payload.trigger_price !== null ? Number(payload.trigger_price) : null;
+      newOrderPayload.stop_loss = payload.stop_loss !== undefined && payload.stop_loss !== null ? Number(payload.stop_loss) : null;
+      newOrderPayload.target = payload.target !== undefined && payload.target !== null ? Number(payload.target) : null;
+    } else if (targetOrderType === 'SL' || targetOrderType === 'SLM') {
+      newOrderPayload.trigger_price = payload.trigger_price !== undefined && payload.trigger_price !== null 
+        ? Number(payload.trigger_price) 
+        : (payload.stop_loss !== undefined && payload.stop_loss !== null ? Number(payload.stop_loss) : null);
+      newOrderPayload.stop_loss = null; // Clear residual bracket fields
+      newOrderPayload.target = null;
+    } else {
+      // LIMIT, etc.
+      newOrderPayload.trigger_price = null;
+      newOrderPayload.stop_loss = null;
+      newOrderPayload.target = null;
+    }
+
+    const { data: newOrder, error: insertErr } = await admin
+      .from('orders')
+      .insert(newOrderPayload)
+      .select()
+      .single();
+
+    if (insertErr) {
+      console.error('[handleModifyOrder] Failed to insert replacement order B, reverting Order A cancellation:', insertErr);
+      // Restore Order A back to PENDING so user doesn't lose their pending order
+      await admin
+        .from('orders')
+        .update({ status: existingOrder.status, info: existingOrder.info })
+        .eq('id', id);
+
+      return NextResponse.json({ error: insertErr.message || 'Failed to create replacement order' }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      order: newOrder,
+      old_order_id: id,
+      executed: false
+    });
   } catch (error: any) {
     return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 });
   }

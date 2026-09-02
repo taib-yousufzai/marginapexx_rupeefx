@@ -942,50 +942,50 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
       if (isModify && modifyingOrderId && (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-') || modifyingOrderId.startsWith('pos-gtt-'))) {
         const positionId = modifyingOrderId.replace('pos-sl-', '').replace('pos-target-', '').replace('pos-gtt-', '');
-        const isSl = modifyingOrderId.startsWith('pos-sl-');
-        const isTarget = modifyingOrderId.startsWith('pos-target-');
-        const isGtt = modifyingOrderId.startsWith('pos-gtt-');
-
-        const isStillTarget = isTarget && (orderType === 'TARGET' || orderType === 'LIMIT');
-        const isStillSl = isSl && (orderType === 'SL' || orderType === 'SLM');
-        const isStillGtt = isGtt && orderType === 'GTT';
-
-        if (isStillTarget || isStillSl || isStillGtt) {
-          const updateData = isSl
-            ? { stop_loss: resolvedTriggerPrice || resolvedStopLoss || null }
-            : isTarget
-              ? { target: resolvedClientPrice || resolvedTarget || null }
-              : { stop_loss: resolvedStopLoss || null, target: resolvedTarget || null };
+        
+        if (resolvedOrderType === 'MARKET') {
+          // User changed order type to MARKET -> Clear existing SL/Target & let exit flow execute immediate market close
+          try {
+            await api.patch<unknown>(`/api/positions/${positionId}`, { stop_loss: null, target: null });
+          } catch (e) {
+            console.error('[TradeSheet] Error clearing target/SL for market exit:', e);
+          }
+          effectiveExitMode = true;
+          linkedPosId = positionId;
+        } else {
+          // User changed/updated pending exit instruction on the position (SL, SLM, TARGET, LIMIT, GTT)
+          let positionUpdateData: any = {};
+          if (resolvedOrderType === 'SL' || resolvedOrderType === 'SLM') {
+            positionUpdateData = {
+              stop_loss: resolvedTriggerPrice || resolvedStopLoss || null,
+              target: null, // Clear target when switching to SL-only
+            };
+          } else if (resolvedOrderType === 'TARGET' || resolvedOrderType === 'LIMIT') {
+            positionUpdateData = {
+              target: resolvedClientPrice || resolvedTarget || null,
+              stop_loss: null, // Clear stop loss when switching to Target-only
+            };
+          } else if (resolvedOrderType === 'GTT') {
+            positionUpdateData = {
+              stop_loss: resolvedStopLoss || resolvedTriggerPrice || null,
+              target: resolvedTarget || null,
+            };
+          }
 
           try {
-            await api.patch<unknown>(`/api/positions/${positionId}`, updateData);
-
-            showToast('Stop loss/target updated successfully');
+            await api.patch<unknown>(`/api/positions/${positionId}`, positionUpdateData);
+            showToast('Position exit instruction updated successfully');
             onSuccess?.();
             onClose();
             return;
           } catch (err) {
             if (err instanceof ApiError) {
-              showOrderError((err.details as any)?.error || 'Failed to update position stop loss/target.');
+              showOrderError((err.details as any)?.error || 'Failed to update position exit instruction.');
             } else {
-              showOrderError('Failed to update position stop loss/target.');
+              showOrderError('Failed to update position exit instruction.');
             }
             return;
           }
-        } else {
-          // User changed the order type (e.g. from Target to Market or SL)
-          // Clear the old target or stop loss first so it doesn't linger
-          try {
-            let clearData: any = {};
-            if (isSl) clearData = { stop_loss: null };
-            else if (isTarget) clearData = { target: null };
-            else if (isGtt) clearData = { stop_loss: null, target: null };
-
-            await api.patch<unknown>(`/api/positions/${positionId}`, clearData);
-          } catch (e) {
-            console.error('[DEBUG TradeSheet handlePlace] Error clearing old target/SL:', e);
-          }
-          // Do not return; let execution continue to place the new order type
         }
       }
 
@@ -1080,6 +1080,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               qty: finalQty,
               lots: finalLots,
               order_type: resolvedOrderType,
+              is_exit: effectiveExitMode,
+              linked_position_id: linkedPosId || initialOrder?.linked_position_id || initialOrder?.linkedPosId || null,
             };
             const res: any = await api.put(`/api/orders/${modifyingOrderId}`, updatePayload);
             if (res?.order) {
