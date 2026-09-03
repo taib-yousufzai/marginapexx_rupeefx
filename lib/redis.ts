@@ -93,6 +93,50 @@ class MockRedis {
     }
   }
 
+  public async incr(key: string): Promise<number> {
+    const val = this.store.get(key);
+    const current = parseInt(typeof val === 'string' ? val : '0', 10);
+    const next = isNaN(current) ? 1 : current + 1;
+    this.store.set(key, String(next));
+    return next;
+  }
+
+  public async incrby(key: string, increment: number): Promise<number> {
+    const val = this.store.get(key);
+    const current = parseInt(typeof val === 'string' ? val : '0', 10);
+    const next = (isNaN(current) ? 0 : current) + increment;
+    this.store.set(key, String(next));
+    return next;
+  }
+
+  public async decr(key: string): Promise<number> {
+    const val = this.store.get(key);
+    const current = parseInt(typeof val === 'string' ? val : '0', 10);
+    const next = (isNaN(current) ? 0 : current) - 1;
+    this.store.set(key, String(next));
+    return next;
+  }
+
+  public async expire(key: string, seconds: number): Promise<number> {
+    if (!this.store.has(key)) return 0;
+    setTimeout(() => {
+      this.store.delete(key);
+    }, seconds * 1000);
+    return 1;
+  }
+
+  public async del(...keys: string[]): Promise<number> {
+    let deleted = 0;
+    for (const k of keys) {
+      if (this.store.delete(k)) deleted++;
+    }
+    return deleted;
+  }
+
+  public async ttl(key: string): Promise<number> {
+    return this.store.has(key) ? 600 : -2;
+  }
+
   public async ping(): Promise<'PONG'> {
     return 'PONG';
   }
@@ -161,15 +205,18 @@ const redisProxyClient = new Proxy({}, {
   get(target, propKey) {
     const isReady = realClient && realClient.status === 'ready';
     const activeClient = isReady ? realClient : mockClient;
-    const prop = (activeClient as any)[propKey];
+    const prop = (activeClient as any)[propKey] || (mockClient as any)[propKey];
     if (typeof prop === 'function') {
       return function (...args: any[]) {
         try {
-          const res = prop.apply(activeClient, args);
+          const targetClient = (isReady && typeof (realClient as any)[propKey] === 'function') ? realClient : mockClient;
+          const fn = (targetClient as any)[propKey] || (mockClient as any)[propKey];
+          if (typeof fn !== 'function') return Promise.resolve(null);
+          const res = fn.apply(targetClient, args);
           if (res && typeof res.then === 'function') {
             return Promise.race([
               res,
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Redis command timeout (500ms)')), 500))
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Redis command timeout (250ms)')), 250))
             ]).catch((err) => {
               if (process.env.NODE_ENV === 'development') {
                 logger.warn({ err: err?.message || err, command: String(propKey) }, 'Redis command timed out/failed, falling back to mock');
@@ -187,7 +234,9 @@ const redisProxyClient = new Proxy({}, {
         }
       };
     }
-    return prop;
+    return function () {
+      return Promise.resolve(null);
+    };
   }
 });
 

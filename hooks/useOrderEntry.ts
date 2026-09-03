@@ -38,7 +38,7 @@ export function useOrderEntry() {
     setError(null);
 
     try {
-      const result = await api.post<{ id: string }>('/api/orders', state, { timeout: 20000 });
+      const result = await api.post<{ id: string }>('/api/orders', state, { timeout: 30000 });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));

@@ -73,7 +73,7 @@ BEGIN
     -- STEP 1: VALIDATE MARGIN (Calculate vs Validate Rule)
     SELECT balance INTO v_profile_balance
     FROM public.profiles
-    WHERE id = p_user_id FOR UPDATE;
+    WHERE id = p_user_id;
 
     IF v_profile_balance < (p_expected_margin + p_expected_brokerage + p_buffer_fee) AND p_is_exit = false THEN
         RAISE EXCEPTION 'Insufficient balance. Available: %, Required: %', v_profile_balance, (p_expected_margin + p_expected_brokerage + p_buffer_fee);
@@ -83,10 +83,10 @@ BEGIN
     BEGIN
         INSERT INTO public.orders (
             user_id, symbol, kite_instrument, segment, side, status, qty, lots, price, fill_price,
-            order_type, product_type, info, is_exit, trigger_price, stop_loss, target, buffer_fee, brokerage, idempotency_key
+            order_type, product_type, info, is_exit, trigger_price, stop_loss, target, buffer_fee, brokerage, idempotency_key, ltp_at_entry
         ) VALUES (
             p_user_id, p_symbol, p_kite_inst, p_segment, p_side, p_status, p_qty, p_lots, p_fill_price, p_fill_price,
-            p_order_type, p_product_type, COALESCE(p_info, p_linked_position_id::text), p_is_exit, p_trigger_price, p_stop_loss, p_target, p_buffer_fee, p_expected_brokerage, p_idempotency_key
+            p_order_type, p_product_type, COALESCE(p_info, p_linked_position_id::text), p_is_exit, p_trigger_price, p_stop_loss, p_target, p_buffer_fee, p_expected_brokerage, p_idempotency_key, p_ltp
         ) RETURNING id INTO v_order_id;
     EXCEPTION WHEN unique_violation THEN
         SELECT id INTO v_order_id 

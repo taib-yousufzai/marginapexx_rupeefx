@@ -2,6 +2,7 @@ import { Client } from 'pg';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 dotenv.config({ path: '.env.local' });
+dotenv.config({ path: '.env' });
 
 const file = process.argv[2];
 if (!file) { console.error('Usage: npx ts-node scripts/hotfix_deploy_single.ts <sql-file>'); process.exit(1); }

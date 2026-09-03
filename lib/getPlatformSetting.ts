@@ -9,11 +9,14 @@ export async function getPlatformSetting(
   const envVal = process.env[key];
   if (envVal) return envVal;
 
-  // 2. Try Redis cache
+  // 2. Try Redis cache (with 300ms fast safety guard)
   try {
     const redis = getRedisClient();
     if (redis) {
-      const val = await redis.get(`platform:${key}`);
+      const val = await Promise.race([
+        redis.get(`platform:${key}`),
+        new Promise(r => setTimeout(() => r(null), 300))
+      ]) as string | null;
       if (val) return val;
     }
   } catch (err) {
@@ -33,7 +36,12 @@ export async function getPlatformSetting(
       // Warm Redis cache
       try {
         const redis = getRedisClient();
-        if (redis) await redis.set(`platform:${key}`, data.value);
+        if (redis) {
+          await Promise.race([
+            redis.set(`platform:${key}`, data.value),
+            new Promise(r => setTimeout(r, 300))
+          ]);
+        }
       } catch {}
       return data.value;
     }

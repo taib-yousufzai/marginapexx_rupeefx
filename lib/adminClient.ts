@@ -69,7 +69,10 @@ export async function getUserFromRequest(request: Request) {
   try {
     const { getRedisClient } = await import('./redis');
     const redis = getRedisClient();
-    const cachedUser = await redis.get(`auth_user:${token}`);
+    const cachedUser = await Promise.race([
+      redis.get(`auth_user:${token}`),
+      new Promise(r => setTimeout(() => r(null), 300))
+    ]) as string | null;
     if (cachedUser) {
       return JSON.parse(cachedUser);
     }
@@ -89,27 +92,25 @@ export async function getUserFromRequest(request: Request) {
   const fetchUser = async () => {
     let resolvedUser: any = null;
 
-    try {
-      const admin = getAdminClient();
-      
-      // Race admin.auth.getUser against a 2.0s fast timeout to prevent Supabase Cloud 522 hangs
-      const authPromise = admin.auth.getUser(token);
-      const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-        setTimeout(() => resolve({ data: null, error: new Error('Supabase Auth timeout') }), 2000)
-      );
+    // 1. Instant 0ms local JWT verification
+    resolvedUser = parseJwtLocally(token);
 
-      const { data, error } = await Promise.race([authPromise, timeoutPromise]);
-
-      if (!error && data?.user) {
-        resolvedUser = data.user;
-      }
-    } catch (err) {
-      console.warn('[getUserFromRequest] Supabase auth network error, attempting local JWT fallback:', err);
-    }
-
-    // Fallback: Local JWT verification if Supabase Cloud API timed out or errored
+    // 2. Fallback: Supabase Cloud Auth API query if local JWT parsing failed
     if (!resolvedUser) {
-      resolvedUser = parseJwtLocally(token);
+      try {
+        const admin = getAdminClient();
+        const authPromise = admin.auth.getUser(token);
+        const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
+          setTimeout(() => resolve({ data: null, error: new Error('Supabase Auth timeout') }), 1000)
+        );
+
+        const { data, error } = await Promise.race([authPromise, timeoutPromise]);
+        if (!error && data?.user) {
+          resolvedUser = data.user;
+        }
+      } catch (err) {
+        console.warn('[getUserFromRequest] Supabase auth network error:', err);
+      }
     }
 
     if (!resolvedUser) {
@@ -119,12 +120,11 @@ export async function getUserFromRequest(request: Request) {
     try {
       const { getRedisClient } = await import('./redis');
       const redis = getRedisClient();
-      // Cache the validated user for 1 hour in Redis/Mock
-      if (redis.setex) {
-        await redis.setex(`auth_user:${token}`, 3600, JSON.stringify(resolvedUser));
-      } else {
-        await redis.set(`auth_user:${token}`, JSON.stringify(resolvedUser), 'EX', 3600);
-      }
+      // Cache the validated user for 1 hour in Redis/Mock with 300ms safety timeout
+      await Promise.race([
+        redis.setex ? redis.setex(`auth_user:${token}`, 3600, JSON.stringify(resolvedUser)) : redis.set(`auth_user:${token}`, JSON.stringify(resolvedUser), 'EX', 3600),
+        new Promise(r => setTimeout(r, 300))
+      ]);
     } catch {
       // Ignore Redis errors
     }

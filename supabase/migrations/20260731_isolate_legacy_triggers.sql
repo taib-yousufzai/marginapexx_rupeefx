@@ -24,7 +24,7 @@ CREATE OR REPLACE FUNCTION public.handle_order_execution()
     v_closed_margin numeric;
   BEGIN
     -- BYPASS FOR V2 TRANSACTIONS
-    IF coalesce(current_setting('app.is_v2', true), 'false')::boolean IS TRUE THEN
+    IF coalesce(nullif(current_setting('app.is_v2', true), ''), 'false')::boolean IS TRUE THEN
       RETURN NEW;
     END IF;
 
@@ -190,7 +190,7 @@ CREATE OR REPLACE FUNCTION public.calculate_position_margin()
     v_settings_table  text;
   BEGIN
     -- BYPASS FOR V2 TRANSACTIONS
-    IF coalesce(current_setting('app.is_v2', true), 'false')::boolean IS TRUE THEN
+    IF coalesce(nullif(current_setting('app.is_v2', true), ''), 'false')::boolean IS TRUE THEN
       RETURN NEW;
     END IF;
 
@@ -310,7 +310,7 @@ CREATE OR REPLACE FUNCTION public.position_insert_margin_debit()
   RETURNS TRIGGER AS $$
   BEGIN
     -- BYPASS FOR V2 TRANSACTIONS
-    IF coalesce(current_setting('app.is_v2', true), 'false')::boolean IS TRUE THEN
+    IF coalesce(nullif(current_setting('app.is_v2', true), ''), 'false')::boolean IS TRUE THEN
       RETURN NEW;
     END IF;
 

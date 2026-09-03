@@ -442,22 +442,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
-    const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, is_exit, linked_position_id, orderAttemptId } = body;
+    const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, linked_position_id, orderAttemptId } = body;
+    const is_exit = Boolean(body.is_exit === true || body.is_exit === 'true' || body.is_exit === 1 || body.is_exit === '1');
 
-    // 2b. Idempotency pre-check using Redis
+    // 2b. Idempotency pre-check using Redis (with 300ms fast safety guard)
     let attemptRedisKey: string | null = null;
     if (orderAttemptId) {
       attemptRedisKey = `order_attempt:${user.id}:${orderAttemptId}`;
       try {
         const redis = getRedisClient();
-        const cached = await redis.get(attemptRedisKey);
+        const cached = await Promise.race([
+          redis.get(attemptRedisKey),
+          new Promise(r => setTimeout(() => r(null), 300))
+        ]);
         if (cached) {
           if (cached === 'IN_PROGRESS') {
             return NextResponse.json({ error: 'Order submission in progress. Please wait.' }, { status: 409 });
           }
           return NextResponse.json(JSON.parse(cached));
         }
-        await redis.setex(attemptRedisKey, 60, 'IN_PROGRESS');
+        await Promise.race([
+          redis.setex(attemptRedisKey, 60, 'IN_PROGRESS'),
+          new Promise(r => setTimeout(() => r('OK'), 300))
+        ]);
       } catch { /* proceed if redis fails */ }
     }
 
@@ -562,14 +569,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .eq('user_id', user.id)
         .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending']),
 
-      // Fetch quotes — either Kite or Binance depending on segment
+      // Fetch quotes — either Kite or Binance depending on segment (with 2.0s fast timeout guard)
       (async () => {
-        if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
-          const quote = await fetchBinanceQuote(symbol);
-          return quote ? { [kiteInst]: quote } : {};
-        } else {
-          return fetchKiteQuotes(instrumentsToFetch);
-        }
+        const fetchPromise = (async () => {
+          if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
+            const quote = await fetchBinanceQuote(symbol);
+            return quote ? { [kiteInst]: quote } : {};
+          } else {
+            return fetchKiteQuotes(instrumentsToFetch);
+          }
+        })();
+
+        const timeoutPromise = new Promise<Record<string, ServerQuote>>((resolve) =>
+          setTimeout(() => resolve({}), 500)
+        );
+
+        return Promise.race([fetchPromise, timeoutPromise]);
       })(),
 
       // Fetch script settings for dynamic lot size
@@ -1130,7 +1145,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (attemptRedisKey) {
       try {
         const redis = getRedisClient();
-        await redis.setex(attemptRedisKey, 60, JSON.stringify(response));
+        await Promise.race([
+          redis.setex(attemptRedisKey, 60, JSON.stringify(response)),
+          new Promise(r => setTimeout(r, 300))
+        ]);
       } catch { /* ignore */ }
     }
 

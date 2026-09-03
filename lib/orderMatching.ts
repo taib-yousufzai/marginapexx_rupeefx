@@ -61,9 +61,9 @@ export function evaluateOrderTriggerCondition(
       fillPrice = limitPrice;
     }
   } else if ((orderType === 'SL' || orderType === 'SLM') && triggerPrice !== null) {
-    const refEntry = (order.ltp_at_entry !== undefined && order.ltp_at_entry !== null) 
+    const refEntry = (order.ltp_at_entry !== undefined && order.ltp_at_entry !== null && Number(order.ltp_at_entry) > 0) 
       ? Number(order.ltp_at_entry) 
-      : (order.info?.entry_price ? Number(order.info.entry_price) : ((order.fill_price ?? order.price) ? Number(order.fill_price ?? order.price) : ltp));
+      : (order.info?.entry_price ? Number(order.info.entry_price) : ltp);
     if (side === 'SELL') {
       if (triggerPrice > refEntry) {
         if (ltp >= triggerPrice) shouldTrigger = true;
@@ -84,21 +84,23 @@ export function evaluateOrderTriggerCondition(
     const target = order.target ? Number(order.target) : null;
     const isExit = order.is_exit === true;
 
+    // ONLY evaluate stopLoss and target as trigger conditions if this is an EXIT order for an existing open position
     if (isExit) {
       if (stopLoss !== null) {
-        if (side === 'SELL' && ltp <= stopLoss) shouldTrigger = true;
-        else if (side === 'BUY' && ltp >= stopLoss) shouldTrigger = true;
+        if (side === 'SELL' && ltp <= stopLoss) shouldTrigger = true;      // Sell exit for BUY position (price dropped to SL)
+        else if (side === 'BUY' && ltp >= stopLoss) shouldTrigger = true;  // Buy exit for SELL position (price rose to SL)
       }
       if (!shouldTrigger && target !== null) {
-        if (side === 'SELL' && ltp >= target) shouldTrigger = true;
-        else if (side === 'BUY' && ltp <= target) shouldTrigger = true;
+        if (side === 'SELL' && ltp >= target) shouldTrigger = true;       // Sell exit for BUY position (price rose to Target)
+        else if (side === 'BUY' && ltp <= target) shouldTrigger = true;   // Buy exit for SELL position (price dropped to Target)
       }
     }
 
-    if (!shouldTrigger && triggerPrice !== null) {
-      const refEntry = (order.ltp_at_entry !== undefined && order.ltp_at_entry !== null) 
+    // For ENTRY GTT orders, evaluate trigger price / limit price conditions strictly when !isExit
+    if (!shouldTrigger && !isExit && triggerPrice !== null) {
+      const refEntry = (order.ltp_at_entry !== undefined && order.ltp_at_entry !== null && Number(order.ltp_at_entry) > 0) 
         ? Number(order.ltp_at_entry) 
-        : (order.info?.entry_price ? Number(order.info.entry_price) : ((order.fill_price ?? order.price) ? Number(order.fill_price ?? order.price) : ltp));
+        : (order.info?.entry_price ? Number(order.info.entry_price) : ltp);
       if (side === 'SELL') {
         if (triggerPrice <= refEntry) {
           if (ltp <= triggerPrice) shouldTrigger = true;
@@ -114,7 +116,7 @@ export function evaluateOrderTriggerCondition(
       }
     }
 
-    if (!shouldTrigger && triggerPrice === null && limitPrice !== null && !isExit) {
+    if (!shouldTrigger && !isExit && triggerPrice === null && limitPrice !== null) {
       if (side === 'BUY' && ltp <= limitPrice) {
         shouldTrigger = true;
       } else if (side === 'SELL' && ltp >= limitPrice) {

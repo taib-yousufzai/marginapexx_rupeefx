@@ -208,18 +208,19 @@ export async function POST(req: NextRequest) {
     }
 
     if (!emailResult.success && !smsSent) {
+      const detail = emailResult.error ? ` (${emailResult.error})` : '';
       return Response.json(
-        { error: 'Failed to send OTP to both email and phone. Please try again later.' },
+        { error: `Failed to send verification email. Please try again later.${detail}` },
         { status: 500 },
       );
     }
 
     console.info(`[send-otp] OTP sent. Email: ${emailResult.success}, SMS: ${smsSent}`);
     return Response.json({ success: true, emailSent: emailResult.success, smsSent });
-  } catch (err) {
-    console.error('[send-otp] Unexpected error:', err);
+  } catch (err: any) {
+    console.error('[send-otp] Unexpected error:', err?.stack || err);
     return Response.json(
-      { error: 'Failed to send verification email. Please try again.' },
+      { error: err?.message ? `Failed to send verification email: ${err.message}` : 'Failed to send verification email. Please try again.' },
       { status: 500 },
     );
   }

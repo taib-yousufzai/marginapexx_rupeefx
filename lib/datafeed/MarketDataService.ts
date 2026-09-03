@@ -33,7 +33,10 @@ export async function fetchBinanceQuote(symbol: string): Promise<{ltp: number, b
         try {
           const { getRedisClient } = await import('@/lib/redis');
           const redis = getRedisClient();
-          const cached = await redis.hget('market:quotes', cleanSym);
+          const cached = await Promise.race([
+            redis.hget('market:quotes', cleanSym),
+            new Promise(r => setTimeout(() => r(null), 300))
+          ]) as string | null;
           if (cached) {
             const q = JSON.parse(cached);
             if (q && q.last_price !== undefined) {
