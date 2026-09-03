@@ -1090,6 +1090,40 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let resolvedTriggerPrice = trigger_price ? parseFloat(trigger_price.toString()) : null;
     let resolvedStopLoss = stop_loss ? parseFloat(stop_loss.toString()) : null;
 
+    // ── Fix 3.1a: Enforce is_exit + linked_position_id for SL/SLM orders ──────
+    // If the caller placed an SL or SLM order without explicitly marking it as an
+    // exit, check whether an open opposite-side position already exists for this
+    // symbol.  If one does, this order MUST be an exit — force the flag so that
+    // process_executed_position closes the position instead of creating a phantom
+    // entry.
+    let resolvedIsExit: boolean = is_exit ?? false;
+    let resolvedLinkedPositionId: string | null = linked_position_id ?? null;
+
+    if (['SL', 'SLM'].includes(targetOrderType) && !resolvedIsExit) {
+      const matchingPosition = openPositions.find((p: any) =>
+        p.symbol === symbol &&
+        p.side !== side &&                              // opposite side
+        (p.product_type ?? 'INTRADAY') === (product_type ?? 'INTRADAY')
+      );
+      if (matchingPosition) {
+        resolvedIsExit = true;
+        resolvedLinkedPositionId = resolvedLinkedPositionId || matchingPosition.id;
+        console.log(
+          `[POST /api/orders] Auto-resolved is_exit=true for ${targetOrderType} order ` +
+          `against open position ${matchingPosition.id} (symbol=${symbol}, side=${matchingPosition.side})`
+        );
+      }
+    }
+
+    // ── Fix 3.1b: GTT pre-entry — do NOT insert SL/Target sub-order rows ──────
+    // When a GTT order is placed in pre-entry state (is_exit = false), the
+    // stop_loss and target values are metadata for after entry fires.  Sub-order
+    // rows (separate PENDING rows for SL and Target) must NOT be created here —
+    // process_executed_position will create them when the GTT entry executes.
+    // This route does not insert sub-order rows (confirmed: no secondary
+    // place_order_v2 call below), so this is enforced by design.  The stop_loss
+    // and target values are stored on the GTT order row only.
+
     const executeDbCall = async () => {
       const { data: oId, error: rpcErr } = await admin.rpc('place_order_v2', {
         p_user_id:      user.id,
@@ -1103,17 +1137,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         p_lots:         lots ?? 0,
         p_ltp:          baseLtp,
         p_fill_price:   fillPrice,
-        p_is_exit:      is_exit ?? false,
+        p_is_exit:      resolvedIsExit,
         p_buffer_fee:   0,
         p_status:       isImmediate ? 'EXECUTED' : 'PENDING',
         p_trigger_price: resolvedTriggerPrice,
         p_stop_loss:    resolvedStopLoss,
         p_target:       target ? parseFloat(target.toString()) : null,
-        p_info:         null,
+        p_info:         resolvedLinkedPositionId,
         p_expected_margin: requiredMargin,
         p_expected_brokerage: expectedBrokerage,
         p_idempotency_key: null,
-        p_linked_position_id: linked_position_id ?? null
+        p_linked_position_id: resolvedLinkedPositionId
       });
       if (rpcErr) {
         throw new Error(rpcErr.message || 'Order execution failed. Please try again.');
@@ -1131,6 +1165,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } catch (err: any) {
       console.error('[POST /api/orders] Order execution error:', err);
       return NextResponse.json({ error: err.message || 'Order execution failed. Please try again.' }, { status: 400 });
+    }
+
+    // ── Fix 3.1c: Market exit — fully await orphan order cleanup ─────────────
+    // When a MARKET exit executes, process_executed_position closes the position
+    // via the RPC.  Any remaining pending SL/Target/GTT exit orders attached to
+    // that position become orphaned.  Cancel them here, fully awaited (not
+    // fire-and-forget) so the response is only sent after cleanup completes.
+    if (isImmediate && resolvedIsExit) {
+      try {
+        const { PositionService } = await import('@/lib/trading/PositionService');
+        await PositionService.cancelPendingOrdersForClosedPosition(
+          admin,
+          user.id,
+          resolvedLinkedPositionId ?? undefined,
+          symbol
+        );
+      } catch (cancelErr) {
+        // Non-fatal: log the failure but do not block the order response.
+        // The order has already executed; orphan cleanup failure should not
+        // roll back a successful trade.
+        console.warn('[POST /api/orders] Non-fatal: failed to cancel orphaned exit orders after market exit:', cancelErr);
+      }
     }
 
     const response: PlaceOrderResponse = {

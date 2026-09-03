@@ -91,19 +91,23 @@ export async function POST(req: NextRequest) {
     // ── 2. Rate-limit by Email (60s cooldown) ──────────────────────────────────
     const { data: existingEmail } = await admin
       .from('otp_verifications')
-      .select('created_at')
+      .select('created_at, expires_at')
       .eq('email', emailLower)
       .maybeSingle();
 
     if (existingEmail) {
-      const secondsSinceLast =
-        (Date.now() - new Date(existingEmail.created_at).getTime()) / 1000;
-      if (secondsSinceLast < RESEND_COOLDOWN_SECONDS) {
-        const waitSeconds = Math.ceil(RESEND_COOLDOWN_SECONDS - secondsSinceLast);
-        return Response.json(
-          { error: `Please wait ${waitSeconds}s before requesting another code.` },
-          { status: 429 },
-        );
+      // If the existing OTP has expired, skip cooldown — treat as fresh registration
+      const isExpired = existingEmail.expires_at && new Date(existingEmail.expires_at).getTime() < Date.now();
+      if (!isExpired) {
+        const secondsSinceLast =
+          (Date.now() - new Date(existingEmail.created_at).getTime()) / 1000;
+        if (secondsSinceLast < RESEND_COOLDOWN_SECONDS) {
+          const waitSeconds = Math.ceil(RESEND_COOLDOWN_SECONDS - secondsSinceLast);
+          return Response.json(
+            { error: `Please wait ${waitSeconds}s before requesting another code.` },
+            { status: 429 },
+          );
+        }
       }
     }
 
@@ -210,8 +214,8 @@ export async function POST(req: NextRequest) {
     if (!emailResult.success && !smsSent) {
       const detail = emailResult.error ? ` (${emailResult.error})` : '';
       return Response.json(
-        { error: `Failed to send verification email. Please try again later.${detail}` },
-        { status: 500 },
+        { error: 'Failed to send OTP. Please try again in a moment.', retryable: true },
+        { status: 202 },
       );
     }
 

@@ -1646,7 +1646,18 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 <div className="ts2-card">
                   <div className="ts2-label">Order Type</div>
                   <div className="ts2-pills">
-                    {(effectiveExitMode ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT']).map(t => (
+                    {(() => {
+                      // GTT modification: show lifecycle-stage-aware options based on is_exit flag
+                      // Pre-entry GTT (is_exit === false): Market, Limit, SLM — requirement 2.7
+                      // Post-entry GTT (is_exit === true): Market, Limit, SL, Target, GTT — requirement 2.8
+                      const isModifyingGttOrder = isModify && initialOrder?.order_type === 'GTT';
+                      if (isModifyingGttOrder) {
+                        return initialOrder.is_exit === true
+                          ? ['MARKET', 'LIMIT', 'SL', 'TARGET', 'GTT']
+                          : ['MARKET', 'LIMIT', 'SLM'];
+                      }
+                      return effectiveExitMode ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT'];
+                    })().map(t => (
                       <button
                         key={t}
                         className={`ts2-pill${orderType === t ? ' active' : ''}`}

@@ -82,6 +82,10 @@ export function evaluateOrderTriggerCondition(
   } else if (orderType === 'GTT') {
     const stopLoss = order.stop_loss ? Number(order.stop_loss) : null;
     const target = order.target ? Number(order.target) : null;
+    // INVARIANT: stop_loss/target sub-order evaluation is ONLY reached when isExit === true.
+    // For pre-entry GTT orders (is_exit = false), this block is skipped entirely, so the
+    // stop_loss and target fields stored on the order row never cause a premature trigger.
+    // Only the triggerPrice/limitPrice path below evaluates for pre-entry GTT orders.
     const isExit = order.is_exit === true;
 
     // ONLY evaluate stopLoss and target as trigger conditions if this is an EXIT order for an existing open position
@@ -249,151 +253,156 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
       console.log(`[EXEC_TRACE ${new Date().toISOString()}] EVALUATING | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status: ${order.status} | LTP: ${ltp} | TriggerPrice: ${order.trigger_price} | SL: ${order.stop_loss} | Target: ${order.target} | is_exit: ${order.is_exit} | info: ${order.info} | Result: ${shouldTrigger}`);
 
       if (shouldTrigger) {
-        console.log(`[EXEC_TRACE ${new Date().toISOString()}] TRIGGERED_TRUE | Function: processPendingOrdersAndPositions | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status: ${order.status} | LTP: ${ltp} | FillPrice: ${fillPrice} | TriggerPrice: ${order.trigger_price} | SL: ${order.stop_loss} | Target: ${order.target} | is_exit: ${order.is_exit}`);
+        try {
+          console.log(`[EXEC_TRACE ${new Date().toISOString()}] TRIGGERED_TRUE | Function: processPendingOrdersAndPositions | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status: ${order.status} | LTP: ${ltp} | FillPrice: ${fillPrice} | TriggerPrice: ${order.trigger_price} | SL: ${order.stop_loss} | Target: ${order.target} | is_exit: ${order.is_exit}`);
 
-        const { data: existingPos, error: posErrorCheck } = await admin
-          .from('positions')
-          .select('id, side')
-          .eq('symbol', symbolKey)
-          .eq('status', 'open');
+          const { data: existingPos, error: posErrorCheck } = await admin
+            .from('positions')
+            .select('id, side')
+            .eq('symbol', symbolKey)
+            .eq('status', 'open');
 
-        if (posErrorCheck) {
-          console.error('[Order Matching] Error checking existing positions for', symbolKey, ':', posErrorCheck);
-          // Skip processing this order due to error
-          continue;
-        }
-
-        if (order.is_exit || order.linked_position_id || (order.info && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(order.info)))) {
-          if (!existingPos || existingPos.length === 0) {
-            console.log(`[EXEC_TRACE ${new Date().toISOString()}] CANCEL_ORPHAN | Order ID: ${order.id} | Symbol: ${symbolKey} | Reason: Position is closed`);
-            await admin
-              .from('orders')
-              .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-              .eq('id', order.id);
+          if (posErrorCheck) {
+            console.error('[Order Matching] Error checking existing positions for', symbolKey, ':', posErrorCheck);
+            // Skip processing this order due to error
             continue;
           }
-        } else {
-          // Entry orders (is_exit is false)
-          // BUT: if an opposite position exists, treat this as an exit order to close it.
-          // e.g. User places BUY LIMIT while holding a SELL position → close the short.
-          if (order.side === 'BUY') {
-            const oppSellPos = existingPos && existingPos.find((p: any) => p.side === 'SELL');
-            if (oppSellPos) {
-              console.log(`[EXEC_TRACE ${new Date().toISOString()}] OPPOSITE_POS_CONVERT | BUY entry order ${order.id} has opposite SELL position ${oppSellPos.id}`);
-              (order as any)._runtimeIsExit = true;
-              (order as any)._runtimeLinkedPosId = oppSellPos.id;
+
+          if (order.is_exit || order.linked_position_id || (order.info && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(order.info)))) {
+            if (!existingPos || existingPos.length === 0) {
+              console.log(`[EXEC_TRACE ${new Date().toISOString()}] CANCEL_ORPHAN | Order ID: ${order.id} | Symbol: ${symbolKey} | Reason: Position is closed`);
+              await admin
+                .from('orders')
+                .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+                .eq('id', order.id);
+              continue;
             }
-          } else if (order.side === 'SELL') {
-            const oppBuyPos = existingPos && existingPos.find((p: any) => p.side === 'BUY');
-            if (oppBuyPos) {
-              console.log(`[EXEC_TRACE ${new Date().toISOString()}] OPPOSITE_POS_CONVERT | SELL entry order ${order.id} has opposite BUY position ${oppBuyPos.id}`);
-              (order as any)._runtimeIsExit = true;
-              (order as any)._runtimeLinkedPosId = oppBuyPos.id;
-            }
-          }
-        }
-
-        // 1b. Resolve the linked position ID. For virtual SL/Target orders, extract it from the ID.
-        let virtualPosId = null;
-        if (typeof order.id === 'string' && (order.id.startsWith('pos-sl-') || order.id.startsWith('pos-target-'))) {
-          virtualPosId = order.id.replace('pos-sl-', '').replace('pos-target-', '');
-        }
-        
-        const infoAsUuid = order.info && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(order.info))
-          ? String(order.info) : null;
-        const finalLinkedPosId = (order as any)._runtimeLinkedPosId
-          || virtualPosId
-          || (order.linked_position_id || null)
-          || infoAsUuid;
-        const finalIsExit = (order as any)._runtimeIsExit || order.is_exit;
-
-        if (finalIsExit && finalLinkedPosId) {
-          const patchPayload: any = {};
-          if ((order as any)._runtimeIsExit) patchPayload.is_exit = true;
-          if ((order as any)._runtimeLinkedPosId) patchPayload.linked_position_id = finalLinkedPosId;
-          // ALWAYS patch info for the RPC to consume
-          patchPayload.info = finalLinkedPosId;
-
-          const { error: patchErr } = await admin
-            .from('orders')
-            .update(patchPayload)
-            .eq('id', order.id);
-
-          if (patchErr) {
-            console.error(`[Order Matching] Failed to patch exit info for order ${order.id}:`, patchErr);
           } else {
-            console.log(`[Order Matching] Patched order ${order.id} exit info (linked to ${finalLinkedPosId})`);
-          }
-        }
-
-        console.log(`[EXEC_TRACE ${new Date().toISOString()}] BEFORE_EXEC_UPDATE | Function: processPendingOrdersAndPositions | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status BEFORE: ${order.status} -> Status AFTER: EXECUTED | FillPrice: ${fillPrice}`);
-
-        const { data: updatedDbRecord, error: updateOrderErr } = await admin
-          .from('orders')
-          .update({
-            status: 'EXECUTED',
-            fill_price: fillPrice,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', order.id)
-          .eq('status', 'PENDING')
-          .select();
-
-        if (updateOrderErr) {
-          console.error(`[EXEC_TRACE ${new Date().toISOString()}] EXEC_UPDATE_ERROR | Order ID: ${order.id} | Error:`, updateOrderErr);
-          continue;
-        }
-
-        console.log(`[EXEC_TRACE ${new Date().toISOString()}] AFTER_EXEC_UPDATE | Order ID: ${order.id} | DB Status: ${updatedDbRecord?.[0]?.status}`);
-
-        // Explicitly call the RPC to process the position.
-        const linkedInfo = finalLinkedPosId || null;
-        console.log(`[EXEC_TRACE ${new Date().toISOString()}] CALLING_RPC_PROCESS_EXECUTED | Order ID: ${order.id} | Info: ${linkedInfo}`);
-        const { error: rpcErr } = await admin.rpc('process_executed_position', {
-          p_order_id: order.id,
-          p_info: linkedInfo,
-        });
-        if (rpcErr) {
-          console.error(`[EXEC_TRACE ${new Date().toISOString()}] RPC_ERROR | Order ID: ${order.id} | Error:`, rpcErr);
-        } else {
-          console.log(`[EXEC_TRACE ${new Date().toISOString()}] RPC_SUCCESS | Order ID: ${order.id}`);
-
-          // GTT LIMIT gate activation: copy SL/TARGET from the order to the linked position.
-          // At placement time, GTT positions are created with NULL SL/TARGET to prevent
-          // phantom triggers before the LIMIT gate is reached. Now that the order has
-          // executed (LIMIT gate met), activate the protective SL/TARGET on the position.
-          if (order.order_type === 'GTT' && !finalIsExit) {
-            const posIdForSLTarget = linkedInfo || order.info;
-            if (posIdForSLTarget && (order.stop_loss || order.target)) {
-              const slTargetPatch: any = {};
-              if (order.stop_loss) slTargetPatch.stop_loss = Number(order.stop_loss);
-              if (order.target) slTargetPatch.target = Number(order.target);
-              slTargetPatch.updated_at = new Date().toISOString();
-
-              const { error: slPatchErr } = await admin
-                .from('positions')
-                .update(slTargetPatch)
-                .eq('id', posIdForSLTarget);
-
-              if (slPatchErr) {
-                console.error(`[EXEC_TRACE ${new Date().toISOString()}] GTT_SL_TARGET_PATCH_ERROR | Order ID: ${order.id} | Position: ${posIdForSLTarget} | Error:`, slPatchErr);
-              } else {
-                console.log(`[EXEC_TRACE ${new Date().toISOString()}] GTT_SL_TARGET_ACTIVATED | Order ID: ${order.id} | Position: ${posIdForSLTarget} | SL: ${order.stop_loss} | Target: ${order.target}`);
+            // Entry orders (is_exit is false)
+            // BUT: if an opposite position exists, treat this as an exit order to close it.
+            // e.g. User places BUY LIMIT while holding a SELL position → close the short.
+            if (order.side === 'BUY') {
+              const oppSellPos = existingPos && existingPos.find((p: any) => p.side === 'SELL');
+              if (oppSellPos) {
+                console.log(`[EXEC_TRACE ${new Date().toISOString()}] OPPOSITE_POS_CONVERT | BUY entry order ${order.id} has opposite SELL position ${oppSellPos.id}`);
+                (order as any)._runtimeIsExit = true;
+                (order as any)._runtimeLinkedPosId = oppSellPos.id;
+              }
+            } else if (order.side === 'SELL') {
+              const oppBuyPos = existingPos && existingPos.find((p: any) => p.side === 'BUY');
+              if (oppBuyPos) {
+                console.log(`[EXEC_TRACE ${new Date().toISOString()}] OPPOSITE_POS_CONVERT | SELL entry order ${order.id} has opposite BUY position ${oppBuyPos.id}`);
+                (order as any)._runtimeIsExit = true;
+                (order as any)._runtimeLinkedPosId = oppBuyPos.id;
               }
             }
           }
-        }
 
-        // 3. Write audit log
-        await admin.from('act_logs').insert({
-          type: 'ORDER_EXECUTION',
-          user_id: order.user_id,
-          target_user_id: order.user_id,
-          symbol: order.symbol,
-          qty: order.qty,
-          price: fillPrice,
-          reason: `${order.order_type ?? 'LIMIT'} Order Triggered @ ${ltp}`,
-        });
+          // 1b. Resolve the linked position ID. For virtual SL/Target orders, extract it from the ID.
+          let virtualPosId = null;
+          if (typeof order.id === 'string' && (order.id.startsWith('pos-sl-') || order.id.startsWith('pos-target-'))) {
+            virtualPosId = order.id.replace('pos-sl-', '').replace('pos-target-', '');
+          }
+
+          const infoAsUuid = order.info && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(order.info))
+            ? String(order.info) : null;
+          const finalLinkedPosId = (order as any)._runtimeLinkedPosId
+            || virtualPosId
+            || (order.linked_position_id || null)
+            || infoAsUuid;
+          const finalIsExit = (order as any)._runtimeIsExit || order.is_exit;
+
+          if (finalIsExit && finalLinkedPosId) {
+            const patchPayload: any = {};
+            if ((order as any)._runtimeIsExit) patchPayload.is_exit = true;
+            if ((order as any)._runtimeLinkedPosId) patchPayload.linked_position_id = finalLinkedPosId;
+            // ALWAYS patch info for the RPC to consume
+            patchPayload.info = finalLinkedPosId;
+
+            const { error: patchErr } = await admin
+              .from('orders')
+              .update(patchPayload)
+              .eq('id', order.id);
+
+            if (patchErr) {
+              console.error(`[Order Matching] Failed to patch exit info for order ${order.id}:`, patchErr);
+            } else {
+              console.log(`[Order Matching] Patched order ${order.id} exit info (linked to ${finalLinkedPosId})`);
+            }
+          }
+
+          console.log(`[EXEC_TRACE ${new Date().toISOString()}] BEFORE_EXEC_UPDATE | Function: processPendingOrdersAndPositions | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status BEFORE: ${order.status} -> Status AFTER: EXECUTED | FillPrice: ${fillPrice}`);
+
+          const { data: updatedDbRecord, error: updateOrderErr } = await admin
+            .from('orders')
+            .update({
+              status: 'EXECUTED',
+              fill_price: fillPrice,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', order.id)
+            .eq('status', 'PENDING')
+            .select();
+
+          if (updateOrderErr) {
+            console.error(`[EXEC_TRACE ${new Date().toISOString()}] EXEC_UPDATE_ERROR | Order ID: ${order.id} | Error:`, updateOrderErr);
+            continue;
+          }
+
+          console.log(`[EXEC_TRACE ${new Date().toISOString()}] AFTER_EXEC_UPDATE | Order ID: ${order.id} | DB Status: ${updatedDbRecord?.[0]?.status}`);
+
+          // Explicitly call the RPC to process the position.
+          const linkedInfo = finalLinkedPosId || null;
+          console.log(`[EXEC_TRACE ${new Date().toISOString()}] CALLING_RPC_PROCESS_EXECUTED | Order ID: ${order.id} | Info: ${linkedInfo}`);
+          const { error: rpcErr } = await admin.rpc('process_executed_position', {
+            p_order_id: order.id,
+            p_info: linkedInfo,
+          });
+          if (rpcErr) {
+            console.error(`[EXEC_TRACE ${new Date().toISOString()}] RPC_ERROR | Order ID: ${order.id} | Error:`, rpcErr);
+          } else {
+            console.log(`[EXEC_TRACE ${new Date().toISOString()}] RPC_SUCCESS | Order ID: ${order.id}`);
+
+            // GTT LIMIT gate activation: copy SL/TARGET from the order to the linked position.
+            // At placement time, GTT positions are created with NULL SL/TARGET to prevent
+            // phantom triggers before the LIMIT gate is reached. Now that the order has
+            // executed (LIMIT gate met), activate the protective SL/TARGET on the position.
+            if (order.order_type === 'GTT' && !finalIsExit) {
+              const posIdForSLTarget = linkedInfo || order.info;
+              if (posIdForSLTarget && (order.stop_loss || order.target)) {
+                const slTargetPatch: any = {};
+                if (order.stop_loss) slTargetPatch.stop_loss = Number(order.stop_loss);
+                if (order.target) slTargetPatch.target = Number(order.target);
+                slTargetPatch.updated_at = new Date().toISOString();
+
+                const { error: slPatchErr } = await admin
+                  .from('positions')
+                  .update(slTargetPatch)
+                  .eq('id', posIdForSLTarget);
+
+                if (slPatchErr) {
+                  console.error(`[EXEC_TRACE ${new Date().toISOString()}] GTT_SL_TARGET_PATCH_ERROR | Order ID: ${order.id} | Position: ${posIdForSLTarget} | Error:`, slPatchErr);
+                } else {
+                  console.log(`[EXEC_TRACE ${new Date().toISOString()}] GTT_SL_TARGET_ACTIVATED | Order ID: ${order.id} | Position: ${posIdForSLTarget} | SL: ${order.stop_loss} | Target: ${order.target}`);
+                }
+              }
+            }
+          }
+
+          // 3. Write audit log
+          await admin.from('act_logs').insert({
+            type: 'ORDER_EXECUTION',
+            user_id: order.user_id,
+            target_user_id: order.user_id,
+            symbol: order.symbol,
+            qty: order.qty,
+            price: fillPrice,
+            reason: `${order.order_type ?? 'LIMIT'} Order Triggered @ ${ltp}`,
+          });
+        } catch (orderErr: any) {
+          console.error(`[Order Matching] Error processing order ${order.id}:`, orderErr?.message ?? orderErr);
+          continue;
+        }
       }
     }
   }

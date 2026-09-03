@@ -342,9 +342,10 @@ async function handleModifyOrder(
     console.log(`[EXEC_TRACE ${new Date().toISOString()}] MODIFY_START | Old Order ID: ${id} | Current Status: ${existingOrder.status} | Target Type: ${targetOrderType} | Payload:`, JSON.stringify(payload));
 
     const targetTriggerPrice = payload.trigger_price !== undefined ? payload.trigger_price : (payload.stop_loss !== undefined ? payload.stop_loss : existingOrder.trigger_price);
-    const targetIsExit = payload.is_exit !== undefined 
-      ? Boolean(payload.is_exit === true || payload.is_exit === 'true') 
-      : Boolean(existingOrder.is_exit === true || existingOrder.is_exit === 'true');
+    // Resolve is_exit robustly: avoid Boolean('') = false for old rows that stored is_exit as an empty string.
+    const targetIsExit = payload.is_exit !== undefined
+      ? Boolean(payload.is_exit)
+      : (existingOrder.is_exit === true || existingOrder.is_exit === 'true' || existingOrder.is_exit === 't' || existingOrder.is_exit === '1');
     const targetSide = existingOrder.side;
 
     if ((targetOrderType === 'SL' || targetOrderType === 'SLM') && targetTriggerPrice !== null && targetTriggerPrice !== undefined && currentLtp > 0) {
@@ -398,7 +399,9 @@ async function handleModifyOrder(
       ltp_at_entry: currentLtp > 0 ? currentLtp : Number(existingOrder.ltp_at_entry || currentLtp),
       order_type: targetOrderType,
       product_type: existingOrder.product_type || 'INTRADAY',
-      is_exit: targetIsExit,
+      // Always forward is_exit=true when the original order was an exit, regardless of PATCH body content.
+      // This prevents Boolean('') = false from stripping exit semantics on old rows.
+      is_exit: existingOrder.is_exit === true ? true : targetIsExit,
       info: resolvedLinkedPosId,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
