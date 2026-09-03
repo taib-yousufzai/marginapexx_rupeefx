@@ -697,8 +697,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
           resolvedStopLoss = resolvedTriggerPrice;
         } else if (orderType === 'SLM') {
-          resolvedOrderType = 'SLM';
-          resolvedTriggerPrice = parseFloat(triggerPrice) || parseFloat(slPrice) || undefined;
+          // SLM entry acts as an immediate MARKET order with a stop loss attached (per UI label)
+          resolvedOrderType = 'MARKET';
+          resolvedStopLoss = parseFloat(triggerPrice) || parseFloat(slPrice) || undefined;
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
           resolvedOrderType = 'GTT';
