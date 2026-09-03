@@ -348,23 +348,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       created_at:   r.created_at as string,
     }));
 
-    // Build a set of "symbol|exitSide" from real EXECUTED exit orders.
-    // If a real exit order already exists for a given symbol+exitSide, we skip generating
-    // a virtual SL/Target order for the same open position.
-    const realExitOrderKeys = new Set<string>(
-      dbOrders
-        .filter((o: any) => o.is_exit === true && o.status === 'EXECUTED')
-        .map((o: any) => `${o.symbol}|${o.side}`)
-    );
-
     // Dynamically synthesize virtual pending orders for positions with SL/Target
     const virtualOrders: MyOrder[] = [];
     for (const pos of openPositions) {
       const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
       const exitKey = `${pos.symbol}|${exitSide}`;
-
-      // Skip if a real executed exit order already exists for this symbol+exitSide
-      if (realExitOrderKeys.has(exitKey)) continue;
 
       const stopLoss = pos.stop_loss ? Number(pos.stop_loss) : (pos.sl ? Number(pos.sl) : null);
       const target = pos.target ? Number(pos.target) : (pos.tp ? Number(pos.tp) : null);

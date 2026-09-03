@@ -52,6 +52,15 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
         () => {
           fetchOrders();
         }
+      )
+      // Also listen to positions table — virtual SL/Target pending orders are
+      // generated from open positions, so a new/updated position must trigger a refresh.
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'positions' },
+        () => {
+          fetchOrders();
+        }
       );
       
     channel.subscribe((status) => {
