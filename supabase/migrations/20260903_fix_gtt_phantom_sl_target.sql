@@ -1,9 +1,10 @@
--- ==============================================================================
--- DATABASE v2: place_order_v2
--- Synchronous Financial Transaction Block routing into the Position Engine.
--- Uses FIFO (First-In, First-Out) lot selection for cumulative exits.
--- ==============================================================================
+-- Migration: Fix GTT phantom SL/TARGET on positions
+-- When a GTT entry order is placed as PENDING, the position should NOT have
+-- SL/TARGET set until the LIMIT gate is reached and the order executes.
+-- This prevents the position-level evaluator from triggering AUTO_SL/AUTO_TARGET
+-- on positions whose entry condition was never met.
 
+-- Re-create place_order_v2 with the GTT fix
 -- Drop all existing versions to avoid overloaded function ambiguity
 DO $$ 
 DECLARE 
@@ -292,6 +293,27 @@ BEGIN
         IF p_buffer_fee > 0 THEN
             INSERT INTO public.transactions (user_id, type, amount, status, ref_id)
             VALUES (p_user_id, 'BUFFER_FEE_DEBIT', p_buffer_fee, 'APPROVED', 'BUF_' || v_order_id::text);
+        END IF;
+
+    ELSIF p_status = 'PENDING' AND p_is_exit = false THEN
+        -- Lifecycle: Create Position Lot for Pending Entry Orders (SL, SLM, LIMIT, GTT)
+        -- GTT orders: Do NOT pass SL/TARGET to the position yet. The LIMIT gate must be
+        -- reached first (order transitions PENDING → EXECUTED), then the matcher copies
+        -- SL/TARGET from the order to the position. This prevents "phantom" SL/TARGET
+        -- triggering on positions whose entry condition was never met.
+        v_position_id := public.create_position_internal(
+            p_user_id, p_symbol, p_side, p_qty, p_fill_price, p_ltp,
+            p_product_type, p_segment,
+            CASE WHEN p_order_type = 'GTT' THEN NULL ELSE p_stop_loss END,
+            CASE WHEN p_order_type = 'GTT' THEN NULL ELSE p_target END,
+            p_expected_margin, p_expected_margin, p_expected_brokerage
+        );
+        UPDATE public.orders SET info = v_position_id::text WHERE id = v_order_id;
+
+        -- Ledger entries for new position margin
+        IF p_expected_margin > 0 THEN
+            INSERT INTO public.transactions (user_id, type, amount, status, ref_id)
+            VALUES (p_user_id, 'MARGIN_DEBIT', p_expected_margin, 'APPROVED', 'MRG_' || v_order_id::text);
         END IF;
     END IF;
 

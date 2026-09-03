@@ -914,3 +914,191 @@ describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', (
     expect(pos.status).toBe('closed');
   });
 });
+
+// =============================================================================
+// GTT LIMIT GATE REGRESSION TESTS
+// Verifies that GTT entry orders with LIMIT + SL + TARGET respect the
+// LIMIT gate: SL/TARGET must NOT trigger the entry order — only the LIMIT
+// price condition should trigger the order.
+// =============================================================================
+describe('GTT LIMIT Gate — evaluateOrderTriggerCondition', () => {
+  // Base GTT BUY ENTRY order: LIMIT=2400, SL=2380, TARGET=2650
+  const gttBuyEntry = {
+    order_type: 'GTT' as const,
+    side: 'BUY' as const,
+    price: 2400,
+    client_price: 2400,
+    trigger_price: null,
+    stop_loss: 2380,
+    target: 2650,
+    ltp_at_entry: 2500,
+    is_exit: false,
+  };
+
+  it('GTT BUY ENTRY: should NOT trigger when LTP is at SL but LIMIT gate not reached', () => {
+    // LTP=2380 matches SL, but LIMIT=2400 has not been reached (LTP > 2400 is wrong direction for BUY LIMIT)
+    // Actually for BUY LIMIT, trigger is LTP <= LIMIT. LTP=2380 <= 2400, so LIMIT IS met.
+    // But we need to test a case where SL is met but LIMIT is not.
+    // For BUY LIMIT=2400: triggers when LTP <= 2400. SL=2380 is below LIMIT, so when LTP=2380, LIMIT is also met.
+    // Let's test a scenario where SL could be above LIMIT (unusual but tests the gate):
+    const order = { ...gttBuyEntry, price: 2300, client_price: 2300, stop_loss: 2380 };
+    // LTP=2380, LIMIT=2300. For BUY, triggers when LTP <= 2300. LTP=2380 > 2300, so LIMIT NOT met.
+    // SL=2380 matches LTP=2380, but since is_exit=false, SL should NOT trigger the order.
+    const result = evaluateOrderTriggerCondition(order, 2380);
+    expect(result.shouldTrigger).toBe(false);
+  });
+
+  it('GTT BUY ENTRY: should NOT trigger when LTP is at TARGET but LIMIT gate not reached', () => {
+    // LTP=2650 matches TARGET, but LIMIT=2400 not met (BUY LIMIT triggers when LTP <= 2400)
+    const result = evaluateOrderTriggerCondition(gttBuyEntry, 2650);
+    expect(result.shouldTrigger).toBe(false);
+  });
+
+  it('GTT BUY ENTRY: should trigger when LTP reaches LIMIT gate', () => {
+    // LTP=2400 <= LIMIT=2400 → LIMIT gate met → shouldTrigger=true
+    const result = evaluateOrderTriggerCondition(gttBuyEntry, 2400);
+    expect(result.shouldTrigger).toBe(true);
+    expect(result.fillPrice).toBe(2400);
+  });
+
+  it('GTT BUY ENTRY: should trigger when LTP is below LIMIT', () => {
+    // LTP=2350 < LIMIT=2400 → LIMIT gate met
+    const result = evaluateOrderTriggerCondition(gttBuyEntry, 2350);
+    expect(result.shouldTrigger).toBe(true);
+    expect(result.fillPrice).toBe(2400);
+  });
+
+  it('GTT BUY ENTRY: should NOT trigger when LTP is above LIMIT', () => {
+    // LTP=2500 > LIMIT=2400 → LIMIT gate NOT met
+    const result = evaluateOrderTriggerCondition(gttBuyEntry, 2500);
+    expect(result.shouldTrigger).toBe(false);
+  });
+
+  // GTT SELL ENTRY: LIMIT=2600, SL=2620, TARGET=2400
+  const gttSellEntry = {
+    order_type: 'GTT' as const,
+    side: 'SELL' as const,
+    price: 2600,
+    client_price: 2600,
+    trigger_price: null,
+    stop_loss: 2620,
+    target: 2400,
+    ltp_at_entry: 2500,
+    is_exit: false,
+  };
+
+  it('GTT SELL ENTRY: should NOT trigger when LTP is at TARGET but LIMIT not reached', () => {
+    // LTP=2400 matches TARGET, but LIMIT=2600 not met (SELL LIMIT triggers when LTP >= 2600)
+    const result = evaluateOrderTriggerCondition(gttSellEntry, 2400);
+    expect(result.shouldTrigger).toBe(false);
+  });
+
+  it('GTT SELL ENTRY: should NOT trigger when LTP is at SL but LIMIT not reached', () => {
+    // LTP=2620, SL=2620, but for is_exit=false SL should NOT trigger entry
+    // SELL LIMIT=2600: LTP=2620 >= 2600 → LIMIT IS met. So this should trigger.
+    // Adjust: use LIMIT=2700 so LIMIT is NOT met at LTP=2620
+    const order = { ...gttSellEntry, price: 2700, client_price: 2700 };
+    const result = evaluateOrderTriggerCondition(order, 2620);
+    expect(result.shouldTrigger).toBe(false);
+  });
+
+  it('GTT SELL ENTRY: should trigger when LTP reaches LIMIT gate', () => {
+    // LTP=2600 >= LIMIT=2600 → LIMIT gate met
+    const result = evaluateOrderTriggerCondition(gttSellEntry, 2600);
+    expect(result.shouldTrigger).toBe(true);
+    expect(result.fillPrice).toBe(2600);
+  });
+
+  it('GTT SELL ENTRY: should trigger when LTP is above LIMIT', () => {
+    // LTP=2700 > LIMIT=2600 → LIMIT gate met
+    const result = evaluateOrderTriggerCondition(gttSellEntry, 2700);
+    expect(result.shouldTrigger).toBe(true);
+    expect(result.fillPrice).toBe(2600);
+  });
+
+  // GTT EXIT orders — SL and TARGET should trigger directly
+  const gttExitSell = {
+    order_type: 'GTT' as const,
+    side: 'SELL' as const,
+    price: 2500,
+    stop_loss: 2380,
+    target: 2650,
+    is_exit: true,
+  };
+
+  it('GTT EXIT SELL: should trigger when LTP hits SL (long position exit)', () => {
+    // SELL exit for BUY position: SL triggers when LTP <= SL
+    const result = evaluateOrderTriggerCondition(gttExitSell, 2380);
+    expect(result.shouldTrigger).toBe(true);
+  });
+
+  it('GTT EXIT SELL: should trigger when LTP hits TARGET (long position exit)', () => {
+    // SELL exit for BUY position: TARGET triggers when LTP >= TARGET
+    const result = evaluateOrderTriggerCondition(gttExitSell, 2650);
+    expect(result.shouldTrigger).toBe(true);
+  });
+
+  it('GTT EXIT SELL: should NOT trigger when LTP is between SL and TARGET', () => {
+    const result = evaluateOrderTriggerCondition(gttExitSell, 2500);
+    expect(result.shouldTrigger).toBe(false);
+  });
+
+  const gttExitBuy = {
+    order_type: 'GTT' as const,
+    side: 'BUY' as const,
+    price: 2500,
+    stop_loss: 2620,
+    target: 2380,
+    is_exit: true,
+  };
+
+  it('GTT EXIT BUY: should trigger when LTP hits SL (short position exit)', () => {
+    // BUY exit for SELL position: SL triggers when LTP >= SL
+    const result = evaluateOrderTriggerCondition(gttExitBuy, 2620);
+    expect(result.shouldTrigger).toBe(true);
+  });
+
+  it('GTT EXIT BUY: should trigger when LTP hits TARGET (short position exit)', () => {
+    // BUY exit for SELL position: TARGET triggers when LTP <= TARGET
+    const result = evaluateOrderTriggerCondition(gttExitBuy, 2380);
+    expect(result.shouldTrigger).toBe(true);
+  });
+
+  it('GTT EXIT BUY: should NOT trigger when LTP is between TARGET and SL', () => {
+    const result = evaluateOrderTriggerCondition(gttExitBuy, 2500);
+    expect(result.shouldTrigger).toBe(false);
+  });
+
+  // Edge case: GTT ENTRY with LIMIT only (no SL/TARGET)
+  it('GTT BUY ENTRY with LIMIT only: triggers at LIMIT', () => {
+    const order = {
+      order_type: 'GTT' as const,
+      side: 'BUY' as const,
+      price: 2400,
+      client_price: 2400,
+      trigger_price: null,
+      stop_loss: null,
+      target: null,
+      is_exit: false,
+    };
+    const result = evaluateOrderTriggerCondition(order, 2400);
+    expect(result.shouldTrigger).toBe(true);
+    expect(result.fillPrice).toBe(2400);
+  });
+
+  it('GTT SELL ENTRY with LIMIT only: triggers at LIMIT', () => {
+    const order = {
+      order_type: 'GTT' as const,
+      side: 'SELL' as const,
+      price: 2600,
+      client_price: 2600,
+      trigger_price: null,
+      stop_loss: null,
+      target: null,
+      is_exit: false,
+    };
+    const result = evaluateOrderTriggerCondition(order, 2600);
+    expect(result.shouldTrigger).toBe(true);
+    expect(result.fillPrice).toBe(2600);
+  });
+});

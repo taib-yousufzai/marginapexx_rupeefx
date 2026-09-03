@@ -1,10 +1,8 @@
--- ==============================================================================
--- DATABASE v2: place_order_v2
--- Synchronous Financial Transaction Block routing into the Position Engine.
--- Uses FIFO (First-In, First-Out) lot selection for cumulative exits.
--- ==============================================================================
+-- Migration: Fix Limit Order Execution Bug (No Pending Position Creation)
+-- Pending entry orders (LIMIT, SL, SLM, GTT) must NOT create a position row in public.positions
+-- at order creation time. Position lot creation and position margin debit occur ONLY when
+-- the order transitions to EXECUTED (either immediate MARKET order, or filled by matcher).
 
--- Drop all existing versions to avoid overloaded function ambiguity
 DO $$ 
 DECLARE 
   r record;
@@ -59,7 +57,7 @@ BEGIN
     -- ISOLATE V1 TRIGGERS (Strangler Fig)
     PERFORM set_config('app.is_v2', 'true', true);
 
-    -- IDEMPOTENCY CHECK: If this exact request was already processed, return the existing order (Scoped to user)
+    -- IDEMPOTENCY CHECK: If this exact request was already processed, return the existing order
     IF p_idempotency_key IS NOT NULL THEN
         SELECT id INTO v_order_id 
         FROM public.orders 
@@ -102,7 +100,6 @@ BEGIN
     END;
 
     -- Set self-referential idempotency key so close_position_v2 can detect this order
-    -- and skip creating a duplicate exit order (it checks WHERE idempotency_key = v_order_id::text)
     IF p_idempotency_key IS NULL THEN
         UPDATE public.orders SET idempotency_key = v_order_id::text WHERE id = v_order_id;
     END IF;
@@ -111,7 +108,6 @@ BEGIN
     IF p_status = 'EXECUTED' THEN
         -- Validate exit order constraints
         IF p_is_exit THEN
-            -- Check if linked_position_id is supplied
             IF p_linked_position_id IS NOT NULL THEN
                 SELECT side, qty_open, product_type
                 INTO v_pos_side, v_pos_qty_open, p_product_type
@@ -119,7 +115,6 @@ BEGIN
                 WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active');
             END IF;
 
-            -- If linked position not found or not supplied, query by user, symbol, opposite side
             IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
                 SELECT side, COALESCE(SUM(qty_open), 0)
                 INTO v_pos_side, v_pos_qty_open
@@ -132,7 +127,6 @@ BEGIN
                 GROUP BY side
                 LIMIT 1;
 
-                -- Fall back to any open position for this symbol with opposite side if product_type differed
                 IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
                     SELECT side, COALESCE(SUM(qty_open), 0), product_type
                     INTO v_pos_side, v_pos_qty_open, p_product_type
@@ -159,7 +153,7 @@ BEGIN
             END IF;
         END IF;
 
-        -- Find if an open position exists for this symbol (re-fetch single lot for routing)
+        -- Find if an open position exists for this symbol
         SELECT id, qty_open, side
         INTO v_position_id, v_pos_qty_open, v_pos_side
         FROM public.positions
@@ -172,7 +166,7 @@ BEGIN
         FOR UPDATE;
 
         IF NOT FOUND OR v_pos_side = p_side THEN
-            -- Lifecycle: Create Position Lot (Same-side additions create separate lots for FIFO)
+            -- Lifecycle: Create Position Lot
             v_position_id := public.create_position_internal(
                 p_user_id, p_symbol, p_side, p_qty, p_fill_price, p_ltp,
                 p_product_type, p_segment, p_stop_loss, p_target,
@@ -180,7 +174,6 @@ BEGIN
             );
             UPDATE public.orders SET info = v_position_id::text WHERE id = v_order_id;
 
-            -- Ledger entries for new position margin
             IF p_expected_margin > 0 THEN
                 INSERT INTO public.transactions (user_id, type, amount, status, ref_id)
                 VALUES (p_user_id, 'MARGIN_DEBIT', p_expected_margin, 'APPROVED', 'MRG_' || v_order_id::text);
@@ -191,7 +184,6 @@ BEGIN
             v_remaining_qty := p_qty;
             
             IF p_linked_position_id IS NOT NULL THEN
-                -- Target specific lot
                 FOR v_pos IN 
                     SELECT id, qty_open 
                     FROM public.positions
@@ -203,29 +195,25 @@ BEGIN
                     END IF;
                     
                     IF v_pos.qty_open > v_remaining_qty THEN
-                        -- Lifecycle: Reduce Position (Partial Close lot)
                         v_closed_qty := v_remaining_qty;
                         PERFORM public.reduce_position_internal(
                             v_pos.id, v_closed_qty, p_fill_price, p_ltp,
                             round((p_expected_brokerage * v_closed_qty) / p_qty, 2),
-                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text -- unique per lot
+                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text
                         );
                         v_remaining_qty := 0;
                     ELSE
-                        -- Lifecycle: Close Position (Full Close lot)
                         v_closed_qty := v_pos.qty_open;
                         PERFORM public.close_position_v2(
                             v_pos.id, v_closed_qty, p_fill_price,
                             'FIFO_EXIT', round((p_expected_brokerage * v_closed_qty) / p_qty, 2),
-                            v_order_id::text  -- reuse the already-inserted order id so close_position_v2 skips its own insert
+                            v_order_id::text
                         );
                         v_remaining_qty := v_remaining_qty - v_closed_qty;
                     END IF;
                 END LOOP;
             END IF;
 
-            -- Default FIFO Order Consuming Oldest First (used for unlinked exits or fallback)
-            -- Secondary sort: qty_open ASC ensures smallest lots are consumed first when entry_time is identical
             IF v_remaining_qty > 0 THEN
                 FOR v_pos IN 
                     SELECT id, qty_open 
@@ -243,16 +231,14 @@ BEGIN
                     END IF;
     
                     IF v_pos.qty_open > v_remaining_qty THEN
-                        -- Lifecycle: Reduce Position (Partial Close lot)
                         v_closed_qty := v_remaining_qty;
                         PERFORM public.reduce_position_internal(
                             v_pos.id, v_closed_qty, p_fill_price, p_ltp,
                             round((p_expected_brokerage * v_closed_qty) / p_qty, 2),
-                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text -- unique per lot
+                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text
                         );
                         v_remaining_qty := 0;
                     ELSE
-                        -- Lifecycle: Close Position (Full Close lot)
                         v_closed_qty := v_pos.qty_open;
                         PERFORM public.close_position_v2(
                             v_pos.id, v_closed_qty, p_fill_price,
@@ -264,8 +250,6 @@ BEGIN
                 END LOOP;
             END IF;
 
-
-            -- Lifecycle: Reverse Position (Create new opposite side position if remaining quantity exists)
             IF v_remaining_qty > 0 THEN
                 v_position_id := public.create_position_internal(
                     p_user_id, p_symbol, p_side, v_remaining_qty, p_fill_price, p_ltp,
@@ -274,7 +258,6 @@ BEGIN
                 );
                 UPDATE public.orders SET info = v_position_id::text WHERE id = v_order_id;
 
-                -- Ledger entries for reversed side entry margin debit
                 IF p_expected_margin > 0 THEN
                     INSERT INTO public.transactions (user_id, type, amount, status, ref_id)
                     VALUES (p_user_id, 'MARGIN_DEBIT', p_expected_margin, 'APPROVED', 'MRG_' || v_order_id::text);
@@ -282,13 +265,11 @@ BEGIN
             END IF;
         END IF;
 
-        -- Write brokerage transaction once at order execution level
         IF p_expected_brokerage > 0 THEN
             INSERT INTO public.transactions (user_id, type, amount, status, ref_id)
             VALUES (p_user_id, 'BROKERAGE_DEBIT', p_expected_brokerage, 'APPROVED', 'BRK_' || v_order_id::text);
         END IF;
 
-        -- Write buffer fee transaction once at order execution level
         IF p_buffer_fee > 0 THEN
             INSERT INTO public.transactions (user_id, type, amount, status, ref_id)
             VALUES (p_user_id, 'BUFFER_FEE_DEBIT', p_buffer_fee, 'APPROVED', 'BUF_' || v_order_id::text);
@@ -300,8 +281,3 @@ END;
 $$;
 
 REVOKE EXECUTE ON FUNCTION public.place_order_v2 FROM public;
-
--- Composite indexes to optimize order idempotency and positions lookups inside place_order_v2
-CREATE INDEX IF NOT EXISTS idx_orders_user_idempotency ON public.orders(user_id, idempotency_key);
-CREATE INDEX IF NOT EXISTS idx_positions_user_symbol_status ON public.positions(user_id, symbol, status);
-CREATE INDEX IF NOT EXISTS idx_positions_user_symbol_status_side ON public.positions(user_id, symbol, status, side);

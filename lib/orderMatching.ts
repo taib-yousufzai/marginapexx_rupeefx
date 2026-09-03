@@ -357,6 +357,31 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
           console.error(`[EXEC_TRACE ${new Date().toISOString()}] RPC_ERROR | Order ID: ${order.id} | Error:`, rpcErr);
         } else {
           console.log(`[EXEC_TRACE ${new Date().toISOString()}] RPC_SUCCESS | Order ID: ${order.id}`);
+
+          // GTT LIMIT gate activation: copy SL/TARGET from the order to the linked position.
+          // At placement time, GTT positions are created with NULL SL/TARGET to prevent
+          // phantom triggers before the LIMIT gate is reached. Now that the order has
+          // executed (LIMIT gate met), activate the protective SL/TARGET on the position.
+          if (order.order_type === 'GTT' && !finalIsExit) {
+            const posIdForSLTarget = linkedInfo || order.info;
+            if (posIdForSLTarget && (order.stop_loss || order.target)) {
+              const slTargetPatch: any = {};
+              if (order.stop_loss) slTargetPatch.stop_loss = Number(order.stop_loss);
+              if (order.target) slTargetPatch.target = Number(order.target);
+              slTargetPatch.updated_at = new Date().toISOString();
+
+              const { error: slPatchErr } = await admin
+                .from('positions')
+                .update(slTargetPatch)
+                .eq('id', posIdForSLTarget);
+
+              if (slPatchErr) {
+                console.error(`[EXEC_TRACE ${new Date().toISOString()}] GTT_SL_TARGET_PATCH_ERROR | Order ID: ${order.id} | Position: ${posIdForSLTarget} | Error:`, slPatchErr);
+              } else {
+                console.log(`[EXEC_TRACE ${new Date().toISOString()}] GTT_SL_TARGET_ACTIVATED | Order ID: ${order.id} | Position: ${posIdForSLTarget} | SL: ${order.stop_loss} | Target: ${order.target}`);
+              }
+            }
+          }
         }
 
         // 3. Write audit log
