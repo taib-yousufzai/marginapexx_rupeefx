@@ -1662,7 +1662,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                       if (isModifyingGttOrder) {
                         return initialOrder.is_exit === true
                           ? ['MARKET', 'LIMIT', 'SL', 'TARGET', 'GTT']
-                          : ['MARKET', 'LIMIT', 'SLM'];
+                          : ['MARKET', 'LIMIT', 'SLM', 'GTT'];
                       }
                       // Explicitly show exit-mode options for SL modifications
                       if (isModify && initialOrder?.order_type === 'SL') {
