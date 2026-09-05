@@ -349,7 +349,19 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }));
 
     // Dynamically synthesize virtual pending orders for positions with SL/Target
+    // BUT only when a real DB order doesn't already cover that exit (to avoid duplicates
+    // e.g. SLM entry inserts a real SL order — we must not also add a virtual one).
     const virtualOrders: MyOrder[] = [];
+
+    // Build a set of real pending exit orders keyed by symbol+side to detect duplicates
+    const realPendingExitKeys = new Set<string>();
+    for (const o of orders) {
+      const isPending = ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending'].includes(o.status as string);
+      if (isPending && o.is_exit) {
+        realPendingExitKeys.add(`${o.symbol}|${o.side}`);
+      }
+    }
+
     for (const pos of openPositions) {
       const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
       const exitKey = `${pos.symbol}|${exitSide}`;
@@ -357,7 +369,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const stopLoss = pos.stop_loss ? Number(pos.stop_loss) : (pos.sl ? Number(pos.sl) : null);
       const target = pos.target ? Number(pos.target) : (pos.tp ? Number(pos.tp) : null);
 
-      if (stopLoss !== null && stopLoss > 0) {
+      // Only add virtual SL card if no real pending exit order exists for this symbol+side
+      if (stopLoss !== null && stopLoss > 0 && !realPendingExitKeys.has(exitKey)) {
         virtualOrders.push({
           id: `pos-sl-${pos.id}`,
           symbol: pos.symbol,
