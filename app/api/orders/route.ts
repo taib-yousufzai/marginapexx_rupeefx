@@ -960,7 +960,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 10. Compute fill price (LTP ± buffer from segment_settings)
     let fillPrice: number;
-    const isImmediate = (order_type ?? 'MARKET') === 'MARKET';
+    // SLM (Stop Loss Market) = immediate market entry + linked SL exit order
+    const isImmediate = ['MARKET', 'SLM'].includes(order_type ?? 'MARKET');
 
     let rawBid = typeof rawQuote === 'object' ? (rawQuote?.bid ?? null) : null;
     let rawAsk = typeof rawQuote === 'object' ? (rawQuote?.ask ?? null) : null;
@@ -998,7 +999,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       bidBuffer: bidBuf,
     });
 
-    if (order_type === 'LIMIT' || order_type === 'SL' || order_type === 'SLM' || order_type === 'GTT') {
+    if (order_type === 'LIMIT' || order_type === 'SL' || order_type === 'GTT') {
       fillPrice = client_price || trigger_price || baseLtp;
     } else {
       const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
@@ -1153,6 +1154,55 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     } catch (err: any) {
       console.error('[POST /api/orders] Order execution error:', err);
       return NextResponse.json({ error: err.message || 'Order execution failed. Please try again.' }, { status: 400 });
+    }
+
+    // ── SLM entry: insert a linked pending SL exit order ─────────────────────
+    // SLM = market entry now + protective SL exit order that auto-fires when
+    // stop_loss price is hit, closing the position at market.
+    if (order_type === 'SLM' && !resolvedIsExit && resolvedStopLoss && resolvedStopLoss > 0) {
+      try {
+        // Fetch the newly created position for this order so we can link the SL
+        const { data: newPos } = await admin
+          .from('positions')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('symbol', symbol)
+          .in('status', ['open', 'OPEN', 'active'])
+          .order('created_at', { ascending: false })
+          .maybeSingle();
+
+        const linkedPosId = newPos?.id ?? resolvedLinkedPositionId ?? null;
+        const slSide = side === 'BUY' ? 'SELL' : 'BUY';
+
+        await admin.rpc('place_order_v2', {
+          p_user_id:      user.id,
+          p_symbol:       symbol,
+          p_kite_inst:    kiteInst,
+          p_segment:      dbSegment,
+          p_side:         slSide,
+          p_order_type:   'SL',
+          p_product_type: product_type ?? 'INTRADAY',
+          p_qty:          qty,
+          p_lots:         lots ?? 0,
+          p_ltp:          baseLtp,
+          p_fill_price:   resolvedStopLoss,
+          p_is_exit:      true,
+          p_buffer_fee:   0,
+          p_status:       'PENDING',
+          p_trigger_price: resolvedStopLoss,
+          p_stop_loss:    resolvedStopLoss,
+          p_target:       null,
+          p_info:         linkedPosId,
+          p_expected_margin: 0,
+          p_expected_brokerage: 0,
+          p_idempotency_key: null,
+          p_linked_position_id: linkedPosId,
+        });
+        console.log(`[POST /api/orders] SLM: linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
+      } catch (slErr) {
+        // Non-fatal: SLM entry already executed; log but don't block response
+        console.warn('[POST /api/orders] Non-fatal: failed to insert linked SL exit order for SLM entry:', slErr);
+      }
     }
 
     // ── Fix 3.1c: Market exit — fully await orphan order cleanup ─────────────

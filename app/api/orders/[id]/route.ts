@@ -168,9 +168,10 @@ async function handleModifyOrder(
       return NextResponse.json({ error: `Cannot modify order with status '${existingOrder.status}'. Only pending orders can be modified.` }, { status: 400 });
     }
 
-    // 2. Determine target order type and check for Market transition
+    // 2. Determine target order type and check for Market/SLM transition
     const targetOrderType = (payload.order_type || existingOrder.order_type || '').toUpperCase();
-    const isChangingToMarket = targetOrderType === 'MARKET';
+    // SLM = immediate market entry + linked SL exit order (same execution path as MARKET)
+    const isChangingToMarket = targetOrderType === 'MARKET' || targetOrderType === 'SLM';
 
     let fillPrice: number | null = null;
     let baseLtp: number | null = null;
@@ -247,8 +248,10 @@ async function handleModifyOrder(
         ? Boolean(payload.is_exit === true || payload.is_exit === 'true') 
         : Boolean(existingOrder.is_exit === true || existingOrder.is_exit === 'true');
 
-      // If linked to an existing open position, handle netting or replacing
-      if (resolvedLinkedPosId) {
+      // Only resolve linked position / auto-flip is_exit for orders that were already exits
+      // (e.g. modifying an SL virtual order). For entry orders being converted to MARKET (SLM),
+      // we must NOT flip is_exit=true — that would trigger exit logic instead of creating a position.
+      if (resolvedLinkedPosId && isExitResolved) {
         const { data: posData } = await admin
           .from('positions')
           .select('id, side, status, qty_open')
@@ -336,6 +339,57 @@ async function handleModifyOrder(
       }
 
       return NextResponse.json({ success: true, order: updatedOrder, executed: true });
+    }
+
+    // If SLM, after position is created, also insert a linked SL exit order
+    if (targetOrderType === 'SLM') {
+      const slPrice = payload.stop_loss ?? payload.trigger_price ?? null;
+      if (slPrice && Number(slPrice) > 0) {
+        try {
+          // Find the newly created position
+          const { data: newPos } = await admin
+            .from('positions')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('symbol', existingOrder.symbol)
+            .in('status', ['open', 'OPEN', 'active'])
+            .order('created_at', { ascending: false })
+            .maybeSingle();
+
+          const linkedPosId = newPos?.id ?? null;
+          const slSide = existingOrder.side === 'BUY' ? 'SELL' : 'BUY';
+          const slPriceNum = Number(slPrice);
+
+          await admin.rpc('place_order_v2', {
+            p_user_id:      user.id,
+            p_symbol:       existingOrder.symbol,
+            p_kite_inst:    existingOrder.kite_instrument || existingOrder.symbol,
+            p_segment:      existingOrder.segment || '',
+            p_side:         slSide,
+            p_order_type:   'SL',
+            p_product_type: existingOrder.product_type || 'INTRADAY',
+            p_qty:          existingOrder.qty,
+            p_lots:         existingOrder.lots || 0,
+            p_ltp:          fillPrice,
+            p_fill_price:   slPriceNum,
+            p_is_exit:      true,
+            p_buffer_fee:   0,
+            p_status:       'PENDING',
+            p_trigger_price: slPriceNum,
+            p_stop_loss:    slPriceNum,
+            p_target:       null,
+            p_info:         linkedPosId,
+            p_expected_margin: 0,
+            p_expected_brokerage: 0,
+            p_idempotency_key: null,
+            p_linked_position_id: linkedPosId,
+          });
+          console.log(`[handleModifyOrder] SLM: linked SL exit order inserted at ${slPriceNum} for position ${linkedPosId}`);
+        } catch (slErr) {
+          // Non-fatal: market entry already executed
+          console.warn('[handleModifyOrder] Non-fatal: failed to insert linked SL exit order for SLM modify:', slErr);
+        }
+      }
     }
 
     // --- NON-MARKET MODIFICATION: ATOMIC CANCEL & REPLACE LIFECYCLE ---

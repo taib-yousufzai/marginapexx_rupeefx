@@ -670,8 +670,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedClientPrice = currentLtp;
           resolvedStopLoss = resolvedTriggerPrice;
         } else if (orderType === 'SLM') {
+          // SLM in exit/modify flow = market exit (trigger_price is the SL level for reference)
           resolvedOrderType = 'SLM';
           resolvedTriggerPrice = parseFloat(triggerPrice) || parseFloat(slPrice) || undefined;
+          resolvedStopLoss = resolvedTriggerPrice;
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
           resolvedOrderType = 'GTT';
@@ -697,9 +699,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
           resolvedStopLoss = resolvedTriggerPrice;
         } else if (orderType === 'SLM') {
-          // SLM entry acts as an immediate MARKET order with a stop loss attached (per UI label)
-          resolvedOrderType = 'MARKET';
-          resolvedStopLoss = parseFloat(triggerPrice) || parseFloat(slPrice) || undefined;
+          // SLM entry = market execution now + linked SL exit order created by backend
+          resolvedOrderType = 'SLM';
+          resolvedTriggerPrice = parseFloat(triggerPrice) || parseFloat(slPrice) || undefined;
+          resolvedStopLoss = resolvedTriggerPrice; // SL price forwarded so backend creates exit order
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
           resolvedOrderType = 'GTT';
@@ -797,21 +800,25 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             const isLong = existingPos ? (existingPos.side === 'BUY') : (isExitTrade ? (placeSide === 'SELL') : (placeSide === 'BUY'));
 
             if (isExitTrade) {
+              // Exit SL: SL must be on the losing side of current price
               if (isLong && trigVal >= currentLtp) {
-                showOrderError('Trigger price must be below current market price for BUY position exit SL/SLM.');
+                showOrderError('Stop loss must be below current market price for a BUY position.');
                 return;
               }
               if (!isLong && trigVal <= currentLtp) {
-                showOrderError('Trigger price must be above current market price for SELL position exit SL/SLM.');
+                showOrderError('Stop loss must be above current market price for a SELL position.');
                 return;
               }
             } else {
+              // Entry SLM: user is entering at market and setting a protective SL
+              // BUY entry → SL must be BELOW current price (protect against downside)
+              // SELL entry → SL must be ABOVE current price (protect against upside)
               if (placeSide === 'BUY' && trigVal >= currentLtp) {
-                showOrderError('Trigger price must be lower than current market price for BUY SL/SLM.');
+                showOrderError('Stop loss price must be below the current market price for a BUY entry.');
                 return;
               }
               if (placeSide === 'SELL' && trigVal <= currentLtp) {
-                showOrderError('Trigger price must be higher than current market price for SELL SL/SLM.');
+                showOrderError('Stop loss price must be above the current market price for a SELL entry.');
                 return;
               }
             }
@@ -946,7 +953,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
       if (isModify && modifyingOrderId && (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-') || modifyingOrderId.startsWith('pos-gtt-'))) {
         const positionId = modifyingOrderId.replace('pos-sl-', '').replace('pos-target-', '').replace('pos-gtt-', '');
-        
+
         if (resolvedOrderType === 'MARKET') {
           // User changed order type to MARKET -> Clear existing SL/Target & let exit flow execute immediate market close
           try {
@@ -1657,6 +1664,15 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                           ? ['MARKET', 'LIMIT', 'SL', 'TARGET', 'GTT']
                           : ['MARKET', 'LIMIT', 'SLM'];
                       }
+                      // Explicitly show exit-mode options for SL modifications
+                      if (isModify && initialOrder?.order_type === 'SL') {
+                        return ['MARKET', 'TARGET', 'SL', 'GTT'];
+                      }
+                      // When modifying a pending entry order (not an exit), show the same
+                      // entry-mode options as a fresh order (MARKET, LIMIT, SLM, GTT).
+                      if (isModify && initialOrder && !initialOrder.is_exit) {
+                        return ['MARKET', 'LIMIT', 'SLM', 'GTT'];
+                      }
                       return effectiveExitMode ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT'];
                     })().map(t => (
                       <button
@@ -1675,7 +1691,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                   </div>
                 </div>
 
-                {/* LIMIT / TARGET â€” Price input (separate card, matches watchlist) */}
+                {/* LIMIT / TARGET — Price input (separate card, matches watchlist) */}
                 {(orderType === 'LIMIT' || orderType === 'TARGET') && (
                   <div className="ts2-card">
                     <div className="ts2-label">{orderType === 'TARGET' ? 'Target Price' : 'Price'} <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol})</span></div>
@@ -1690,14 +1706,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                   </div>
                 )}
 
-                {/* SL / SLM â€” Price input */}
+                {/* SL / SLM — Price input */}
                 {(orderType === 'SL' || orderType === 'SLM') && (
                   <div className="ts2-card">
                     <div className="ts2-label">
-                      {effectiveExitMode
-                        ? <>Stop Loss <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) order executes at market price</span></>
-                        : (orderType === 'SLM'
-                          ? <>Stop Loss <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) attached to Market order</span></>
+                      {orderType === 'SLM'
+                        ? <>Stop Loss Price <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) {activeSide === 'BUY' ? 'trigger below' : 'trigger above'} Ltp</span></>
+                        : (effectiveExitMode
+                          ? <>Stop Loss <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol}) order executes at market price</span></>
                           : <>Trigger Price <span style={{ color: '#9CA3AF', textTransform: 'none', fontWeight: 500 }}>({currencySymbol})</span></>)
                       }
                     </div>

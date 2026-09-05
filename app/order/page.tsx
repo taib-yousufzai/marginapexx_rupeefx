@@ -568,7 +568,7 @@ export default function OrderPage() {
               initialOrder={tradeSheetInitialOrder}
               isModify={!!modifyingOrderId}
               modifyingOrderId={modifyingOrderId}
-              exitMode={modifyingOrderId ? true : false}
+              exitMode={false}
               linkedPosId={tradeSheetInitialOrder?.linked_position_id}
               onSuccess={() => {
                 refresh();
