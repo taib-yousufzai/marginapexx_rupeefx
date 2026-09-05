@@ -48,7 +48,6 @@ interface TradeSheetProps {
 export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = false, productType: propProductType, initialOrder, isModify = false, modifyingOrderId, isFromPositions = false, linkedPosId = null, initialExitQty: propInitialExitQty, hideLotText = false }: TradeSheetProps) {
   const effectiveExitMode = Boolean(
     exitMode ||
-    isModify ||
     initialOrder?.is_exit ||
     initialOrder?.isExit ||
     Boolean(modifyingOrderId && (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-') || modifyingOrderId.startsWith('pos-gtt-')))
