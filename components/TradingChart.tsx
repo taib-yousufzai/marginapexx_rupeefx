@@ -565,7 +565,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   // --- Real Data Hooks ---
   const { orders, cancelOrder, refresh: refreshOrders } = useMyOrders();
-  const { positions, refresh: refreshPositions } = useMyPositions();
+  const { positions, refresh: refreshPositions, addOptimisticPosition } = useMyPositions();
   const { placeOrder, closePosition } = useOrderEntry();
 
   // --- Dashboard States ---
@@ -1290,9 +1290,15 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     setOrderSide(side);
 
     try {
-      // Guard against stale exit/add-more quantity when placing a new order (Bug #2)
+      // Guard: don't place order if price feed hasn't loaded yet
+      if (!currentPrice || currentPrice <= 0) {
+        showToast('Price not loaded yet. Please wait a moment.', true);
+        return;
+      }
+
+      // Guard against stale exit/add-more quantity when placing a new order
       let qVal = Number(qtyValue) || 1;
-      if (isExitFlow || isAddMoreFlow || !currentInstrumentPosition || qVal <= 0) {
+      if (isExitFlow || isAddMoreFlow || qVal <= 0) {
         qVal = 1;
         setQtyValue(1);
         setUseLots(true);
@@ -1329,9 +1335,23 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       }
 
       showToast(`Placing quick ${side} order...`);
+      // Build proper kite instrument id (with exchange prefix) for server-side quote fetch
+      const kiteInst = (() => {
+        const s = symbol;
+        if (s.includes(':')) return s;
+        const upper = s.toUpperCase();
+        if (upper.endsWith('CE') || upper.endsWith('PE') || upper.endsWith('FUT') || upper.includes('FUT')) {
+          if (upper.startsWith('SENSEX') || upper.startsWith('BANKEX')) return `BFO:${s}`;
+          if (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD'].some(c => upper.startsWith(c))) return `MCX:${s}`;
+          if (upper.startsWith('EURINR') || upper.startsWith('USDINR') || upper.startsWith('GBPINR') || upper.startsWith('JPYINR')) return `CDS:${s}`;
+          return `NFO:${s}`;
+        }
+        return `NSE:${s}`;
+      })();
+
       const res = await placeOrder({
         symbol: symbol,
-        kite_instrument: symbol,
+        kite_instrument: kiteInst,
         segment: segment,
         side: side,
         qty: finalQty,
@@ -1344,6 +1364,24 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
       if (res.success) {
         showToast(`Quick ${side} Order Placed Successfully!`);
+        // Immediately fire events so PositionsContext refreshes without waiting
+        window.dispatchEvent(new Event('order_placed'));
+        window.dispatchEvent(new CustomEvent('position-closed'));
+        // Inject an optimistic placeholder position so the user sees it INSTANTLY
+        // before the DB propagates (which can take 500ms-2s)
+        const dbSeg = mapSegmentWithSymbol(segment, symbol);
+        addOptimisticPosition({
+          symbol,
+          settlement: dbSeg,
+          side,
+          qty_open: finalQty,
+          lots: effectiveUseLots ? qVal : (finalQty / lotSize),
+          entry_price: res.fill_price || currentPrice,
+          avg_price: res.fill_price || currentPrice,
+          ltp: currentPrice,
+          product_type: 'INTRADAY',
+          kite_instrument: kiteInst,
+        });
         // Flash the button
         const btn = document.getElementById(side === 'BUY' ? 'buyButton' : 'sellButton');
         if (btn) {
@@ -1351,17 +1389,20 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           void btn.offsetWidth; // force reflow
           btn.classList.add('quick-flash');
         }
+        // Release lock immediately on success — don't wait for position watcher
+        setIsSubmitting(false);
+        positionSnapshotRef.current = null;
+        quickEntryLock.current = false;
         refreshOrders();
         refreshBalance();
         refreshPositions();
-        window.dispatchEvent(new CustomEvent('position-closed'));
       } else {
         showToast(res.error || 'Failed to place quick order', true);
       }
     } catch (err: any) {
       showToast(err?.message || 'Quick order failed', true);
     } finally {
-      setTimeout(() => { quickEntryLock.current = false; }, 200);
+      setTimeout(() => { quickEntryLock.current = false; }, 100);
       setIsSubmitting(false);
       positionSnapshotRef.current = null;
       window.dispatchEvent(new Event('global-loader-end'));
@@ -1388,9 +1429,24 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       }
 
       showToast(`Adding ${addQty} to ${pos.side} position...`);
+      
+      // Build proper kite instrument id (with exchange prefix) for server-side quote fetch
+      const kiteInst = (() => {
+        const s = symbol;
+        if (s.includes(':')) return s;
+        const upper = s.toUpperCase();
+        if (upper.endsWith('CE') || upper.endsWith('PE') || upper.endsWith('FUT') || upper.includes('FUT')) {
+          if (upper.startsWith('SENSEX') || upper.startsWith('BANKEX')) return `BFO:${s}`;
+          if (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD'].some(c => upper.startsWith(c))) return `MCX:${s}`;
+          if (upper.startsWith('EURINR') || upper.startsWith('USDINR') || upper.startsWith('GBPINR') || upper.startsWith('JPYINR')) return `CDS:${s}`;
+          return `NFO:${s}`;
+        }
+        return `NSE:${s}`;
+      })();
+
       const res = await placeOrder({
         symbol: symbol,
-        kite_instrument: symbol,
+        kite_instrument: kiteInst,
         segment: segment,
         side: pos.side,
         qty: addQty,

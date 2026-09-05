@@ -23,6 +23,7 @@ interface UseMyPositionsResult {
   restorePositionLocally: (posId: string) => void;
   startConversion: (posId: string, newType: string) => void;
   endConversion: (posId: string) => void;
+  addOptimisticPosition: (pos: Partial<MyPosition>) => void;
 }
 
 export function useMyPositions(refreshInterval?: number): UseMyPositionsResult {

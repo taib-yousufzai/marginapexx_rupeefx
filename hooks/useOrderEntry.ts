@@ -38,13 +38,13 @@ export function useOrderEntry() {
     setError(null);
 
     try {
-      const result = await api.post<{ id: string }>('/api/orders', state, { timeout: 30000 });
+      const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>('/api/orders', state, { timeout: 30000 });
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
       }
 
-      return { success: true, order: result };
+      return { success: true, order: result, fill_price: result.fill_price };
     } catch (err) {
       let message = 'Unknown error';
       if (err instanceof ApiError) {

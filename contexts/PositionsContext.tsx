@@ -33,6 +33,7 @@ export interface PositionsContextType {
   restorePositionLocally: (posId: string) => void;
   startConversion: (posId: string, newType: string) => void;
   endConversion: (posId: string) => void;
+  addOptimisticPosition: (pos: Partial<MyPosition>) => void;
 }
 
 const PositionsContext = createContext<PositionsContextType | null>(null);
@@ -114,9 +115,11 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   const optimisticallyRemovedIds = useRef<Set<string>>(new Set());
   const abortControllerRef = useRef<AbortController | null>(null);
   const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  // Tracks IDs of positions that were added optimistically (not yet confirmed by DB)
+  const optimisticPositionIds = useRef<Set<string>>(new Set());
 
   // Static properties map to cache computations that never change per position lifecycle
-  const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({});
+  const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({}); 
 
   const updatePositionLocally = useCallback((posId: string, updatedFields: Partial<MyPosition>) => {
     setRawPositions(prev =>
@@ -132,6 +135,45 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   const restorePositionLocally = useCallback((posId: string) => {
     optimisticallyRemovedIds.current.delete(posId);
     fetchPositions();
+  }, []);
+
+  // Inject a temporary placeholder position so the user sees it instantly
+  // after a scalp order — before the DB write propagates. The real DB fetch
+  // will replace this placeholder when it arrives.
+  const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition>) => {
+    const tempId = `__optimistic__${Date.now()}`;
+    const now = new Date().toISOString();
+    const optimisticPos: MyPosition = {
+      id: tempId,
+      user_id: '',
+      symbol: partialPos.symbol || '',
+      settlement: partialPos.settlement || '',
+      side: partialPos.side || 'BUY',
+      qty_open: partialPos.qty_open || 0,
+      lots: partialPos.lots || 0,
+      entry_price: partialPos.entry_price || 0,
+      avg_price: partialPos.avg_price || partialPos.entry_price || 0,
+      ltp: partialPos.ltp || partialPos.entry_price || 0,
+      status: 'open',
+      product_type: partialPos.product_type || 'INTRADAY',
+      kite_instrument: partialPos.kite_instrument || partialPos.symbol || '',
+      entry_time: now,
+      locked_margin: partialPos.locked_margin || 0,
+      brokerage: 0,
+      ...partialPos,
+      id: tempId,
+    } as MyPosition;
+
+    optimisticPositionIds.current.add(tempId);
+    setRawPositions(prev => [optimisticPos, ...prev]);
+
+    // Auto-remove the optimistic placeholder after 4s (real data should arrive by then)
+    setTimeout(() => {
+      if (optimisticPositionIds.current.has(tempId)) {
+        optimisticPositionIds.current.delete(tempId);
+        setRawPositions(prev => prev.filter(p => p.id !== tempId));
+      }
+    }, 4000);
   }, []);
 
   const startConversion = useCallback((posId: string, newType: string) => {
@@ -207,6 +249,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         const prevOpenIds = new Set(prev.map(p => p.id));
         let posClosedOnBackend = false;
         for (const id of prevOpenIds) {
+          // Skip optimistic placeholders — they are not real DB IDs
+          if (id.startsWith('__optimistic__')) continue;
           if (!serverIds.has(id) && !optimisticallyRemovedIds.current.has(id)) {
             posClosedOnBackend = true;
             break;
@@ -217,6 +261,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
             window.dispatchEvent(new Event('position-closed'));
           }, 0);
         }
+        // Clear any optimistic placeholders now that real data has arrived
+        optimisticPositionIds.current.clear();
         return newPositions;
       });
     } catch (err) {
@@ -238,7 +284,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     let isSubscribed = false;
     const channelName = `my-positions-realtime-${Math.random().toString(36).slice(2)}`;
 
-    const debouncedFetch = (delay = 1500) => {
+    const debouncedFetch = (delay = 300) => {
       if (fetchDebounceRef.current) clearTimeout(fetchDebounceRef.current);
       fetchDebounceRef.current = setTimeout(() => {
         fetchPositions();
@@ -251,7 +297,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         'postgres_changes',
         { event: '*', schema: 'public', table: 'positions' },
         () => {
-          debouncedFetch(500);
+          debouncedFetch(200);
         }
       );
 
@@ -260,15 +306,17 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     });
 
     const handleOrderPlacedWithData = (_e: Event) => {
-      // v2 engine: all position state transitions happen atomically in the DB.
-      // Optimistic UI manipulation is not needed and causes incorrect state
-      // (e.g. removing unrelated positions, incorrect averaging across multiple lots).
-      // A fast DB fetch is sufficient — the real state arrives within ~100ms.
-      debouncedFetch(100);
+      // Immediate fetch — scalp mode needs instant position update
+      fetchPositions();
+      // Follow-up fetch in 800ms to catch any async DB propagation
+      debouncedFetch(800);
     };
 
     const handleOrderPlaced = () => {
-      debouncedFetch(100);
+      // Immediate fetch for fast position panel update
+      fetchPositions();
+      // Follow-up fetch in 800ms
+      debouncedFetch(800);
     };
 
     const handleOrderFailed = () => {
@@ -462,7 +510,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       removePositionLocally,
       restorePositionLocally,
       startConversion,
-      endConversion
+      endConversion,
+      addOptimisticPosition,
     }}>
       {children}
     </PositionsContext.Provider>
