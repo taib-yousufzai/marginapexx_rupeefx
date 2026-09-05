@@ -61,7 +61,7 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
           };
         }
       }
-    } catch (e) {}
+    } catch (e) { }
 
     // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel with a fast timeout
     const [bookRes, priceRes] = await Promise.all([
@@ -266,10 +266,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const admin = getAdminClient();
     const { searchParams } = request.nextUrl;
-    const page  = parseInt(searchParams.get('page')  ?? '1',  10);
+    const page = parseInt(searchParams.get('page') ?? '1', 10);
     const limit = parseInt(searchParams.get('limit') ?? '50', 10);
-    const from  = (page - 1) * limit;
-    const to    = from + limit - 1;
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
 
     // Fetch user profile, orders, and open positions in a SINGLE parallel round-trip with a 2.5s fast timeout
     const queryPromise = Promise.all([
@@ -327,25 +327,25 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const openPositions = posRes.data ?? [];
 
     const orders: MyOrder[] = dbOrders.map((r: Record<string, unknown>) => ({
-      id:           r.id as string,
-      symbol:       r.symbol as string,
-      segment:      (r.segment as string) ?? '',
-      side:         r.side as 'BUY' | 'SELL',
-      status:       r.status as MyOrder['status'],
-      qty:          Number(r.qty),
-      lots:         Number(r.lots ?? 0),
-      fill_price:   Number(r.fill_price ?? r.price),
+      id: r.id as string,
+      symbol: r.symbol as string,
+      segment: (r.segment as string) ?? '',
+      side: r.side as 'BUY' | 'SELL',
+      status: r.status as MyOrder['status'],
+      qty: Number(r.qty),
+      lots: Number(r.lots ?? 0),
+      fill_price: Number(r.fill_price ?? r.price),
       ltp_at_entry: Number(r.ltp_at_entry ?? 0),
-      order_type:   (r.order_type as MyOrder['order_type']) ?? 'MARKET',
+      order_type: (r.order_type as MyOrder['order_type']) ?? 'MARKET',
       product_type: (r.product_type as MyOrder['product_type']) ?? 'INTRADAY',
-      info:         sanitizeOrderInfo(r.info as string ?? null),
-      brokerage:    Number(r.brokerage ?? 0),
+      info: sanitizeOrderInfo(r.info as string ?? null),
+      brokerage: Number(r.brokerage ?? 0),
       client_price: r.client_price !== null ? Number(r.client_price) : undefined,
       trigger_price: r.trigger_price !== null ? Number(r.trigger_price) : undefined,
-      stop_loss:    r.stop_loss !== null ? Number(r.stop_loss) : undefined,
-      target:       r.target !== null ? Number(r.target) : undefined,
-      is_exit:      r.is_exit !== undefined ? Boolean(r.is_exit) : false,
-      created_at:   r.created_at as string,
+      stop_loss: r.stop_loss !== null ? Number(r.stop_loss) : undefined,
+      target: r.target !== null ? Number(r.target) : undefined,
+      is_exit: r.is_exit !== undefined ? Boolean(r.is_exit) : false,
+      created_at: r.created_at as string,
     }));
 
     // Dynamically synthesize virtual pending orders for positions with SL/Target
@@ -757,7 +757,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const leverage = targetProductType === 'CARRY'
       ? (segSetting.holding_leverage ?? 1)
       : (segSetting.intraday_leverage ?? 1);
-    const exposure      = qty * client_price;
+    const exposure = qty * client_price;
     const requiredMargin = exposure / leverage;
 
     let expectedBrokerage = 0;
@@ -1115,24 +1115,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const executeDbCall = async () => {
       const { data: oId, error: rpcErr } = await admin.rpc('place_order_v2', {
-        p_user_id:      user.id,
-        p_symbol:       symbol,
-        p_kite_inst:    kiteInst,
-        p_segment:      dbSegment,
-        p_side:         side,
-        p_order_type:   rpcOrderType,
+        p_user_id: user.id,
+        p_symbol: symbol,
+        p_kite_inst: kiteInst,
+        p_segment: dbSegment,
+        p_side: side,
+        p_order_type: rpcOrderType,
         p_product_type: product_type ?? 'INTRADAY',
-        p_qty:          qty,
-        p_lots:         lots ?? 0,
-        p_ltp:          baseLtp,
-        p_fill_price:   fillPrice,
-        p_is_exit:      resolvedIsExit,
-        p_buffer_fee:   0,
-        p_status:       isImmediate ? 'EXECUTED' : 'PENDING',
+        p_qty: qty,
+        p_lots: lots ?? 0,
+        p_ltp: baseLtp,
+        p_fill_price: fillPrice,
+        p_is_exit: resolvedIsExit,
+        p_buffer_fee: 0,
+        p_status: isImmediate ? 'EXECUTED' : 'PENDING',
         p_trigger_price: resolvedTriggerPrice,
-        p_stop_loss:    resolvedStopLoss,
-        p_target:       target ? parseFloat(target.toString()) : null,
-        p_info:         resolvedLinkedPositionId,
+        p_stop_loss: resolvedStopLoss,
+        p_target: target ? parseFloat(target.toString()) : null,
+        p_info: resolvedLinkedPositionId,
         p_expected_margin: requiredMargin,
         p_expected_brokerage: expectedBrokerage,
         p_idempotency_key: null,
@@ -1175,24 +1175,24 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const slSide = side === 'BUY' ? 'SELL' : 'BUY';
 
         await admin.rpc('place_order_v2', {
-          p_user_id:      user.id,
-          p_symbol:       symbol,
-          p_kite_inst:    kiteInst,
-          p_segment:      dbSegment,
-          p_side:         slSide,
-          p_order_type:   'SL',
+          p_user_id: user.id,
+          p_symbol: symbol,
+          p_kite_inst: kiteInst,
+          p_segment: dbSegment,
+          p_side: slSide,
+          p_order_type: 'SL',
           p_product_type: product_type ?? 'INTRADAY',
-          p_qty:          qty,
-          p_lots:         lots ?? 0,
-          p_ltp:          baseLtp,
-          p_fill_price:   resolvedStopLoss,
-          p_is_exit:      true,
-          p_buffer_fee:   0,
-          p_status:       'PENDING',
+          p_qty: qty,
+          p_lots: lots ?? 0,
+          p_ltp: baseLtp,
+          p_fill_price: resolvedStopLoss,
+          p_is_exit: true,
+          p_buffer_fee: 0,
+          p_status: 'PENDING',
           p_trigger_price: resolvedStopLoss,
-          p_stop_loss:    resolvedStopLoss,
-          p_target:       null,
-          p_info:         linkedPosId,
+          p_stop_loss: resolvedStopLoss,
+          p_target: null,
+          p_info: linkedPosId,
           p_expected_margin: 0,
           p_expected_brokerage: 0,
           p_idempotency_key: null,
@@ -1228,10 +1228,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const response: PlaceOrderResponse = {
-      order_id:   orderId as string,
-      status:     isImmediate ? 'EXECUTED' : 'PENDING',
+      order_id: orderId as string,
+      status: isImmediate ? 'EXECUTED' : 'PENDING',
       fill_price: fillPrice,
-      message:    isImmediate 
+      message: isImmediate
         ? `${side} order executed at ₹${fillPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
         : `${side} ${order_type} order placed (Pending) at ₹${fillPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
     };
