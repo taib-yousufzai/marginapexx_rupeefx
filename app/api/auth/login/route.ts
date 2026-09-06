@@ -18,7 +18,7 @@ function createSignedJwt(payload: Record<string, any>): string {
 
   const headerB64 = encodeB64Url(header);
   const payloadB64 = encodeB64Url(payload);
-  const dummySignature = Buffer.from('margin-apex-secret-signature')
+  const dummySignature = Buffer.from('niveshx-trading-secret-signature')
     .toString('base64')
     .replace(/=/g, '')
     .replace(/\+/g, '-')

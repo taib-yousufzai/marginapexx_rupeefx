@@ -34,10 +34,12 @@ function addToWatchlist(item: {
   category?: string;
   lotSize?: number;
 }, userId?: string) {
-  const WATCHLIST_KEY = 'marginApex_watchlist';
+  const WATCHLIST_KEY = 'niveshX_watchlist';
+  const LEGACY_WATCHLIST_KEY = 'marginApex_watchlist';
   try {
     const key = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
-    const raw = localStorage.getItem(key);
+    const legacyKey = userId ? `${LEGACY_WATCHLIST_KEY}_${userId}` : LEGACY_WATCHLIST_KEY;
+    const raw = localStorage.getItem(key) || localStorage.getItem(legacyKey);
     const list = raw ? JSON.parse(raw) : [];
 
     const targetCat = item.category || 'WATCHLIST';

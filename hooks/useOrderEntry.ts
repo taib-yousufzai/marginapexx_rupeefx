@@ -1,7 +1,7 @@
 /**
  * useOrderEntry
  * 
- * Manages the state and logic for placing an order through the MarginApex platform.
+ * Manages the state and logic for placing an order through the NiveshX Trading platform.
  */
 
 import { useState, useCallback } from 'react';

@@ -846,7 +846,7 @@ export default function PositionPage() {
               <div className="pos-header mobile-only">
                 <div className="pos-header-left">
                   <div className="pos-brand">
-                    <span>MARGIN<span className="apex-text">APEX</span></span>
+                    <span>NIVESHX<span className="apex-text"> TRADING</span></span>
                   </div>
 
                 </div>

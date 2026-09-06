@@ -122,8 +122,8 @@ function AcceptInviteForm() {
     return (
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">MARGIN</span>
-          <span className="login-brand-apex">APEX</span>
+          <span className="login-brand-margin">NIVESHX </span>
+          <span className="login-brand-apex">TRADING</span>
         </div>
         <div className="login-card">
           <h1 className="login-card-title">Invalid invite link</h1>
@@ -141,8 +141,8 @@ function AcceptInviteForm() {
     return (
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">MARGIN</span>
-          <span className="login-brand-apex">APEX</span>
+          <span className="login-brand-margin">NIVESHX </span>
+          <span className="login-brand-apex">TRADING</span>
         </div>
         <div className="login-card">
           <p className="login-card-subtitle">Verifying your invite link…</p>
@@ -155,8 +155,8 @@ function AcceptInviteForm() {
     <div className="login-page">
       {/* Branding */}
       <div className="login-branding">
-        <span className="login-brand-margin">MARGIN</span>
-        <span className="login-brand-apex">APEX</span>
+        <span className="login-brand-margin">NIVESHX </span>
+        <span className="login-brand-apex">TRADING</span>
       </div>
 
       {/* Auth card */}
@@ -299,8 +299,8 @@ export default function AcceptInvitePage() {
     <Suspense fallback={
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">MARGIN</span>
-          <span className="login-brand-apex">APEX</span>
+          <span className="login-brand-margin">NIVESHX </span>
+          <span className="login-brand-apex">TRADING</span>
         </div>
         <div className="login-card">
           <p className="login-card-subtitle">Loading…</p>

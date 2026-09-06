@@ -29,7 +29,7 @@ async function main() {
     await client.query(`DELETE FROM auth.users WHERE id = $1`, [v_user]);
 
     // Insert user, profile, deposit
-    await client.query(`INSERT INTO auth.users (id, email) VALUES ($1, 'debug_ct7@marginapex.com')`, [v_user]);
+    await client.query(`INSERT INTO auth.users (id, email) VALUES ($1, 'debug_ct7@niveshxtrading.com')`, [v_user]);
     await client.query(`INSERT INTO public.profiles (id, active, role, balance, settlement_amount, client_id) VALUES ($1, true, 'user', 50000, 50000, 'DB_CT8')`, [v_user]);
     await client.query(`INSERT INTO public.transactions (user_id, type, amount, status, ref_id) VALUES ($1, 'DEPOSIT', 50000, 'APPROVED', 'CT_DEPOSIT')`, [v_user]);
 

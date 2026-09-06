@@ -83,7 +83,7 @@ BEGIN
     v_user_a := gen_random_uuid();
     v_user_b := gen_random_uuid();
     
-    INSERT INTO auth.users (id, email) VALUES (v_user_a, 'test_a@marginapex.com'), (v_user_b, 'test_b@marginapex.com');
+    INSERT INTO auth.users (id, email) VALUES (v_user_a, 'test_a@niveshxtrading.com'), (v_user_b, 'test_b@niveshxtrading.com');
     
     INSERT INTO public.profiles (id, active, role, balance, settlement_amount, client_id)
     VALUES (v_user_a, true, 'user', v_initial_balance, v_initial_balance, 'CL_A'),

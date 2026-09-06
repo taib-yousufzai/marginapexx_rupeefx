@@ -40,8 +40,8 @@ export default function SplashLoader() {
       }}
     >
       <img
-        src="/icon-512x512.png"
-        alt="Margin Apex Logo"
+        src="/NiveshX%20Trading%20Growth%20Logo.png"
+        alt="NiveshX Trading Logo"
         style={{
           width: '280px',
           height: 'auto',

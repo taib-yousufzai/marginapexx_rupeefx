@@ -65,13 +65,15 @@ declare global {
   }
 }
 
-const WATCHLIST_KEY = 'marginApex_watchlist';
+const WATCHLIST_KEY = 'niveshX_watchlist';
+const LEGACY_WATCHLIST_KEY = 'marginApex_watchlist';
 
 function loadWatchlistFromStorage(userId?: string): WatchlistItem[] {
   if (typeof window === 'undefined') return [];
   try {
     const key = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
-    const raw = localStorage.getItem(key);
+    const legacyKey = userId ? `${LEGACY_WATCHLIST_KEY}_${userId}` : LEGACY_WATCHLIST_KEY;
+    const raw = localStorage.getItem(key) || localStorage.getItem(legacyKey);
     return raw ? (JSON.parse(raw) as WatchlistItem[]) : [];
   } catch { return []; }
 }

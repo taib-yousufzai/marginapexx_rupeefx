@@ -179,10 +179,10 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Send OTP email via SendGrid (with Gmail SMTP fallback) ────────────────
-    const emailSubject = 'Your MarginApex verification code';
+    const emailSubject = 'Your NiveshX Trading verification code';
     const emailHtml = `
       <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-        <h2 style="color:#1a1a2e;margin-bottom:8px">MarginApex</h2>
+        <h2 style="color:#1a1a2e;margin-bottom:8px">NiveshX Trading</h2>
         <p style="color:#444;margin-bottom:24px">
           Hi ${fullName.trim()},<br/>Use the code below to verify your email.
           It expires in <strong>${OTP_TTL_MINUTES} minutes</strong>.
@@ -196,7 +196,7 @@ export async function POST(req: NextRequest) {
         </p>
       </div>
     `;
-    const emailText = `Your MarginApex verification code is: ${otp}\n\nIt expires in ${OTP_TTL_MINUTES} minutes.`;
+    const emailText = `Your NiveshX Trading verification code is: ${otp}\n\nIt expires in ${OTP_TTL_MINUTES} minutes.`;
 
     const emailResult = await sendEmail(emailLower, emailSubject, emailHtml, emailText);
     if (!emailResult.success) {
@@ -206,7 +206,7 @@ export async function POST(req: NextRequest) {
     // ── Send OTP SMS via APItxt or Twilio ─────────────────────────────────────
     let smsSent = false;
     if (phone && phone.trim()) {
-      const smsBody = `Your MarginApex verification code is: ${otp}. It expires in ${OTP_TTL_MINUTES} minutes.`;
+      const smsBody = `Your NiveshX Trading verification code is: ${otp}. It expires in ${OTP_TTL_MINUTES} minutes.`;
       const smsResult = await sendOtpSms(phone, otp, smsBody);
       if (smsResult.success) smsSent = true;
     }

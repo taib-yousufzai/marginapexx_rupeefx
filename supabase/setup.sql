@@ -1,5 +1,5 @@
 -- ==========================================
--- MARGINAPEXX UNIFIED DATABASE SETUP SCHEMA
+-- NIVESHX TRADING UNIFIED DATABASE SETUP SCHEMA
 -- Created: 2026-06-08T04:13:10.826Z
 -- Combined from 60 migration files.
 -- ==========================================

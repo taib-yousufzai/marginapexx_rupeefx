@@ -1,5 +1,5 @@
 -- ==========================================
--- MARGINAPEXX: CREATE TRADE LOGS MIGRATION
+-- NIVESHX TRADING: CREATE TRADE LOGS MIGRATION
 -- Created: 2026-06-18
 -- ==========================================
 

@@ -186,6 +186,7 @@ export default function ChartContainer({
 
       // Clear legacy TradingView localStorage settings that may lock or corrupt price scales / main series visibility
       try {
+        localStorage.removeItem('niveshx_tv_layout');
         localStorage.removeItem('marginapexx_tv_layout');
         Object.keys(localStorage).forEach(key => {
           if (key.startsWith('tradingview.')) {
@@ -204,7 +205,7 @@ export default function ChartContainer({
         timezone: 'Asia/Kolkata',
         theme: isDark ? 'dark' : 'light',
         autosize: true,
-        client_id: 'marginapexx',
+        client_id: 'niveshx_trading',
         user_id: 'public_user',
         disabled_features: [
           'header_widget',
@@ -302,7 +303,7 @@ export default function ChartContainer({
           tvWidgetRef.current.save((state: any) => {
             if (state) {
               try {
-                localStorage.setItem('marginapexx_tv_layout', JSON.stringify(state));
+                localStorage.setItem('niveshx_tv_layout', JSON.stringify(state));
               } catch (storageErr) {
                 // Quietly handle QuotaExceededError when browser localStorage capacity is reached
               }

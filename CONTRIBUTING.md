@@ -1,4 +1,4 @@
-# Contributing to MarginApex
+# Contributing to NiveshX Trading
 
 ## Architecture Freeze Policy
 

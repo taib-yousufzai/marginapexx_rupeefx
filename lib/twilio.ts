@@ -216,7 +216,7 @@ export async function sendEmail(
     const transporter = getNodemailerTransporter();
     const gmailUser = process.env.GMAIL_USER;
     await transporter.sendMail({
-      from: `"MarginApex" <${gmailUser}>`,
+      from: `"NiveshX Trading" <${gmailUser}>`,
       to: recipient,
       subject,
       text,

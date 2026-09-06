@@ -245,7 +245,7 @@ START HERE
 ## 📁 All Documentation Files
 
 ```
-marginapexx/
+niveshx_trading/
 ├── QUICK_TEST_GUIDE.md ......................... 2-minute test
 ├── BEFORE_AFTER_COMPARISON.md ................. Visual explanation
 ├── VERIFY_FIX_NOW.md .......................... Detailed testing

@@ -2,8 +2,8 @@ import { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Margin Apex',
-    short_name: 'Margin Apex',
+    name: 'NiveshX Trading',
+    short_name: 'NiveshX Trading',
     description: 'Advanced Trading App experience',
     start_url: '/',
     display: 'standalone',
@@ -12,24 +12,24 @@ export default function manifest(): MetadataRoute.Manifest {
     theme_color: '#FFFFFF',
     icons: [
       {
-        src: '/favicon-32.png?v=10',
+        src: '/favicon-32.png?v=20',
         sizes: '32x32',
         type: 'image/png',
       },
       {
-        src: '/icon-192x192.png?v=12',
+        src: '/icon-192x192.png?v=20',
         sizes: '192x192',
         type: 'image/png',
         purpose: 'any',
       },
       {
-        src: '/icon-512x512.png?v=12',
+        src: '/icon-512x512.png?v=20',
         sizes: '512x512',
         type: 'image/png',
         purpose: 'any',
       },
       {
-        src: '/loading-logo.jpg?v=7',
+        src: '/loading-logo.jpg?v=20',
         sizes: '512x512',
         type: 'image/jpeg',
         purpose: 'any',

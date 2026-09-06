@@ -19,13 +19,22 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'Margin Apex',
+  title: 'NiveshX Trading',
   description: 'Clean Icons & Trading App UI',
-  manifest: '/manifest.webmanifest?v=9',
+  manifest: '/manifest.webmanifest?v=20',
+  icons: {
+    icon: [
+      { url: '/favicon-32.png?v=20', sizes: '32x32', type: 'image/png' },
+      { url: '/icon-192x192.png?v=20', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512x512.png?v=20', sizes: '512x512', type: 'image/png' },
+    ],
+    shortcut: '/favicon.ico?v=20',
+    apple: '/icon-192x192.png?v=20',
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'Margin Apex'
+    title: 'NiveshX Trading'
   },
   formatDetection: {
     telephone: false
@@ -40,6 +49,11 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Favicons & App Icons */}
+        <link rel="icon" href="/favicon-32.png?v=20" type="image/png" sizes="32x32" />
+        <link rel="icon" href="/icon-192x192.png?v=20" type="image/png" sizes="192x192" />
+        <link rel="apple-touch-icon" href="/icon-192x192.png?v=20" />
+        <link rel="shortcut icon" href="/favicon.ico?v=20" />
         {/* Preload the charting library so it's ready before the chart component mounts */}
         <link rel="preload" href="/charting_library/charting_library.standalone.js" as="script" />
         {/* DNS prefetch for external CDNs */}
@@ -55,7 +69,7 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700;1,800;1,900&display=swap" rel="stylesheet" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('marginApexTheme')||'light';document.documentElement.classList.remove('dark','black','blue','light');document.documentElement.classList.add(t);document.documentElement.setAttribute('data-theme',t);var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);obs.disconnect();}});o.observe(document.documentElement,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
+            __html: `(function(){try{var t=localStorage.getItem('niveshXTheme')||localStorage.getItem('marginApexTheme')||'light';document.documentElement.classList.remove('dark','black','blue','light');document.documentElement.classList.add(t);document.documentElement.setAttribute('data-theme',t);var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);obs.disconnect();}});o.observe(document.documentElement,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
           }}
         />
       </head>

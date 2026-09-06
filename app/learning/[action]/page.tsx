@@ -47,7 +47,8 @@ const DEFAULT_WATCHLIST: WatchlistItem[] = [
   { name: 'Ethereum', symbol: 'ETH', kiteSymbol: '', binanceSymbol: 'ETHUSDT', price: 0, change: '0%', segment: 'CRYPTO' }
 ];
 
-const WATCHLIST_KEY_PREFIX = 'marginApex_watchlist';
+const WATCHLIST_KEY_PREFIX = 'niveshX_watchlist';
+const LEGACY_WATCHLIST_KEY_PREFIX = 'marginApex_watchlist';
 
 export default function LearningPage() {
   const router = useRouter();
@@ -63,11 +64,16 @@ export default function LearningPage() {
 
   useEffect(() => {
     getSession().then((session) => {
-      if (session) {
-        setUser(session.user);
-      }
+      setUser(session?.user ?? null);
       setAuthLoading(false);
     });
+
+    const { data: { subscription } } = onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   // Watchlist states (only to add scanner results to it in localStorage)
@@ -94,7 +100,8 @@ export default function LearningPage() {
     if (!user) return;
 
     const key = `${WATCHLIST_KEY_PREFIX}_${user.id}`;
-    const saved = localStorage.getItem(key);
+    const legacyKey = `${LEGACY_WATCHLIST_KEY_PREFIX}_${user.id}`;
+    const saved = localStorage.getItem(key) || localStorage.getItem(legacyKey);
     if (saved) {
       try {
         setWatchlist(JSON.parse(saved));
