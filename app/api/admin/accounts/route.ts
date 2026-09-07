@@ -90,15 +90,17 @@ export async function GET(request: Request): Promise<Response> {
       .select('id, full_name, email, role, parent_id')
       .eq('demo_user', isDemo);
 
-    if (callerRole === 'broker') {
-      profilesQuery = profilesQuery.eq('parent_id', callerId);
-    } else if (callerRole === 'admin') {
-      const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
-      if (descendantIds !== null) {
-        if (descendantIds.length === 0) {
-          return Response.json([], { status: 200 });
+    if (!isDemo) {
+      if (callerRole === 'broker') {
+        profilesQuery = profilesQuery.eq('parent_id', callerId);
+      } else if (callerRole === 'admin') {
+        const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
+        if (descendantIds !== null) {
+          if (descendantIds.length === 0) {
+            return Response.json([], { status: 200 });
+          }
+          profilesQuery = profilesQuery.in('id', descendantIds);
         }
-        profilesQuery = profilesQuery.in('id', descendantIds);
       }
     }
 

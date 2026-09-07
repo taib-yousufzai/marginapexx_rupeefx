@@ -12,6 +12,8 @@
  * No brokerage is charged on emergency admin square-offs.
  */
 import { requireAdmin } from '../../_auth';
+import { getRole } from '@/lib/auth';
+import { getDescendantUserIds } from '@/lib/hierarchy';
 import { calculateCarryBrokerage } from '@/lib/trading/BrokerageCalculator';
 
 export async function POST(request: Request): Promise<Response> {
@@ -19,13 +21,24 @@ export async function POST(request: Request): Promise<Response> {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
     const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
-    // Fetch all open positions
-    const { data: openPositions, error: fetchErr } = await adminClient
+    // Fetch open positions (scoped to hierarchy for non-super admins)
+    let positionsQuery = adminClient
       .from('positions')
-      .select('id, user_id, symbol, side, settlement, qty_open, entry_price, ltp, product_type')
+      .select('id, user_id, symbol, side, settlement, qty_open, entry_price, ltp, product_type, carry_brokerage_paid')
       .eq('status', 'open')
       .gt('qty_open', 0);
+
+    if (callerRole !== 'super_admin') {
+      const descendantIds = await getDescendantUserIds(adminClient, callerUser.id, callerRole);
+      if (!descendantIds || descendantIds.length === 0) {
+        return Response.json({ squaredOff: 0, errors: 0 }, { status: 200 });
+      }
+      positionsQuery = positionsQuery.in('user_id', descendantIds);
+    }
+
+    const { data: openPositions, error: fetchErr } = await positionsQuery;
 
     if (fetchErr) {
       console.error('[square-off-all] fetch error:', fetchErr.message);

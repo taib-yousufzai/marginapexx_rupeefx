@@ -75,9 +75,10 @@ export default function LoginPage() {
       if (!result.error) {
         const role = getRole(result.user ?? null);
         const isAdmin = role === 'admin' || role === 'super_admin';
-        const route = isAdmin ? '/admin' : '/';
+        const isBroker = role === 'broker';
+        const route = isAdmin ? '/admin' : isBroker ? '/broker' : '/';
         
-        if (isAdmin || result.user?.email === 'demo@gmail.com') {
+        if (isAdmin || isBroker || result.user?.email === 'demo@gmail.com') {
           router.replace(route);
         } else {
           setPendingRoute(route);
@@ -123,9 +124,10 @@ export default function LoginPage() {
       if (!result.error) {
         const role = getRole(result.user ?? null);
         const isAdmin = role === 'admin' || role === 'super_admin';
-        const route = isAdmin ? '/admin' : '/';
+        const isBroker = role === 'broker';
+        const route = isAdmin ? '/admin' : isBroker ? '/broker' : '/';
         
-        if (isAdmin || result.user?.email === 'demo@gmail.com') {
+        if (isAdmin || isBroker || result.user?.email === 'demo@gmail.com') {
           router.replace(route);
         } else {
           setPendingRoute(route);

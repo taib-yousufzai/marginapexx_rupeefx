@@ -166,11 +166,20 @@ beforeEach(() => {
   // Default: insert succeeds
   mockInsert.mockResolvedValue({ data: { id: 'new-user-uuid' }, error: null });
 
-  // Default: select chain returns data: null, error: null (unique client_id by default)
-  mockSelect.mockReturnValue({
-    eq: vi.fn().mockReturnValue({
-      single: vi.fn().mockResolvedValue({ data: null, error: null })
-    })
+  // Default: select chain returns parent_id for hierarchy or null for unique client_id
+  mockSelect.mockImplementation((columns?: string) => {
+    if (columns === 'parent_id') {
+      return {
+        eq: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: { parent_id: 'caller-uuid' }, error: null }),
+        }),
+      };
+    }
+    return {
+      eq: vi.fn().mockReturnValue({
+        single: vi.fn().mockResolvedValue({ data: null, error: null }),
+      }),
+    };
   });
 
   // Default: update chain succeeds with a profile row

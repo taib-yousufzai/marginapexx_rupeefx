@@ -5,6 +5,8 @@
  */
 
 import { requireAdmin } from '../../../_auth';
+import { getRole } from '@/lib/auth';
+import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 export async function GET(
   request: Request,
@@ -13,10 +15,14 @@ export async function GET(
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     const resolvedParams = await Promise.resolve(params);
     const userId = resolvedParams.id;
+
+    const denied = await assertUserInHierarchy(adminClient, callerUser.id, userId, callerRole);
+    if (denied) return denied;
 
     // 1. Fetch blocked symbols
     const { data: symbols, error: sError } = await adminClient
@@ -52,10 +58,14 @@ export async function POST(
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     const resolvedParams = await Promise.resolve(params);
     const userId = resolvedParams.id;
+
+    const denied = await assertUserInHierarchy(adminClient, callerUser.id, userId, callerRole);
+    if (denied) return denied;
 
     const body = await request.json();
     const { symbol, segment } = body;
@@ -91,10 +101,14 @@ export async function DELETE(
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     const resolvedParams = await Promise.resolve(params);
     const userId = resolvedParams.id;
+
+    const denied = await assertUserInHierarchy(adminClient, callerUser.id, userId, callerRole);
+    if (denied) return denied;
 
     const { searchParams } = new URL(request.url);
     const symbol = searchParams.get('symbol');

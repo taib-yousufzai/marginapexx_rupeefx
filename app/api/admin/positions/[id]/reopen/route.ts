@@ -1,4 +1,6 @@
 import { requireAdmin } from '../../../_auth';
+import { getRole } from '@/lib/auth';
+import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 export async function POST(
   request: Request,
@@ -8,6 +10,7 @@ export async function POST(
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
     const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
@@ -22,6 +25,9 @@ export async function POST(
     if (fetchError || !position) {
       return Response.json({ error: 'Position not found or is not closed' }, { status: 404 });
     }
+
+    const denied = await assertUserInHierarchy(adminClient, callerUser.id, position.user_id, callerRole);
+    if (denied) return denied;
 
     const { error: txError } = await adminClient
       .from('transactions')

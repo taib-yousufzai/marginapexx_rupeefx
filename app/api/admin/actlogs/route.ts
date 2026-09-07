@@ -139,15 +139,17 @@ export async function GET(request: Request): Promise<Response> {
 
     // Pre-fetch profiles filtered by hierarchy and demo mode
     let pQuery = adminClient.from('profiles').select('id, email, full_name, client_id').eq('demo_user', isDemo);
-    if (callerRole === 'broker') {
-      pQuery = pQuery.eq('parent_id', callerId);
-    } else if (callerRole === 'admin') {
-      const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
-      if (descendantIds !== null) {
-        if (descendantIds.length === 0) {
-          return Response.json({ data: [], total: 0 }, { status: 200 });
+    if (!isDemo) {
+      if (callerRole === 'broker') {
+        pQuery = pQuery.eq('parent_id', callerId);
+      } else if (callerRole === 'admin') {
+        const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
+        if (descendantIds !== null) {
+          if (descendantIds.length === 0) {
+            return Response.json({ data: [], total: 0 }, { status: 200 });
+          }
+          pQuery = pQuery.in('id', descendantIds);
         }
-        pQuery = pQuery.in('id', descendantIds);
       }
     }
     const { data: allowedProfiles, error: pError } = await pQuery;
@@ -162,10 +164,12 @@ export async function GET(request: Request): Promise<Response> {
       });
     }
 
-    if (allowedUserIds.length > 0) {
-      query = query.in('target_user_id', allowedUserIds);
-    } else {
-      return Response.json({ data: [], total: 0 }, { status: 200 });
+    if (callerRole !== 'super_admin') {
+      if (allowedUserIds.length > 0) {
+        query = query.in('target_user_id', allowedUserIds);
+      } else {
+        return Response.json({ data: [], total: 0 }, { status: 200 });
+      }
     }
 
     // Step 4: Apply date range filter on created_at

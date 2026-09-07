@@ -46,8 +46,10 @@ export async function GET(
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
 
+    const callerRole = getRole(callerUser);
+
     // Check hierarchy permission
-    if (!await isUserInHierarchy(adminClient, callerUser.id, id)) {
+    if (!await isUserInHierarchy(adminClient, callerUser.id, id, callerRole)) {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -87,8 +89,10 @@ export async function PATCH(
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
 
+    const callerRole = getRole(callerUser);
+
     // Check hierarchy permission
-    if (!await isUserInHierarchy(adminClient, callerUser.id, id)) {
+    if (!await isUserInHierarchy(adminClient, callerUser.id, id, callerRole)) {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 

@@ -24,7 +24,11 @@ export async function POST(
   try {
     const authResult = await apiRequireAuth(request, ['MANAGE_TEMPLATES']);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerRole } = authResult;
+
+    if (callerRole !== 'super_admin') {
+      return Response.json({ error: 'Only super admins can set system default template' }, { status: 403 });
+    }
 
     const { id } = await Promise.resolve(params);
 

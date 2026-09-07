@@ -17,6 +17,8 @@
  */
 
 import { requireAdmin } from '../../../_auth';
+import { getRole } from '@/lib/auth';
+import { assertUserInHierarchy } from '@/lib/hierarchy';
 import { calculateCarryBrokerage } from '@/lib/trading/BrokerageCalculator';
 
 export async function POST(
@@ -27,7 +29,8 @@ export async function POST(
     // Step 1: Authenticate and authorize the caller
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     // Step 2: Resolve params
     const resolvedParams = await Promise.resolve(params);
@@ -36,7 +39,7 @@ export async function POST(
     // Step 3: Fetch the open position row (must be open to square off)
     const { data: position, error: fetchError } = await adminClient
       .from('positions')
-      .select('id, user_id, symbol, side, settlement, qty_open, entry_price, ltp, product_type')
+      .select('id, user_id, symbol, side, settlement, qty_open, entry_price, ltp, product_type, carry_brokerage_paid')
       .eq('id', id)
       .eq('status', 'open')
       .single();
@@ -44,6 +47,9 @@ export async function POST(
     if (fetchError || position === null) {
       return Response.json({ error: 'Position not found or already closed' }, { status: 404 });
     }
+
+    const denied = await assertUserInHierarchy(adminClient, callerUser.id, position.user_id, callerRole);
+    if (denied) return denied;
 
     // Step 4: Fetch live bid/ask from Ticker Daemon.
     // BUY position exits via SELL → use BID; SELL position exits via BUY → use ASK.

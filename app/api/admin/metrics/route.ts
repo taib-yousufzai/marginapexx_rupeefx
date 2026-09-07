@@ -13,6 +13,13 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
+    const { getRole } = await import('@/lib/auth');
+    const role = getRole(user);
+    if (role !== 'super_admin' && role !== 'admin') {
+      telemetry.recordApiCall('/api/admin/metrics', performance.now() - start, false);
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     // Try to fetch live metrics directly from the Ticker Daemon process
     let summary: any = null;
     let tickerOnline = false;

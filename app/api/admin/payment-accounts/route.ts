@@ -12,6 +12,7 @@
 
 import { requireAdmin } from '../_auth';
 import { getRole } from '@/lib/auth';
+import { getDescendantUserIds } from '@/lib/hierarchy';
 
 // ---------------------------------------------------------------------------
 // GET handler
@@ -20,7 +21,11 @@ import { getRole } from '@/lib/auth';
 /**
  * GET /api/admin/payment-accounts
  *
- * Returns all payment accounts ordered by sort_order ASC.
+ * Returns payment accounts ordered by sort_order ASC.
+ * Scoped by role:
+ * - super_admin: sees all accounts across the platform
+ * - admin: sees accounts created by self and descendant brokers
+ * - broker: sees accounts created by self
  *
  * Validates: Requirements 25.1, 25.2, 26.1
  */
@@ -32,30 +37,23 @@ export async function GET(request: Request): Promise<Response> {
     const { adminClient, callerUser } = authResult;
     const callerRole = getRole(callerUser);
 
-    let filterStr = 'created_by.is.null'; // Always include global accounts with null created_by
-    if (callerRole === 'super_admin') {
-      // Fetch all admins and super_admins
-      const { data: adminProfiles } = await adminClient
-        .from('profiles')
-        .select('id')
-        .in('role', ['admin', 'super_admin']);
-      
-      const adminIds = adminProfiles?.map((p: any) => p.id) || [];
-      if (adminIds.length > 0) {
-        filterStr = `created_by.in.(${adminIds.join(',')}),` + filterStr;
-      }
-    } else {
-      // admin only sees their own and globals
-      filterStr = `created_by.eq.${callerUser.id},` + filterStr;
+    let query = adminClient
+      .from('payment_accounts')
+      .select('*')
+      .order('sort_order', { ascending: true });
+
+    if (callerRole === 'admin') {
+      const descendantIds = await getDescendantUserIds(adminClient, callerUser.id, callerRole);
+      const allowedCreatorIds = [callerUser.id, ...(descendantIds || [])];
+      query = query.in('created_by', allowedCreatorIds);
+    } else if (callerRole === 'broker') {
+      query = query.eq('created_by', callerUser.id);
     }
+    // super_admin sees all accounts
 
     // Step 2: Query payment_accounts ordered by sort_order ASC
     // Validates: Requirements 25.2
-    const { data, error } = await adminClient
-      .from('payment_accounts')
-      .select('*')
-      .or(filterStr)
-      .order('sort_order', { ascending: true });
+    const { data, error } = await query;
 
     if (error) {
       console.error('[GET /api/admin/payment-accounts] DB error:', error.message);

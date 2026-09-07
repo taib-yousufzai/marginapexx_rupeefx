@@ -9,6 +9,7 @@
 
 import { requireAdmin } from '../../../_auth';
 import { getRole } from '../../../../../../lib/auth';
+import { assertUserInHierarchy, getDescendantUserIds } from '@/lib/hierarchy';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,7 +51,8 @@ export async function GET(
     // Validates: Requirements 12.1–12.6
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     // Step 2: Resolve params
     const resolvedParams = await Promise.resolve(params);
@@ -79,15 +81,20 @@ export async function GET(
       );
 
     if (id !== 'all') {
+      const denied = await assertUserInHierarchy(adminClient, callerUser.id, id, callerRole);
+      if (denied) return denied;
       query = query.eq('user_id', id);
     } else {
-      const callerRole = getRole(authResult.callerUser);
+      const descendantIds = await getDescendantUserIds(adminClient, callerUser.id, callerRole);
       let pQuery = adminClient.from('profiles').select('id').eq('demo_user', isDemo);
-      
-      if (callerRole === 'broker') {
-        pQuery = pQuery.eq('parent_id', authResult.callerUser.id);
+
+      if (!isDemo && descendantIds !== null) {
+        if (descendantIds.length === 0) {
+          return Response.json([], { status: 200 });
+        }
+        pQuery = pQuery.in('id', descendantIds);
       }
-      
+
       const { data: matchedUsers } = await pQuery;
       const matchedIds = matchedUsers?.map((u: { id: string }) => u.id) || [];
       if (matchedIds.length === 0) {

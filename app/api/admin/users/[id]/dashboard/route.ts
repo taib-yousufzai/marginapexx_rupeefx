@@ -8,6 +8,8 @@
  */
 
 import { requireAdmin } from '../../../_auth';
+import { getRole } from '@/lib/auth';
+import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -104,11 +106,15 @@ export async function GET(
     // Validates: Requirements 12.1–12.6
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     // Step 2: Resolve params to get the user id
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
+
+    const denied = await assertUserInHierarchy(adminClient, callerUser.id, id, callerRole);
+    if (denied) return denied;
 
     // Step 3: Parse optional date range query params
     // Validates: Requirement 3.2

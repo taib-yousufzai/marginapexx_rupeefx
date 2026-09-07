@@ -12,6 +12,7 @@
  */
 
 import { requireAuth as apiRequireAuth } from '@/lib/api-middleware';
+import { getDescendantUserIds } from '@/lib/hierarchy';
 
 export async function POST(
   request: Request,
@@ -20,7 +21,7 @@ export async function POST(
   try {
     const authResult = await apiRequireAuth(request, ['APPLY_TEMPLATES']);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerUser } = authResult;
+    const { adminClient, callerUser, callerRole } = authResult;
 
     const { id: templateId } = await Promise.resolve(params);
 
@@ -34,6 +35,15 @@ export async function POST(
     const userIds = body.user_ids;
     if (!Array.isArray(userIds) || userIds.length === 0) {
       return Response.json({ error: 'user_ids must be a non-empty array' }, { status: 400 });
+    }
+
+    if (callerRole !== 'super_admin') {
+      const descendantIds = await getDescendantUserIds(adminClient, callerUser.id, callerRole);
+      const descendantSet = new Set(descendantIds ?? []);
+      const allAllowed = userIds.every(uid => typeof uid === 'string' && descendantSet.has(uid));
+      if (!allAllowed) {
+        return Response.json({ error: 'Forbidden: One or more selected users are not in your hierarchy' }, { status: 403 });
+      }
     }
 
     // 1. Fetch the template + both sets of segment settings in parallel
@@ -89,7 +99,7 @@ export async function POST(
 
     // 3. Build segment_settings upsert rows for all users × all template segments
     if (templateSegments.length > 0) {
-      const segRows = [];
+      const segRows: any[] = [];
       for (const userId of userIds) {
         for (const s of templateSegments) {
           segRows.push({
@@ -137,7 +147,7 @@ export async function POST(
 
     // 4. Build scalper_segment_settings upsert rows
     if (templateScalperSegments.length > 0) {
-      const scalperRows = [];
+      const scalperRows: any[] = [];
       for (const userId of userIds) {
         for (const s of templateScalperSegments) {
           scalperRows.push({

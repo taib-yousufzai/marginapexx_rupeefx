@@ -5,18 +5,24 @@
  */
 
 import { requireAdmin } from '../../_auth';
+import { getRole } from '@/lib/auth';
+import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 export async function POST(request: Request): Promise<Response> {
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient } = authResult;
+    const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     const { broker, segments, config } = await request.json();
 
     if (!broker || !segments || !Array.isArray(segments) || segments.length === 0 || !config) {
       return Response.json({ error: 'Missing required fields' }, { status: 400 });
     }
+
+    const denied = await assertUserInHierarchy(adminClient, callerUser.id, broker, callerRole);
+    if (denied) return denied;
 
     // 1. Find all users under this broker (including sub-brokers and clients)
     const { data: profiles, error: pError } = await adminClient
@@ -42,7 +48,7 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     // 2. Build list of rows to upsert to ensure 100% of target users get settings applied
-    const upsertRows = [];
+    const upsertRows: any[] = [];
     for (const userId of targetUserIds) {
       for (const seg of segments) {
         for (const side of ['BUY', 'SELL'] as const) {
@@ -82,7 +88,7 @@ export async function POST(request: Request): Promise<Response> {
     if (uError) throw uError;
 
     // 3. Sync profiles segments to ensure these segments are actually allowed/active
-    const profileUpdatePromises = [];
+    const profileUpdatePromises: any[] = [];
     for (const p of profiles) {
       if (targetUserIds.includes(p.id)) {
         const existingSegments: string[] = p.segments ?? [];

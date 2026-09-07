@@ -51,7 +51,7 @@ export async function PATCH(
     // Step 1: Authenticate and authorize the caller
     const authResult = await apiRequireAuth(request, ['VIEW_USER_POSITIONS']);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerUser } = authResult;
+    const { adminClient, callerUser, callerRole } = authResult;
 
     // Step 2: Resolve params
     const resolvedParams = await Promise.resolve(params);
@@ -76,7 +76,7 @@ export async function PATCH(
       return Response.json({ error: 'Not found' }, { status: 404 });
     }
 
-    if (!await isUserInHierarchy(adminClient, callerUser.id, existingPosition.user_id)) {
+    if (!await isUserInHierarchy(adminClient, callerUser.id, existingPosition.user_id, callerRole)) {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 

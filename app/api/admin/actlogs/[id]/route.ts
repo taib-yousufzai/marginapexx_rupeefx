@@ -8,6 +8,8 @@
  */
 
 import { requireAdmin } from '../../_auth';
+import { getRole } from '@/lib/auth';
+import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 // ---------------------------------------------------------------------------
 // PATCH handler
@@ -22,6 +24,7 @@ export async function PATCH(
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
     const { adminClient, callerUser } = authResult;
+    const callerRole = getRole(callerUser);
 
     // Step 2: Resolve route param
     const resolvedParams = await Promise.resolve(params);
@@ -45,16 +48,21 @@ export async function PATCH(
       return Response.json({ error: 'edit_remark is required' }, { status: 400 });
     }
 
-    // Step 5: Fetch current row to read original_price
+    // Step 5: Fetch current row to read original_price and target_user_id
     // Validates: Requirement 6.3 (needed for diff calculation in RPC)
     const { data: currentRow, error: fetchError } = await adminClient
       .from('act_logs')
-      .select('original_price')
+      .select('original_price, target_user_id')
       .eq('id', id)
       .single();
 
     if (fetchError || !currentRow) {
       return Response.json({ error: 'Not found' }, { status: 404 });
+    }
+
+    if (currentRow.target_user_id) {
+      const denied = await assertUserInHierarchy(adminClient, callerUser.id, currentRow.target_user_id, callerRole);
+      if (denied) return denied;
     }
 
     const originalPrice: number | null = currentRow.original_price ?? null;
