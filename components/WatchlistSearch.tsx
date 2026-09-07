@@ -499,7 +499,7 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
                         )}
                       </div>
                       <div className="sri-right" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
-                        <div className="search-result-price" style={{ marginRight: 0 }}>{(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        <div className="search-result-price" style={{ marginRight: 0 }}>₹{(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                         <button
                           className={`add-smart-btn${side === 'SELL' ? ' sell-mode' : ''}`}
                           onClick={(e) => { e.stopPropagation(); handleToggleClick(r); }}

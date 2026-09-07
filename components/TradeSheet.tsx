@@ -210,8 +210,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     const prevClose = (cryptoQuote as any).prevClosePrice ?? (cryptoQuote as any).close ?? currentLtp;
     currentChangePercent = (cryptoQuote as any).changePercent ?? (prevClose > 0 ? ((currentLtp - prevClose) / prevClose) * 100 : 0);
   } else if (isComex && item?.comexSymbol && comexQuotes[item.comexSymbol]) {
-    currentLtp = comexQuotes[item.comexSymbol].lastPrice;
-    currentChangePercent = comexQuotes[item.comexSymbol].changePercent;
+    const cQuote = comexQuotes[item.comexSymbol];
+    const rate = cQuote.currency === 'USD' ? usdInrRate : 1;
+    currentLtp = cQuote.lastPrice * rate;
+    currentChangePercent = cQuote.changePercent;
   } else if (activeKiteQuote) {
     currentLtp = activeKiteQuote.lastPrice;
     currentChangePercent = activeKiteQuote.changePercent;
@@ -221,10 +223,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     currentLtp *= usdInrRate;
   }
 
-  // Fallback: if still no price and comexSymbol exists, use COMEX USD price
+  // Fallback: if still no price and comexSymbol exists, use COMEX USD price converted to INR
   if (currentLtp === 0 && item?.comexSymbol && comexQuotes[item.comexSymbol]) {
-    currentLtp = comexQuotes[item.comexSymbol].lastPrice;
-    currentChangePercent = comexQuotes[item.comexSymbol].changePercent;
+    const cQuote = comexQuotes[item.comexSymbol];
+    const rate = cQuote.currency === 'USD' ? usdInrRate : 1;
+    currentLtp = cQuote.lastPrice * rate;
+    currentChangePercent = cQuote.changePercent;
   }
 
   if (currentLtp === 0 && initialOrder) {
@@ -263,8 +267,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       rawBid = (activeCryptoQuote?.bid && activeCryptoQuote.bid > 0) ? activeCryptoQuote.bid : currentLtp;
       rawAsk = (activeCryptoQuote?.ask && activeCryptoQuote.ask > 0) ? activeCryptoQuote.ask : currentLtp;
     } else if (isComex && item?.comexSymbol && comexQuotes[item.comexSymbol]) {
-      rawBid = comexQuotes[item.comexSymbol].bid || currentLtp;
-      rawAsk = comexQuotes[item.comexSymbol].ask || currentLtp;
+      const cQuote = comexQuotes[item.comexSymbol];
+      const rate = cQuote.currency === 'USD' ? usdInrRate : 1;
+      rawBid = (cQuote.bid || currentLtp) * rate;
+      rawAsk = (cQuote.ask || currentLtp) * rate;
     } else if (activeKiteQuote) {
       rawBid = activeKiteQuote.bid || currentLtp;
       rawAsk = activeKiteQuote.ask || currentLtp;

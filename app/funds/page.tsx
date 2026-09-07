@@ -69,17 +69,25 @@ export default function FundsPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const copyToClipboard = (text: string, label: string) => {
-    if (!text) return;
+    if (!text || text === '-') return;
     navigator.clipboard.writeText(text);
     setToast({ message: `${label} copied!`, type: 'success' });
     setTimeout(() => setToast(null), 2000);
   };
 
   const handleWhatsAppSupport = () => {
-    window.open('https://wa.me/918796119115', '_blank');
+    window.open('https://wa.me/917068132260', '_blank');
   };
 
   const downloadQRCode = () => {
+    if (activeAccount?.qr_image_url) {
+      const downloadLink = document.createElement("a");
+      downloadLink.href = activeAccount.qr_image_url;
+      downloadLink.download = `NiveshX_Trading_QR_${amount}.png`;
+      downloadLink.target = "_blank";
+      downloadLink.click();
+      return;
+    }
     const svg = document.querySelector(".qr-container svg") as SVGGraphicsElement;
     if (!svg) return;
     const svgData = new XMLSerializer().serializeToString(svg);
@@ -154,13 +162,18 @@ export default function FundsPage() {
       setActiveAccountLoading(false);
       setDepositStep(2);
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError && err.status === 404) {
+        setActiveAccount(null);
+        setActiveAccountLoading(false);
+        setDepositStep(2);
+      } else if (err instanceof ApiError) {
         const details = err.details as Record<string, unknown> | undefined;
         setActiveAccountError((details?.error as string) ?? 'Failed to fetch payment account.');
+        setActiveAccountLoading(false);
       } else {
         setActiveAccountError('Network error. Please try again.');
+        setActiveAccountLoading(false);
       }
-      setActiveAccountLoading(false);
     }
   };
 
@@ -374,7 +387,7 @@ export default function FundsPage() {
                             </div>
                           )}
 
-                          {depositStep === 2 && !submitted && activeAccount && (
+                            {depositStep === 2 && !submitted && (
                             <div className="step-2-area fadeInUp">
                               <div className="section-title" style={{ fontSize: '0.8rem', fontWeight: 800, marginBottom: '20px', color: 'var(--text-primary)' }}>
                                 PAYMENT DETAILS ({paymentMethod === 'UPI' ? 'UPI' : 'BANK'})
@@ -395,27 +408,45 @@ export default function FundsPage() {
 
                                 {paymentMethod === 'UPI' ? (
                                   <div className="upi-payment-info" style={{ textAlign: 'center' }}>
-                                    <div className="qr-box-wrapper" style={{ marginBottom: '24px' }}>
-                                      <div className="qr-container" style={{ background: 'white', padding: '20px', borderRadius: '24px', display: 'inline-block', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', border: '1px solid #eee' }}>
-                                        <QRCode value={`upi://pay?pa=${activeAccount.upi_id}&pn=${encodeURIComponent(activeAccount.account_holder)}&am=${amount}&cu=INR`} size={200} />
+                                    {activeAccount?.qr_image_url ? (
+                                      <div className="qr-box-wrapper" style={{ marginBottom: '24px' }}>
+                                        <div className="qr-container" style={{ background: 'white', padding: '20px', borderRadius: '24px', display: 'inline-block', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', border: '1px solid #eee' }}>
+                                          <img src={activeAccount.qr_image_url} alt="Payment QR" style={{ width: 200, height: 200, objectFit: 'contain' }} />
+                                        </div>
+                                        <button
+                                          onClick={downloadQRCode}
+                                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '16px auto 0', background: 'var(--icon-bg)', border: '1px solid var(--border-card)', padding: '10px 20px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', cursor: 'pointer' }}
+                                        >
+                                          <i className="fas fa-download"></i> Download QR
+                                        </button>
                                       </div>
-                                      <button
-                                        onClick={downloadQRCode}
-                                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '16px auto 0', background: 'var(--icon-bg)', border: '1px solid var(--border-card)', padding: '10px 20px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', cursor: 'pointer' }}
-                                      >
-                                        <i className="fas fa-download"></i> Download QR
-                                      </button>
-                                    </div>
+                                    ) : activeAccount?.upi_id ? (
+                                      <div className="qr-box-wrapper" style={{ marginBottom: '24px' }}>
+                                        <div className="qr-container" style={{ background: 'white', padding: '20px', borderRadius: '24px', display: 'inline-block', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', border: '1px solid #eee' }}>
+                                          <QRCode value={`upi://pay?pa=${activeAccount.upi_id}&pn=${encodeURIComponent(activeAccount.account_holder || '')}&am=${amount}&cu=INR`} size={200} />
+                                        </div>
+                                        <button
+                                          onClick={downloadQRCode}
+                                          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '16px auto 0', background: 'var(--icon-bg)', border: '1px solid var(--border-card)', padding: '10px 20px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', cursor: 'pointer' }}
+                                        >
+                                          <i className="fas fa-download"></i> Download QR
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div style={{ padding: '20px', marginBottom: '20px', background: 'var(--icon-bg)', borderRadius: '12px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                                        -
+                                      </div>
+                                    )}
 
                                     <div className="section-divider" style={{ height: '1px', background: 'var(--border-card)', margin: '20px 0', borderBottom: '1px dashed var(--border-card)' }}></div>
 
-                                    <div className="copyable-row" onClick={() => copyToClipboard(activeAccount.upi_id, 'UPI ID')}>
-                                      <div><strong>UPI ID / VPA</strong><span>{activeAccount.upi_id}</span></div>
-                                      <i className="fas fa-copy copy-icon"></i>
+                                    <div className="copyable-row" onClick={() => (activeAccount?.upi_id ? copyToClipboard(activeAccount.upi_id, 'UPI ID') : null)}>
+                                      <div><strong>UPI ID / VPA</strong><span>{activeAccount?.upi_id || '-'}</span></div>
+                                      {activeAccount?.upi_id ? <i className="fas fa-copy copy-icon"></i> : null}
                                     </div>
-                                    <div className="copyable-row" onClick={() => copyToClipboard(activeAccount.account_holder, 'Beneficiary')}>
-                                      <div><strong>Beneficiary Name</strong><span>{activeAccount.account_holder}</span></div>
-                                      <i className="fas fa-copy copy-icon"></i>
+                                    <div className="copyable-row" onClick={() => (activeAccount?.account_holder ? copyToClipboard(activeAccount.account_holder, 'Beneficiary') : null)}>
+                                      <div><strong>Beneficiary Name</strong><span>{activeAccount?.account_holder || '-'}</span></div>
+                                      {activeAccount?.account_holder ? <i className="fas fa-copy copy-icon"></i> : null}
                                     </div>
 
                                     <p style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '16px', lineHeight: '1.5' }}>
@@ -425,27 +456,37 @@ export default function FundsPage() {
                                 ) : (
                                   <div className="bank-payment-info">
                                     {[
-                                      { label: 'Beneficiary', value: activeAccount.account_holder },
-                                      { label: 'Account No', value: activeAccount.account_no },
-                                      { label: 'IFSC Code', value: activeAccount.ifsc },
-                                      { label: 'Bank Name', value: activeAccount.bank_name }
+                                      { label: 'Beneficiary', value: activeAccount?.account_holder || '-' },
+                                      { label: 'Account No', value: activeAccount?.account_no || '-' },
+                                      { label: 'IFSC Code', value: activeAccount?.ifsc || '-' },
+                                      { label: 'Bank Name', value: activeAccount?.bank_name || '-' }
                                     ].map((item, idx) => (
-                                      <div key={idx} className="copyable-row" onClick={() => copyToClipboard(item.value, item.label)}>
+                                      <div key={idx} className="copyable-row" onClick={() => item.value !== '-' && copyToClipboard(item.value, item.label)}>
                                         <div><strong>{item.label}</strong><span>{item.value}</span></div>
-                                        <i className="fas fa-copy copy-icon"></i>
+                                        {item.value !== '-' && <i className="fas fa-copy copy-icon"></i>}
                                       </div>
                                     ))}
                                   </div>
                                 )}
-                                <button className="submit-funds-btn" style={{ marginTop: '24px' }} onClick={() => setDepositStep(3)}>
+                                <button 
+                                  className="submit-funds-btn" 
+                                  style={{ marginTop: '24px', opacity: !activeAccount ? 0.5 : 1, cursor: !activeAccount ? 'not-allowed' : 'pointer' }}
+                                  disabled={!activeAccount}
+                                  onClick={() => setDepositStep(3)}
+                                >
                                   I Have Paid <i className="fas fa-chevron-right"></i>
                                 </button>
+                                {!activeAccount && (
+                                  <p style={{ fontSize: '0.75rem', color: '#c0392b', marginTop: '10px', textAlign: 'center' }}>
+                                    No active deposit account is currently available. Please contact support.
+                                  </p>
+                                )}
                                 <button className="back-link" onClick={() => setDepositStep(1)} style={{ display: 'block', width: '100%', textAlign: 'center', marginTop: '16px', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}>
                                   <i className="fas fa-arrow-left"></i> Change Amount / Method
                                 </button>
                               </div>
                             </div>
-                          )}
+                            )}
 
                           {depositStep === 3 && !submitted && (
                             <div className="step-3-area fadeInUp">
@@ -540,7 +581,7 @@ export default function FundsPage() {
                     <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
                     <div className="whatsapp-content">
                       <div className="whatsapp-headline">Facing any issue? Contact Support</div>
-                      <div className="whatsapp-sub"><i className="fas fa-headset"></i> Get help on WhatsApp</div>
+                      <div className="whatsapp-sub"><i className="fas fa-headset"></i> +91 7068132260 (WhatsApp)</div>
                     </div>
                     <div className="whatsapp-arrow"><i className="fas fa-chevron-right"></i></div>
                   </div>

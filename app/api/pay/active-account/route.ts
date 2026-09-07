@@ -75,18 +75,32 @@ export async function GET(request: Request): Promise<Response> {
 
     // Fallback to global admin accounts if no broker accounts found
     if (accounts.length === 0) {
-      const { data: globalAccounts, error: accountsError } = await adminClient
+      const { data: adminProfiles } = await adminClient
+        .from('profiles')
+        .select('id')
+        .in('role', ['admin', 'super_admin']);
+
+      const adminIds = (adminProfiles || []).map((p: any) => p.id);
+
+      let query = adminClient
         .from('payment_accounts')
         .select('*')
         .eq('is_active', true)
-        .is('created_by', null)
         .order('sort_order', { ascending: true });
+
+      if (adminIds.length > 0) {
+        query = query.or(`created_by.is.null,created_by.in.(${adminIds.join(',')})`);
+      } else {
+        query = query.is('created_by', null);
+      }
+
+      const { data: adminAccounts, error: accountsError } = await query;
         
       if (accountsError) {
-        console.error('[GET /api/pay/active-account] global payment_accounts error:', accountsError.message);
+        console.error('[GET /api/pay/active-account] admin payment_accounts error:', accountsError.message);
         return Response.json({ error: 'Internal server error' }, { status: 500 });
       }
-      accounts = globalAccounts || [];
+      accounts = adminAccounts || [];
     }
 
     // Step 3: Return 404 if no active accounts

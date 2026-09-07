@@ -109,8 +109,11 @@ export default function InstrumentRow({ item, quote, binanceQuote, comexQuote, o
     ltp = activeCryptoQuote?.lastPrice ?? item.price ?? 0;
     prevClose = activeCryptoQuote?.close ?? item.close ?? ltp;
   } else if (showComex) {
-    ltp = comexQuote?.lastPrice ?? 0;
-    prevClose = comexQuote?.close ?? 0;
+    const rawLtp = comexQuote?.lastPrice ?? 0;
+    const rawClose = comexQuote?.close ?? 0;
+    const rate = comexQuote?.currency === 'USD' ? 83.85 : 1;
+    ltp = rawLtp * rate;
+    prevClose = rawClose * rate;
   } else {
     ltp = quote?.lastPrice ?? item.price;
     prevClose = item.close;
@@ -176,16 +179,14 @@ export default function InstrumentRow({ item, quote, binanceQuote, comexQuote, o
             <>
               <div className="instr-row__ltp">
                 <TickFlash value={ltp}>
-                  {isCrypto
+                  {isCrypto || showComex
                     ? `₹${ltp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                    : showComex
-                      ? `₹${ltp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                      : `LTP: ${ltp.toFixed(2)}`}
+                    : `LTP: ${ltp.toFixed(2)}`}
                 </TickFlash>
               </div>
               <div className="instr-row__abs-change">
                 <TickFlash value={absoluteChange}>
-                  {absoluteChange >= 0 ? '+' : ''}{absoluteChange.toFixed(2)}
+                  {`${absoluteChange >= 0 ? '+' : ''}${absoluteChange.toFixed(2)}`}
                 </TickFlash>
               </div>
               <div className={`instr-row__pct-change ${getPctClass(percentChange)}`}>

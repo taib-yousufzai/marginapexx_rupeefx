@@ -241,6 +241,38 @@ async function fetchKiteQuotesBatch(
   return { data: allKiteData, tokenExpired };
 }
 
+const COMMODITY_ALIAS_MAP: Record<string, string> = {
+  'MCX:SILVER': 'MCX:SILVER26DECFUT',
+  'SILVER': 'MCX:SILVER26DECFUT',
+  'MCX:SILVER26SEPFUT': 'MCX:SILVER26DECFUT',
+  'MCX:SILVER26JULFUT': 'MCX:SILVER26DECFUT',
+  'SILVER26SEPFUT': 'MCX:SILVER26DECFUT',
+  'SILVER_FUT': 'MCX:SILVER26DECFUT',
+  'MCX:SILVERM': 'MCX:SILVERM26NOVFUT',
+  'SILVERM': 'MCX:SILVERM26NOVFUT',
+  'MCX:SILVERM26AUGFUT': 'MCX:SILVERM26NOVFUT',
+  'MCX:SILVERM26SEPFUT': 'MCX:SILVERM26NOVFUT',
+  'MCX:GOLD': 'MCX:GOLD26OCTFUT',
+  'GOLD': 'MCX:GOLD26OCTFUT',
+  'MCX:GOLD26SEPFUT': 'MCX:GOLD26OCTFUT',
+  'MCX:GOLD26AUGFUT': 'MCX:GOLD26OCTFUT',
+  'GOLD26SEPFUT': 'MCX:GOLD26OCTFUT',
+  'GOLD_FUT': 'MCX:GOLD26OCTFUT',
+  'MCX:GOLDM': 'MCX:GOLDM26OCTFUT',
+  'GOLDM': 'MCX:GOLDM26OCTFUT',
+  'MCX:CRUDEOIL': 'MCX:CRUDEOIL26SEPFUT',
+  'CRUDEOIL': 'MCX:CRUDEOIL26SEPFUT',
+  'MCX:CRUDEOIL26AUGFUT': 'MCX:CRUDEOIL26SEPFUT',
+  'CRUDEOIL_FUT': 'MCX:CRUDEOIL26SEPFUT',
+  'MCX:NATURALGAS': 'MCX:NATURALGAS26SEPFUT',
+  'NATURALGAS': 'MCX:NATURALGAS26SEPFUT',
+  'MCX:NATURALGAS26AUGFUT': 'MCX:NATURALGAS26SEPFUT',
+  'CDS:USDINR': 'CDS:USDINR26SEPFUT',
+  'USDINR': 'CDS:USDINR26SEPFUT',
+  'CDS:USDINR26AUGFUT': 'CDS:USDINR26SEPFUT',
+  'USDINR_FUT': 'CDS:USDINR26SEPFUT',
+};
+
 async function handleQuotesRequest(instruments: string[], request: NextRequest): Promise<NextResponse> {
   if (instruments.length === 0) {
     return NextResponse.json({ data: {} });
@@ -256,7 +288,19 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
     const usRequestIds: string[] = [];
 
     // Separate Crypto symbols, Forex symbols, US symbols, direct Kite IDs (NSE:RELIANCE), and DB IDs
-    for (const id of instruments) {
+    for (const rawId of instruments) {
+      if (!rawId) continue;
+      const id = rawId.trim();
+      const idUpper = id.toUpperCase();
+      const aliasTarget = COMMODITY_ALIAS_MAP[idUpper];
+
+      if (aliasTarget) {
+        realToRequestedMap[aliasTarget] = id;
+        realToRequestedMap[id] = aliasTarget;
+        if (!directKiteIds.includes(aliasTarget)) directKiteIds.push(aliasTarget);
+        continue;
+      }
+
       if (isCryptoSymbol(id)) {
         cryptoRequestIds.push(id);
         realToRequestedMap[id] = id;
@@ -508,6 +552,16 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
             finalMappedData[cleanSym] = quotePayload;
           }
         }
+      }
+    }
+
+    // Propagate quotes to all commodity aliases (e.g. MCX:SILVER26DECFUT -> MCX:SILVER, SILVER)
+    for (const [aliasReq, target] of Object.entries(COMMODITY_ALIAS_MAP)) {
+      const q = finalMappedData[target];
+      if (q) {
+        finalMappedData[aliasReq] = q;
+        const cleanAlias = aliasReq.includes(':') ? aliasReq.split(':')[1] : aliasReq;
+        finalMappedData[cleanAlias] = q;
       }
     }
 
