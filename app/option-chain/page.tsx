@@ -12,6 +12,7 @@ import AnimatedLoader from '@/components/AnimatedLoader';
 import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
 import { api, ApiError } from '@/lib/api';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
+import { useMobileBack } from '@/hooks/useMobileBack';
 import './option-chain.css';
 import dynamic from 'next/dynamic';
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
@@ -63,15 +64,28 @@ declare global {
   }
 }
 
-// Read cache safely from localStorage — used only for expiry list, never for strikes
+// Read cache safely from sessionStorage with a 5-minute TTL for instant SWR rendering
 function getLocalCache(key: string) {
-  // Always return null — we never serve stale option chain data from cache.
-  // The API is always called fresh so the ATM window reflects the current spot.
-  return null;
+  try {
+    if (typeof window === 'undefined') return null;
+    const raw = sessionStorage.getItem(`oc_cache_${key}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Date.now() - parsed.ts > 5 * 60 * 1000) {
+      sessionStorage.removeItem(`oc_cache_${key}`);
+      return null;
+    }
+    return parsed.data;
+  } catch {
+    return null;
+  }
 }
 
-function setLocalCache(_key: string, _data: any) {
-  // No-op — caching disabled to ensure strikes are always fresh
+function setLocalCache(key: string, data: any) {
+  try {
+    if (typeof window === 'undefined') return;
+    sessionStorage.setItem(`oc_cache_${key}`, JSON.stringify({ data, ts: Date.now() }));
+  } catch { /* ignore storage quota errors */ }
 }
 
 function OptionChainContent() {
@@ -104,6 +118,14 @@ function OptionChainContent() {
   const [userId, setUserId] = useState<string>('');
   // segmentSettings and scriptSettings come from the shared TradeConfigProvider
   const { segmentSettings, scriptSettings } = useTradeConfig();
+
+  useMobileBack(!!chartItem, () => {
+    setChartItem(null);
+    const sheet = document.getElementById('chartSheet');
+    const overlay = document.getElementById('chartSheetOverlay');
+    if (sheet) sheet.classList.remove('open');
+    if (overlay) overlay.classList.remove('active');
+  }, 'occhart');
 
   useEffect(() => {
     async function fetchUserId() {
@@ -262,11 +284,13 @@ function OptionChainContent() {
     }
 
     async function fetchData() {
-      setLoading(true);
+      if (!cached) {
+        setLoading(true);
+      }
       setLoadingError(null);
       try {
         const spotPriceParam = lastSpotPriceRef.current > 0 ? `&spotPrice=${lastSpotPriceRef.current}` : '';
-        const url = `/api/market/option-chain?symbol=${normalizedSymbol}${selectedExpiry ? `&expiry=${selectedExpiry}` : ''}${spotPriceParam}&_t=${Date.now()}`;
+        const url = `/api/market/option-chain?symbol=${normalizedSymbol}${selectedExpiry ? `&expiry=${selectedExpiry}` : ''}${spotPriceParam}`;
         const json = await api.get<{ success: boolean; expiry: string; error?: string; strikes: any[]; expiries: string[]; underlyingPrice?: number; underlyingSymbol?: string }>(url);
         if (json.success) {
           setLocalCache(cacheKey, json);
@@ -274,14 +298,14 @@ function OptionChainContent() {
           setData(json);
           if (!selectedExpiry) setSelectedExpiry(json.expiry);
         } else {
-          setLoadingError(json.error || 'Failed to fetch option chain');
+          if (!cached) setLoadingError(json.error || 'Failed to fetch option chain');
         }
       } catch (err: any) {
         if (err instanceof ApiError && err.status === 403) {
           setLoadingError('locked');
         } else {
           console.error('Failed to fetch option chain', err);
-          setLoadingError('Failed to fetch option chain');
+          if (!cached) setLoadingError('Failed to fetch option chain');
         }
       } finally {
         setLoading(false);
@@ -781,12 +805,12 @@ function OptionChainContent() {
                   <div style={{ background: 'var(--card-alt-bg)', border: '1px solid var(--border-card)', borderRadius: '14px', padding: '8px 12px', display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
                     <div style={{ flex: 1, textAlign: 'center' }}>
                       <div style={{ fontSize: '0.58rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>BID</div>
-                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#059669' }}>₹{bid.toFixed(2)}</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#059669' }}>₹{bid ? bid.toFixed(2) : '-'}</div>
                     </div>
                     <div style={{ width: '1px', background: 'var(--border-card)', height: '24px' }}></div>
                     <div style={{ flex: 1, textAlign: 'center' }}>
-                      <div style={{ fontSize: '0.58rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>ASK</div>
-                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#DC2626' }}>₹{ask.toFixed(2)}</div>
+                       <div style={{ fontSize: '0.58rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>ASK</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#DC2626' }}>₹{ask ? ask.toFixed(2) : '-'}</div>
                     </div>
                   </div>
 
@@ -956,7 +980,7 @@ function OptionChainContent() {
               </div>
               <div style={{ flex: 1, position: 'relative' }}>
                 <TradeSheet 
-                  item={tradeSheetItem} 
+                  item={tradeSheetItem as any} 
                   side={sheetSide} 
                   onClose={closeTradeSheet} 
                 />
@@ -992,14 +1016,21 @@ function OptionChainContent() {
         }}
       />
 
-      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); }}></div>
-      <div id="chartSheet" className="trade-sheet" style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
+      <div id="chartSheetOverlay" className={`trade-sheet-overlay${chartItem ? ' active' : ''}`} onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); }}></div>
+      <div id="chartSheet" className={`trade-sheet${chartItem ? ' open' : ''}`} style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
           {chartItem && (
             <TradingChart
               symbol={chartItem.kiteSymbol || chartItem.symbol}
               segment={chartItem.segment}
               liveQuote={quotes[chartItem.kiteSymbol]}
+              onClose={() => {
+                setChartItem(null);
+                const sheet = document.getElementById('chartSheet');
+                const overlay = document.getElementById('chartSheetOverlay');
+                if (sheet) sheet.classList.remove('open');
+                if (overlay) overlay.classList.remove('active');
+              }}
             />
           )}
         </div>

@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, Suspense, useMemo } from 'react';
+import { useState, useEffect, useRef, Suspense, useMemo, useCallback } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
@@ -127,9 +127,9 @@ const DEFAULT_US_ITEMS: WatchlistItem[] = [
   { name: 'Nvidia Corp.', symbol: 'US:NVDA', kiteSymbol: 'US:NVDA', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
   { name: 'Microsoft Corp.', symbol: 'US:MSFT', kiteSymbol: 'US:MSFT', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
   { name: 'Amazon.com Inc.', symbol: 'US:AMZN', kiteSymbol: 'US:AMZN', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'S&P 500 E-mini Futures', symbol: 'US:ES=F', kiteSymbol: 'US:ES=F', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'Nasdaq 100 E-mini Futures', symbol: 'US:NQ=F', kiteSymbol: 'US:NQ=F', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'Dow Jones E-mini Futures', symbol: 'US:YM=F', kiteSymbol: 'US:YM=F', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
+  { name: 'S&P 500 E-mini Futures', symbol: 'US:ES=F', kiteSymbol: 'US:ES=F', comexSymbol: 'ES=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'Nasdaq 100 E-mini Futures', symbol: 'US:NQ=F', kiteSymbol: 'US:NQ=F', comexSymbol: 'NQ=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'Dow Jones E-mini Futures', symbol: 'US:YM=F', kiteSymbol: 'US:YM=F', comexSymbol: 'YM=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
 ];
 
 export function getDefaultWatchlistItems(): WatchlistItem[] {
@@ -1658,7 +1658,7 @@ function WatchlistContent() {
     });
   };
 
-  const closeChartSheet = () => {
+  const closeChartSheet = useCallback(() => {
     isOpeningTradeSheetRef.current = false;
     setDetailOpeningSide(null);
     setChartItem(null);
@@ -1671,7 +1671,7 @@ function WatchlistContent() {
         el.classList.remove('active');
       }
     });
-  };
+  }, []);
 
   const closeTradeSheet = () => {
     setIsTradeSheetOpen(false);
@@ -2144,8 +2144,10 @@ function WatchlistContent() {
                         onClick={() => {
                           const item = selectedItem;
                           setSelectedItem(null);
-                          setChartItem(item);
-                          setIsBenchmarkChart(false);
+                          setTimeout(() => {
+                            setChartItem(item);
+                            setIsBenchmarkChart(false);
+                          }, 60);
                         }}
                       >
                         <svg
@@ -2807,6 +2809,7 @@ function WatchlistContent() {
                   <TradingChart
                     symbol={isGlobalForex ? (chartItem.comexSymbol || chartItem.symbol) : isChartComex ? (chartItem.comexSymbol || chartItem.symbol) : (chartItem.binanceSymbol || chartItem.kiteSymbol || chartItem.symbol)}
                     segment={isGlobalForex ? 'FOREX' : isChartComex ? 'COMEX' : (chartItem.binanceSymbol || ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC'].includes(chartItem.symbol) ? 'CRYPTO' : chartItem.segment)}
+                    onClose={closeChartSheet}
                   />
                 );
               })()}

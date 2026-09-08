@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useMyOrders } from '@/hooks/useMyOrders';
@@ -32,6 +32,34 @@ export default function OrderPage() {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [chartItem, setChartItem] = useState<any>(null);
 
+  const { orders, loading: ordersLoading, error, cancelOrder, refresh } = useMyOrders();
+  const { connected: kiteConnected } = useKitePositions();
+
+  // Listen for order and position events fired anywhere in the platform so order history stays synced
+  useEffect(() => {
+    const handleUpdate = () => {
+      refresh();
+      setTimeout(refresh, 600);
+    };
+
+    // Always fetch fresh orders on mount / page navigation
+    handleUpdate();
+
+    window.addEventListener('order_placed', handleUpdate);
+    window.addEventListener('order_executed', handleUpdate);
+    window.addEventListener('position_updated', handleUpdate);
+    window.addEventListener('position-closed', handleUpdate);
+    window.addEventListener('position_closed', handleUpdate);
+
+    return () => {
+      window.removeEventListener('order_placed', handleUpdate);
+      window.removeEventListener('order_executed', handleUpdate);
+      window.removeEventListener('position_updated', handleUpdate);
+      window.removeEventListener('position-closed', handleUpdate);
+      window.removeEventListener('position_closed', handleUpdate);
+    };
+  }, [refresh]);
+
   // ── Mobile Back Button Interception ──
   useMobileBack(isSheetOpen, () => {
     setIsSheetOpen(false);
@@ -48,6 +76,7 @@ export default function OrderPage() {
     const chartOverlay = document.getElementById('chartSheetOverlay');
     if (chartSheet) chartSheet.classList.remove('open');
     if (chartOverlay) chartOverlay.classList.remove('active');
+    refresh();
   }, 'orderchart');
 
   useMobileBack(!!tradeSheetItem, () => {
@@ -69,9 +98,6 @@ export default function OrderPage() {
       if (chartOverlay) chartOverlay.classList.add('active');
     }, 80);
   };
-
-  const { orders, loading: ordersLoading, error, cancelOrder, refresh } = useMyOrders();
-  const { connected: kiteConnected } = useKitePositions();
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -294,7 +320,7 @@ export default function OrderPage() {
                       <div className="ord-row ord-row-price">
                         <span className="ord-label">{isPending ? (order.order_type === 'LIMIT' ? 'LIMIT PRICE' : 'PRICE') : 'FILL PRICE'}</span>
                         <span className={`ord-price-val ${isBuy ? 'buy-price' : 'sell-price'}`}>
-                          {fmtPrice(isPending ? (order.client_price || order.price || order.trigger_price || order.fill_price) : order.fill_price)}
+                          {fmtPrice(isPending ? (order.client_price || (order as any).price || order.trigger_price || order.fill_price) : order.fill_price)}
                         </span>
                       </div>
                       <div className="ord-row ord-row-info">
@@ -582,13 +608,21 @@ export default function OrderPage() {
         </div>
       </main>
 
-      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); }}></div>
+      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); refresh(); }}></div>
       <div id="chartSheet" className="trade-sheet" style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
           {chartItem && (
             <TradingChart
               symbol={chartItem.kiteSymbol || chartItem.symbol}
               segment={chartItem.segment}
+              onClose={() => {
+                const sheet = document.getElementById('chartSheet');
+                const overlay = document.getElementById('chartSheetOverlay');
+                if (sheet) sheet.classList.remove('open');
+                if (overlay) overlay.classList.remove('active');
+                setChartItem(null);
+                refresh();
+              }}
             />
           )}
         </div>

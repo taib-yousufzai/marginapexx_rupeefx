@@ -141,9 +141,24 @@ export function buildSymbolInfo(symbolName: string, segment: string): LibrarySym
   }
   
   let session = '0915-1530';
-  if (isCrypto || isGlobalForex || isUs) session = '24x7';
-  else if (exchange === 'MCX') session = '0900-2355';
-  else if (exchange === 'CDS') session = '0900-1700';
+  let timezone = 'Asia/Kolkata';
+
+  if (isCrypto) {
+    session = '24x7';
+    timezone = 'Asia/Kolkata';
+  } else if (isGlobalForex) {
+    session = '24x7';
+    timezone = 'Asia/Kolkata';
+  } else if (isUs) {
+    session = '0930-1600';
+    timezone = 'America/New_York';
+  } else if (exchange === 'MCX') {
+    session = '0900-2355';
+    timezone = 'Asia/Kolkata';
+  } else if (exchange === 'CDS') {
+    session = '0900-1700';
+    timezone = 'Asia/Kolkata';
+  }
 
   const isJpy = rawName.toUpperCase().includes('JPY');
 
@@ -155,7 +170,7 @@ export function buildSymbolInfo(symbolName: string, segment: string): LibrarySym
     exchange,
     listed_exchange: exchange,
     session,
-    timezone: 'Asia/Kolkata',
+    timezone,
     pricescale: isCrypto ? 100000 : (isJpy && isGlobalForex) ? 1000 : isGlobalForex ? 100000 : exchange === 'CDS' ? 10000 : 100,
     minmov: 1,
     has_intraday: true,

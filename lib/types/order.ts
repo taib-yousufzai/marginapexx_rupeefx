@@ -88,6 +88,7 @@ export interface MyPosition {
   status: 'open' | 'active' | 'closed';
   qty_open: number;
   qty_total: number;
+  lots?: number;
   avg_price: number;
   entry_price: number;
   exit_price: number | null;

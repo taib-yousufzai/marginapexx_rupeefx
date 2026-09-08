@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { getSession } from '@/lib/auth';
@@ -54,29 +54,20 @@ export default function PositionPage() {
     removePositionLocally,
     restorePositionLocally,
     startConversion,
-    endConversion
+    endConversion,
+    lastFetchedAt,
   } = useMyPositions(5000);
   const { closePosition, closePositionsBatch, loading: closingPos } = useOrderEntry();
-
-  // Listen for position-closed events fired by TradingChart so we eventually
-  // refresh without waiting for the next 5-second poll cycle
-  useEffect(() => {
-    const handler = () => { setTimeout(() => { refresh(); fetchClosed(); }, 200); };
-    window.addEventListener('position-closed', handler);
-    return () => window.removeEventListener('position-closed', handler);
-  }, [refresh]);
 
   // Closed positions are fetched separately (the main hook only returns open/active)
   const [closedPositions, setClosedPositions] = useState<EnrichedPosition[]>([]);
   const [closedLoading, setClosedLoading] = useState(false);
 
-  const fetchClosed = async () => {
+  const fetchClosed = useCallback(async () => {
     setClosedLoading(true);
     try {
       const data = await api.get<{ positions: any[] }>('/api/positions?status=closed');
       // Enrich closed positions with the computed fields expected by the UI.
-      // Closed positions from the raw API don't go through useMyPositions enrichment,
-      // so we derive the missing EnrichedPosition fields here.
       const enriched = (data.positions || []).map((p: any): EnrichedPosition => {
         const pnl = Number(p.pnl || 0);
         const qtyTotal = Number(p.qty_total || p.qty_open || p.qty || 1);
@@ -106,19 +97,48 @@ export default function PositionPage() {
     } catch { /* non-critical */ } finally {
       setClosedLoading(false);
     }
-  };
+  }, []);
 
+  // Listen for order and position events fired anywhere in the platform so we refresh both open & closed positions
   useEffect(() => {
-    fetchClosed();
-    // Closed positions don't need rapid polling — refresh on events + slow fallback
+    const handleUpdate = () => {
+      refresh();
+      fetchClosed();
+      setTimeout(() => {
+        refresh();
+        fetchClosed();
+      }, 600);
+    };
+
+    // Only do a mount-refresh if data is stale (> 3 s old).
+    // When navigating here right after a scalp order, notifyOrderEvent() has already
+    // refreshed the context — calling refresh() again would cause a visible stale flash
+    // (old qty for 200-800 ms) before the new fetch resolves.
+    const dataAge = Date.now() - lastFetchedAt;
+    if (lastFetchedAt === 0 || dataAge > 3000) {
+      handleUpdate();
+    } else {
+      // Data is fresh — only fetch closed positions which are not covered by the context
+      fetchClosed();
+    }
+
+    window.addEventListener('order_placed', handleUpdate);
+    window.addEventListener('order_executed', handleUpdate);
+    window.addEventListener('position_updated', handleUpdate);
+    window.addEventListener('position-closed', handleUpdate);
+    window.addEventListener('position_closed', handleUpdate);
+
     const iv = setInterval(fetchClosed, 30000);
-    const onOrderPlaced = () => setTimeout(() => fetchClosed(), 200);
-    window.addEventListener('order_placed', onOrderPlaced);
+
     return () => {
       clearInterval(iv);
-      window.removeEventListener('order_placed', onOrderPlaced);
+      window.removeEventListener('order_placed', handleUpdate);
+      window.removeEventListener('order_executed', handleUpdate);
+      window.removeEventListener('position_updated', handleUpdate);
+      window.removeEventListener('position-closed', handleUpdate);
+      window.removeEventListener('position_closed', handleUpdate);
     };
-  }, []);
+  }, [refresh, fetchClosed, lastFetchedAt]);
 
   const { balance: balanceFromHook, settlementAmount } = useBalance();
   const balance = balanceFromHook;
@@ -209,13 +229,17 @@ export default function PositionPage() {
     setTimeout(() => setSelectedPos(null), 300);
   }, 'posdetail');
 
-  useMobileBack(!!chartItem, () => {
+  const handleCloseChart = useCallback(() => {
     setChartItem(null);
     const chartSheet = document.getElementById('chartSheet');
     const chartOverlay = document.getElementById('chartSheetOverlay');
     if (chartSheet) chartSheet.classList.remove('open');
     if (chartOverlay) chartOverlay.classList.remove('active');
-  }, 'poschart');
+    refresh();
+    fetchClosed();
+  }, [refresh, fetchClosed]);
+
+  useMobileBack(!!chartItem, handleCloseChart, 'poschart');
 
   useMobileBack(!!tradeSheetItem, () => {
     setTradeSheetItem(null);
@@ -1816,7 +1840,7 @@ export default function PositionPage() {
       />
 
       {/* Chart Sheet */}
-      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); }}></div>
+      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={handleCloseChart}></div>
       <div id="chartSheet" className="trade-sheet" style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
           {chartItem && (
@@ -1824,6 +1848,7 @@ export default function PositionPage() {
               symbol={chartItem.kiteSymbol || chartItem.symbol}
               segment={chartItem.segment}
               liveQuote={{ lastPrice: positions.find(p => p.symbol === chartItem.symbol)?.current_ltp ?? chartItem.price }}
+              onClose={handleCloseChart}
             />
           )}
         </div>

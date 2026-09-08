@@ -68,10 +68,14 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
     });
 
     // Refresh whenever any component places an order or closes a position
-    const handleOrderPlaced = () => fetchOrders();
+    const handleOrderPlaced = () => {
+      fetchOrders();
+      setTimeout(fetchOrders, 600);
+    };
     window.addEventListener('order_placed', handleOrderPlaced);
     window.addEventListener('position-closed', handleOrderPlaced);
     window.addEventListener('position_closed', handleOrderPlaced);
+    window.addEventListener('position_updated', handleOrderPlaced);
     window.addEventListener('order_executed', handleOrderPlaced);
 
     async function init() {
@@ -99,6 +103,7 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('position-closed', handleOrderPlaced);
       window.removeEventListener('position_closed', handleOrderPlaced);
+      window.removeEventListener('position_updated', handleOrderPlaced);
       window.removeEventListener('order_executed', handleOrderPlaced);
     };
   }, [fetchOrders, refreshInterval]);

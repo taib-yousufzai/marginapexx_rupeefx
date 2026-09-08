@@ -62,12 +62,16 @@ async function fetchYahooForexBars(
   getBarsCallNum: number,
   loadStartTime: number
 ): Promise<{ bars: Bar[]; noData: boolean }> {
+  const countBackParam = periodParams.countBack ? `&countBack=${periodParams.countBack}` : '';
+  const firstParam = periodParams.firstDataRequest ? `&firstDataRequest=true` : '';
   const url =
     `/api/market/historical-forex` +
     `?symbol=${encodeURIComponent(symbol)}` +
     `&interval=${encodeURIComponent(resolution)}` +
     `&from=${periodParams.from * 1000}` +
-    `&to=${periodParams.to * 1000}`;
+    `&to=${periodParams.to * 1000}` +
+    countBackParam +
+    firstParam;
 
   const fetchStart = performance.now();
   console.log(`[CHART PERF ${loadId}] +${(fetchStart - loadStartTime).toFixed(1)}ms fetchBars #${getBarsCallNum} Forex START: ${symbol} (${resolution})`);

@@ -12,6 +12,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { getRedisClient } from '@/lib/redis';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
@@ -25,11 +26,15 @@ import { calculateSingleLegCharge, calculateOrderBrokerage } from '@/lib/trading
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 
-import { mapSymbolToSegment } from '@/lib/trading/SymbolMapping';
+import { mapSymbolToSegment, mapSegmentToDbSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
 import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
 import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
 import { OrderService } from '@/lib/trading/OrderService';
+
+// In-memory cache for segment trading hours (avoids ~767ms serial Supabase round-trip on every order)
+const tradingHoursCache = new Map<string, { data: any; expiresAt: number }>();
+const TRADING_HOURS_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -220,24 +225,7 @@ async function fetchKiteQuotes(instruments: string[]): Promise<Record<string, Se
   }
 }
 
-/**
- * Map UI display segment to database segment key.
- */
-function mapSegmentToDbSegment(s: string): string {
-  if (!s) return '';
-  const trimmed = s.trim();
-  if (trimmed === 'NSE - Futures' || trimmed === 'BSE - Futures') return 'INDEX-FUT';
-  if (trimmed === 'NSE - Options' || trimmed === 'BSE - Options') return 'INDEX-OPT';
-  if (trimmed === 'NSE - Stock Futures' || trimmed === 'BSE - Stock Futures') return 'STOCK-FUT';
-  if (trimmed === 'NSE - Stock Options' || trimmed === 'BSE - Stock Options') return 'STOCK-OPT';
-  if (trimmed === 'MCX - Futures') return 'MCX-FUT';
-  if (trimmed === 'MCX - Options') return 'MCX-OPT';
-  if (trimmed === 'NSE - Equity' || trimmed === 'BSE - Equity') return 'STOCKS';
-  if (trimmed === 'Crypto' || trimmed === 'CRYPTO') return 'CRYPTO';
-  if (trimmed === 'Forex' || trimmed === 'FOREX' || trimmed === 'CDS - Futures' || trimmed === 'CDS - Options') return 'FOREX';
-  if (trimmed === 'COMEX - Futures' || trimmed === 'COMEX - Options' || trimmed === 'COMEX' || trimmed === 'COI') return 'COMEX';
-  return trimmed;
-}
+
 
 function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[]): number {
   const n = symbol.toUpperCase();
@@ -444,7 +432,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, linked_position_id, orderAttemptId } = body;
-    const is_exit = Boolean(body.is_exit === true || body.is_exit === 'true' || body.is_exit === 1 || body.is_exit === '1');
+    const is_exit = Boolean(body.is_exit === true || (body.is_exit as any) === 'true' || (body.is_exit as any) === 1 || (body.is_exit as any) === '1');
 
     // 2b. Idempotency pre-check using Redis (with 300ms fast safety guard)
     let attemptRedisKey: string | null = null;
@@ -480,10 +468,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Quantity must be positive' }, { status: 400 });
     }
 
-    const dbSegment = mapSegmentToDbSegment(segment);
+    const dbSegment = mapSegmentWithSymbol(segment, symbol);
     const admin = getAdminClient();
 
-    // Check market hours
+    // Check market hours (with in-memory cache to avoid ~767ms Supabase round-trip)
     try {
       const exchangeName = symbol.includes(':') ? symbol.split(':')[0] : 'NSE';
       const ex = exchangeName.toUpperCase();
@@ -492,12 +480,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (!segUpper.includes('CRYPTO')) {
         const segmentId = RiskValidation.resolveTradingHoursSegmentId(symbol, dbSegment);
 
+        const nowMs = Date.now();
+        const cachedHour = tradingHoursCache.get(segmentId);
+        let segmentHour: any = null;
+        let hrError: any = null;
 
-        const { data: segmentHour, error: hrError } = await admin
-          .from('trading_hours')
-          .select('name, start_time, end_time, is_active')
-          .eq('id', segmentId)
-          .maybeSingle();
+        if (cachedHour && cachedHour.expiresAt > nowMs) {
+          segmentHour = cachedHour.data;
+        } else {
+          const res = await admin
+            .from('trading_hours')
+            .select('name, start_time, end_time, is_active')
+            .eq('id', segmentId)
+            .maybeSingle();
+          segmentHour = res.data;
+          hrError = res.error;
+          if (!hrError && segmentHour) {
+            tradingHoursCache.set(segmentId, { data: segmentHour, expiresAt: nowMs + TRADING_HOURS_TTL_MS });
+          }
+        }
 
         if (!hrError && segmentHour) {
           if (!segmentHour.is_active) {
@@ -539,7 +540,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 4-6 + 8-9: Run all independent DB queries AND the Kite LTP fetch in parallel.
     // This is the key optimization — previously these were sequential (~4 round-trips).
-    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult] = await Promise.all([
+    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult, platformExitMode] = await Promise.all([
       // Profile
       admin.from('profiles')
         .select('id, active, read_only, segments, parent_id, balance, trading_mode')
@@ -570,19 +571,49 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .eq('user_id', user.id)
         .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending']),
 
-      // Fetch quotes — either Kite or Binance depending on segment (with 2.0s fast timeout guard)
+      // Fetch quotes — either Kite or Binance depending on segment (with fast safety timeouts)
       (async () => {
         const fetchPromise = (async () => {
           if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
+            // 1. Try Redis cache first (0ms)
+            let cleanSym = symbol.replace('/', '').toUpperCase();
+            if (dbSegment === 'CRYPTO' && !cleanSym.endsWith('USDT')) {
+              cleanSym = cleanSym + 'USDT';
+            }
+            try {
+              const redis = getRedisClient();
+              const cached = await redis.hget('market:quotes', cleanSym);
+              if (cached) {
+                const tick = JSON.parse(cached);
+                if (tick && (tick.last_price > 0 || tick.lastPrice > 0)) {
+                  const ltp = Number(tick.last_price || tick.lastPrice);
+                  return { [kiteInst]: { last_price: ltp, bid: Number(tick.bid || ltp), ask: Number(tick.ask || ltp), depth: tick.depth || null } };
+                }
+              }
+            } catch (e) { }
+
+            // 2. If client_price is already provided by the live WebSocket client, use it immediately!
+            // Do not block trade execution on an external 2.5s HTTP call to api.binance.com!
+            if (client_price && Number(client_price) > 0) {
+              const cp = Number(client_price);
+              const fAsk = body.frontend_ask && Number(body.frontend_ask) > 0 ? Number(body.frontend_ask) : cp;
+              const fBid = body.frontend_bid && Number(body.frontend_bid) > 0 ? Number(body.frontend_bid) : cp;
+              return { [kiteInst]: { last_price: cp, bid: fBid, ask: fAsk } };
+            }
+
             const quote = await fetchBinanceQuote(symbol);
             return quote ? { [kiteInst]: quote } : {};
+          } else if (dbSegment === 'COMEX' || dbSegment === 'US-EQ' || symbol.endsWith('=F') || symbol.startsWith('US:') || (kiteInst && kiteInst.startsWith('COMEX:'))) {
+            // For COMEX and US instruments, Kite REST API does not host their quotes.
+            // Returning empty allows instant fallback to client_price without waiting for Kite timeouts.
+            return {};
           } else {
             return fetchKiteQuotes(instrumentsToFetch);
           }
         })();
 
         const timeoutPromise = new Promise<Record<string, ServerQuote>>((resolve) =>
-          setTimeout(() => resolve({}), 500)
+          setTimeout(() => resolve({}), 800)
         );
 
         return Promise.race([fetchPromise, timeoutPromise]);
@@ -591,13 +622,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Fetch script settings for dynamic lot size
       admin.from('script_settings')
         .select('symbol, lot_size'),
+
+      // Fetch exit price mode in parallel
+      getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK'),
     ]);
 
     const t4_backendQuoteRead = Date.now();
     const profile = profileResult.data;
     const profileErr = profileResult.error;
-    const rawQuote = quotesMap[kiteInst];
-    const kiteLtp = typeof rawQuote === 'number' ? rawQuote : (rawQuote?.last_price ?? null);
+    let rawQuote = quotesMap[kiteInst];
+    let kiteLtp = typeof rawQuote === 'number' ? rawQuote : (rawQuote?.last_price ?? null);
+
+    // If ticker quote timed out or missed, fallback to client WebSocket price
+    if ((!kiteLtp || kiteLtp <= 0) && client_price && Number(client_price) > 0) {
+      kiteLtp = Number(client_price);
+      rawQuote = {
+        last_price: kiteLtp,
+        bid: body.frontend_bid && Number(body.frontend_bid) > 0 ? Number(body.frontend_bid) : kiteLtp,
+        ask: body.frontend_ask && Number(body.frontend_ask) > 0 ? Number(body.frontend_ask) : kiteLtp
+      };
+      quotesMap[kiteInst] = rawQuote;
+    }
+
     const dbScriptSettings = (scriptSettingsResult?.data as any[]) ?? [];
 
     // 4. Profile checks
@@ -655,7 +701,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         user_id: user.id,
         segment: dbSegment,
         side: 'BUY',
-        trade_allowed: !dbSegment.toUpperCase().includes('CRYPTO'),
+        trade_allowed: true,
         max_lot: 50,
         max_order_lot: 50,
         intraday_leverage,
@@ -679,7 +725,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         user_id: user.id,
         segment: dbSegment,
         side: 'SELL',
-        trade_allowed: !dbSegment.toUpperCase().includes('CRYPTO'),
+        trade_allowed: true,
         max_lot: 50,
         max_order_lot: 50,
         intraday_leverage,
@@ -1015,7 +1061,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (order_type === 'LIMIT' || order_type === 'SL' || order_type === 'GTT') {
       fillPrice = client_price || trigger_price || baseLtp;
     } else {
-      const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
       const exitPriceMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
 
       let basePrice: number;
@@ -1072,7 +1117,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         finalFillPrice: fillPrice,
 
-        quoteTimestamp: typeof rawQuote === 'object' ? (rawQuote?.timestamp ?? t4_backendQuoteRead) : t4_backendQuoteRead,
+        quoteTimestamp: typeof rawQuote === 'object' ? ((rawQuote as any)?.timestamp ?? t4_backendQuoteRead) : t4_backendQuoteRead,
         executionTimestamp: t5_executionTime,
 
         timestamps: {

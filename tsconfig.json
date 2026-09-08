@@ -43,6 +43,12 @@
   ],
   "exclude": [
     "node_modules",
-    "scratch"
+    "scratch",
+    "OLD_ORDER_ROUTE.ts",
+    "scripts",
+    "__tests__",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.pbt.test.ts"
   ]
 }

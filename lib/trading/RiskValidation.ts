@@ -12,11 +12,17 @@ export class RiskValidation {
   static resolveTradingHoursSegmentId(symbol: string, dbSegment: string = ''): string {
     const symUpper = (symbol || '').toUpperCase();
     const segUpper = (dbSegment || '').toUpperCase();
+    const cleanSym = symUpper.includes(':') ? symUpper.split(':')[1] : symUpper;
     const exchangeName = symUpper.includes(':') ? symUpper.split(':')[0] : '';
 
     if (segUpper.includes('CRYPTO')) return 'crypto';
 
+    if (cleanSym.endsWith('=F') || symUpper.endsWith('=F') || exchangeName === 'COMEX' || segUpper.includes('COMEX') || segUpper.includes('COI')) {
+      return 'comex';
+    }
+
     if (
+      exchangeName === 'US' ||
       exchangeName === 'US-EQ' ||
       exchangeName === 'USEQ' ||
       segUpper.includes('US-EQ') ||
@@ -24,9 +30,10 @@ export class RiskValidation {
       segUpper.includes('US_EQ') ||
       segUpper.includes('US STOCKS') ||
       segUpper.includes('US_STOCKS') ||
-      segUpper.includes('STOCKS')
+      segUpper.includes('US - EQUITY') ||
+      segUpper.includes('US EQUITY')
     ) {
-      return 'us-eq';
+      return 'comex';
     }
 
     const isCommodity =
@@ -47,7 +54,6 @@ export class RiskValidation {
     if (isCommodity) return 'mcx';
     if (exchangeName === 'BSE' || segUpper.includes('BSE') || segUpper.includes('BFO')) return 'bse';
     if (exchangeName === 'CDS' || exchangeName === 'FOREX' || segUpper.includes('CDS') || segUpper.includes('FOREX')) return 'forex';
-    if (exchangeName === 'COMEX' || segUpper.includes('COMEX')) return 'comex';
 
     return 'nse';
   }

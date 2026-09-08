@@ -27,6 +27,15 @@ const MCX_BASE_MAP: Record<string, string> = {
 const INDEX_UNDERLYINGS = new Set(['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'NIFTYNXT50', 'NIFTYFPI']);
 const BSE_INDEX_UNDERLYINGS = new Set(['SENSEX', 'BANKEX', 'SENSEX50']);
 
+// ── In-Memory Caches for High-Speed Validation ──────────────────────────────────
+// Instrument definitions & sibling strikes are static throughout the trading day.
+// Caching them in memory avoids 2–3 sequential Supabase round-trips (~1,500ms).
+const mcxUnderlyingCache = new Map<string, { id: string; expiresAt: number }>();
+const instrumentMetaCache = new Map<string, { data: { name: string; expiry: string; exchange: string } | null; expiresAt: number }>();
+const siblingStrikesCache = new Map<string, { strikes: { strike: number }[]; expiresAt: number }>();
+
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
 /**
  * Resolves the target exchange for a given option symbol or underlying name.
  */
@@ -53,6 +62,12 @@ export async function resolveUnderlyingKiteId(symbol: string, underlying: string
 
   if (isMcx) {
     const baseName = MCX_BASE_MAP[undUpper] || undUpper;
+    const now = Date.now();
+    const cached = mcxUnderlyingCache.get(baseName);
+    if (cached && cached.expiresAt > now) {
+      return cached.id;
+    }
+
     const admin = getAdminClient();
     const today = new Date().toISOString().split('T')[0];
 
@@ -65,10 +80,12 @@ export async function resolveUnderlyingKiteId(symbol: string, underlying: string
       .order('expiry', { ascending: true })
       .limit(1);
 
+    let resId = `MCX:${baseName}`;
     if (mcxFuts?.[0]?.tradingsymbol) {
-      return `${mcxFuts[0].exchange || 'MCX'}:${mcxFuts[0].tradingsymbol}`;
+      resId = `${mcxFuts[0].exchange || 'MCX'}:${mcxFuts[0].tradingsymbol}`;
     }
-    return `MCX:${baseName}`;
+    mcxUnderlyingCache.set(baseName, { id: resId, expiresAt: now + CACHE_TTL_MS });
+    return resId;
   }
 
   if (undUpper === 'BANKNIFTY') return 'NSE:NIFTY BANK';
@@ -118,40 +135,59 @@ export async function validateOptionStrike(params: {
     ? ['BFO', 'BSE']
     : [targetExchange];
 
-  // 1. Fetch contract instrument row filtering by exact exchange to prevent NCO/MCX collision
-  let query = admin
-    .from('instruments')
-    .select('name, expiry, exchange')
-    .or(`tradingsymbol.eq.${cleanSymbol},tradingsymbol.eq.${symbol},tradingsymbol.eq.${targetExchange}:${cleanSymbol}`);
+  const now = Date.now();
 
-  if (targetExchange) {
-    query = query.in('exchange', allowedExchanges);
+  // 1. Fetch contract instrument row filtering by exact exchange to prevent NCO/MCX collision (with in-memory cache)
+  const metaCacheKey = `${cleanSymbol}_${targetExchange}`;
+  let instrRow: { name: string; expiry: string; exchange: string } | null = null;
+  const cachedMeta = instrumentMetaCache.get(metaCacheKey);
+
+  if (cachedMeta && cachedMeta.expiresAt > now) {
+    instrRow = cachedMeta.data;
+  } else {
+    let query = admin
+      .from('instruments')
+      .select('name, expiry, exchange')
+      .or(`tradingsymbol.eq.${cleanSymbol},tradingsymbol.eq.${symbol},tradingsymbol.eq.${targetExchange}:${cleanSymbol}`);
+
+    if (targetExchange) {
+      query = query.in('exchange', allowedExchanges);
+    }
+
+    const { data } = await query.order('exchange', { ascending: true }).limit(1).maybeSingle();
+    instrRow = data as any;
+    instrumentMetaCache.set(metaCacheKey, { data: instrRow, expiresAt: now + CACHE_TTL_MS });
   }
-
-  const { data: instrRow } = await query.order('exchange', { ascending: true }).limit(1).maybeSingle();
 
   if (!instrRow?.expiry) {
     // Fail open if instrument details cannot be found
     return { allowed: true, orderStrike, minAllowed: 0, maxAllowed: 0 };
   }
 
-  // 2. Fetch sibling contract strikes for the exact underlying, expiry, and exchange
-  const { data: siblingRows } = await admin
-    .from('instruments')
-    .select('strike_price')
-    .eq('name', instrRow.name || underlying)
-    .eq('expiry', instrRow.expiry)
-    .in('exchange', allowedExchanges)
-    .in('option_type', ['CE', 'PE']);
+  // 2. Fetch sibling contract strikes for the exact underlying, expiry, and exchange (with in-memory cache)
+  const strikesCacheKey = `${instrRow.name || underlying}_${instrRow.expiry}_${allowedExchanges.join(',')}`;
+  let sortedStrikes: { strike: number }[] = [];
+  const cachedStrikes = siblingStrikesCache.get(strikesCacheKey);
 
-  if (!siblingRows || siblingRows.length === 0) {
-    return { allowed: true, orderStrike, minAllowed: 0, maxAllowed: 0 };
+  if (cachedStrikes && cachedStrikes.expiresAt > now) {
+    sortedStrikes = cachedStrikes.strikes;
+  } else {
+    const { data: siblingRows } = await admin
+      .from('instruments')
+      .select('strike_price')
+      .eq('name', instrRow.name || underlying)
+      .eq('expiry', instrRow.expiry)
+      .in('exchange', allowedExchanges)
+      .in('option_type', ['CE', 'PE']);
+
+    if (siblingRows && siblingRows.length > 0) {
+      const rawStrikes = siblingRows.map(s => ({ strike: Number(s.strike_price) })).filter(s => s.strike > 0);
+      const strikeMap = new Map<number, { strike: number }>();
+      rawStrikes.forEach(s => strikeMap.set(s.strike, s));
+      sortedStrikes = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
+      siblingStrikesCache.set(strikesCacheKey, { strikes: sortedStrikes, expiresAt: now + CACHE_TTL_MS });
+    }
   }
-
-  const rawStrikes = siblingRows.map(s => ({ strike: Number(s.strike_price) })).filter(s => s.strike > 0);
-  const strikeMap = new Map<number, { strike: number }>();
-  rawStrikes.forEach(s => strikeMap.set(s.strike, s));
-  const sortedStrikes = Array.from(strikeMap.values()).sort((a, b) => a.strike - b.strike);
 
   if (sortedStrikes.length === 0) {
     return { allowed: true, orderStrike, minAllowed: 0, maxAllowed: 0 };
@@ -185,17 +221,25 @@ export async function validateOptionStrike(params: {
     }
   }
 
+  // If knownQuotesMap missed, try speed quotes with a fast 400ms guard to prevent blocking order pipeline
   if (!underlyingPrice || underlyingPrice <= 0) {
     try {
-      const speedMap = await fetchSpeedQuotes([underlyingKiteId, `MCX:${mcxBase}`, `NSE:${baseSymbol}`]);
+      const speedMap = await Promise.race([
+        fetchSpeedQuotes([underlyingKiteId, `MCX:${mcxBase}`, `NSE:${baseSymbol}`]),
+        new Promise<Record<string, number>>((r) => setTimeout(() => r({}), 400)),
+      ]);
       underlyingPrice = speedMap?.[underlyingKiteId] || speedMap?.[`NSE:${baseSymbol}`] || speedMap?.[`MCX:${mcxBase}`] || 0;
     } catch { /* ignore */ }
   }
 
+  // Final REST fallback with 500ms guard
   if (!underlyingPrice || underlyingPrice <= 0) {
     try {
-      const restMap = await fetchKiteQuotes([underlyingKiteId, `MCX:${mcxBase}`, `NSE:${baseSymbol}`]);
-      underlyingPrice = restMap?.[underlyingKiteId] || restMap?.[`NSE:${baseSymbol}`] || restMap?.[`MCX:${mcxBase}`] || 0;
+      const restMap = await Promise.race([
+        fetchKiteQuotes([underlyingKiteId, `MCX:${mcxBase}`, `NSE:${baseSymbol}`]),
+        new Promise<Record<string, any>>((r) => setTimeout(() => r({}), 500)),
+      ]);
+      underlyingPrice = restMap?.[underlyingKiteId]?.last_price || restMap?.[`NSE:${baseSymbol}`]?.last_price || restMap?.[`MCX:${mcxBase}`]?.last_price || 0;
     } catch { /* ignore */ }
   }
 

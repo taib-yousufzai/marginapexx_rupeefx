@@ -1,6 +1,9 @@
 import { getRedisClient } from '@/lib/redis';
 import { getAdminClient } from '@/lib/adminClient';
 
+const memSettingCache = new Map<string, { value: string; expiresAt: number }>();
+const SETTING_TTL_MS = 60000;
+
 export async function getPlatformSetting(
   key: string,
   fallback: string,
@@ -8,6 +11,12 @@ export async function getPlatformSetting(
   // 1. Env variable priority override
   const envVal = process.env[key];
   if (envVal) return envVal;
+
+  // 1b. In-memory cache for instant 0ms access
+  const cached = memSettingCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
 
   // 2. Try Redis cache (with 300ms fast safety guard)
   try {
@@ -17,7 +26,10 @@ export async function getPlatformSetting(
         redis.get(`platform:${key}`),
         new Promise(r => setTimeout(() => r(null), 300))
       ]) as string | null;
-      if (val) return val;
+      if (val) {
+        memSettingCache.set(key, { value: val, expiresAt: Date.now() + SETTING_TTL_MS });
+        return val;
+      }
     }
   } catch (err) {
     // Ignore Redis error

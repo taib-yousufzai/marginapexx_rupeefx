@@ -1774,7 +1774,7 @@ export default function ScriptsPage() {
         </div>
       </div>
       
-      {toast && <Toast toast={toast} onClose={() => setToast(null)} />}
+      {toast && <Toast toast={toast} onDismiss={() => setToast(null)} />}
     </div>
   );
 }

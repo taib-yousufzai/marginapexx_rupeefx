@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef, useState, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import ChartContainer from '@/components/chart/ChartContainer';
 import { ErrorModal } from '@/components/ErrorModal';
 import { getDefaultWatchlistItems, getTabForItem } from '@/app/watchlist/page';
@@ -66,9 +66,40 @@ interface TradingChartProps {
   symbol: string;         // e.g., "BTCUSDT" or "NSE:INFY"
   segment: string;        // e.g., "CRYPTO" or "EQ"
   liveQuote?: any;        // Live quote object to update the last candle
+  onClose?: () => void;
 }
 
-type Timeframe = '1m' | '5m' | '15m' | '60m' | 'day';
+type Timeframe = '1m' | '2m' | '3m' | '5m' | '10m' | '15m' | '30m' | '60m' | 'day';
+
+function CandleCountdown({ timeframe }: { timeframe: Timeframe }) {
+  const [timeLeft, setTimeLeft] = useState('');
+  useEffect(() => {
+    if (timeframe === 'day') return;
+    const resMs =
+      timeframe === '1m' ? 60000 : timeframe === '2m' ? 120000 : timeframe === '3m' ? 180000 :
+      timeframe === '5m' ? 300000 : timeframe === '10m' ? 600000 : timeframe === '15m' ? 900000 :
+      timeframe === '30m' ? 1800000 : timeframe === '60m' ? 3600000 : 0;
+    if (!resMs) return;
+    const update = () => {
+      const nowMs = Date.now();
+      const next = Math.ceil(nowMs / resMs) * resMs;
+      const diff = Math.max(0, next - nowMs);
+      const m = Math.floor(diff / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setTimeLeft(`${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
+    };
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [timeframe]);
+
+  if (timeframe === 'day' || !timeLeft) return null;
+  return (
+    <div style={{ marginLeft: '4px', fontSize: '12px', fontWeight: 600, color: '#f23645' }}>
+      ({timeLeft})
+    </div>
+  );
+}
 
 const SwipeableItem = ({ children, onDelete }: { children: React.ReactNode, onDelete: () => void }) => {
   const [translateX, setTranslateX] = useState(0);
@@ -384,20 +415,65 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
 
 let tradingChartRenderCount = 0;
 
-function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', liveQuote: propLiveQuote }: TradingChartProps) {
+function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', liveQuote: propLiveQuote, onClose }: TradingChartProps) {
   tradingChartRenderCount++;
   const [symbol, setSymbol] = useState(propSymbol);
   const [segment, setSegment] = useState(propSegment);
   const [loadId, setLoadId] = useState(() => Math.random().toString(36).substring(2, 8));
 
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   console.log(`[PROD-CHART] timestamp=${Date.now()} loadId=${loadId} symbol=${propSymbol} event=TRADING_CHART_RENDER renderCount=${tradingChartRenderCount}`);
+
+  // ── Keyboard Back Navigation (Esc / Alt+ArrowLeft) for Desktop / Computer ──
+  useEffect(() => {
+    const handleBackNav = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' || (e.altKey && e.key === 'ArrowLeft')) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (onCloseRef.current) {
+          onCloseRef.current();
+        } else {
+          const sheet = document.getElementById('chartSheet');
+          const overlay = document.getElementById('chartSheetOverlay');
+          if (sheet) sheet.classList.remove('open');
+          if (overlay) overlay.classList.remove('active');
+          window.history.back();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleBackNav);
+
+    // Also attach to the TradingView iframe so clicking inside chart doesn't trap keyboard back
+    const timer = setTimeout(() => {
+      try {
+        const iframe = document.querySelector('#chartSheet iframe, .tc-chart-area iframe') as HTMLIFrameElement | null;
+        if (iframe && iframe.contentWindow) {
+          iframe.contentWindow.addEventListener('keydown', handleBackNav);
+        }
+      } catch { /* cross-origin protection */ }
+    }, 1200);
+
+    return () => {
+      window.removeEventListener('keydown', handleBackNav);
+      clearTimeout(timer);
+      try {
+        const iframe = document.querySelector('#chartSheet iframe, .tc-chart-area iframe') as HTMLIFrameElement | null;
+        if (iframe && iframe.contentWindow) {
+          iframe.contentWindow.removeEventListener('keydown', handleBackNav);
+        }
+      } catch { }
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.unlock) {
       try { screen.orientation.unlock(); } catch (e) {}
     }
     return () => {
-      if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.lock) {
+      if (typeof screen !== 'undefined' && screen.orientation && (screen.orientation as any).lock) {
         (screen.orientation as any).lock('portrait').catch(() => {});
       }
     };
@@ -411,7 +487,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     console.log(`[CHART PERF ${newId}] +0.0ms TradingChart propSymbol change: ${propSymbol}`);
   }, [propSymbol, propSegment]);
 
-  const [themeMode, setThemeMode] = useState<'dark' | 'black' | 'light'>(getAppTheme);
+  const [themeMode, setThemeMode] = useState<'dark' | 'black' | 'light'>(() => getAppTheme());
 
   useEffect(() => {
     const updateTheme = () => {
@@ -572,6 +648,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [addingPosId, setAddingPosId] = useState<string | null>(null);
   const positionSnapshotRef = useRef<string | null>(null); // snapshot of position state at order time
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // tracks the active toast auto-dismiss timer
   const submitStartTimeRef = useRef<number>(0);
   const submittingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isOrderBlockVisible, setIsOrderBlockVisible] = useState<boolean>(false);
@@ -599,6 +676,22 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const { tradingMode, getLotSize, getSegment } = useTradeConfig();
   // Balance from the global BalanceDataProvider — no local fetch needed
   const { balance, refresh: refreshBalance } = useBalance();
+
+  const notifyOrderEvent = useCallback(() => {
+    refreshOrders();
+    refreshPositions();
+    refreshBalance();
+    window.dispatchEvent(new Event('order_placed'));
+    window.dispatchEvent(new Event('order_executed'));
+    window.dispatchEvent(new Event('position_updated'));
+    window.dispatchEvent(new CustomEvent('position-closed'));
+    window.dispatchEvent(new CustomEvent('position_closed'));
+    setTimeout(() => {
+      refreshOrders();
+      refreshPositions();
+      refreshBalance();
+    }, 600);
+  }, [refreshOrders, refreshPositions, refreshBalance]);
 
   // ── CHARTINH Integration States ──
   const [activeOrderTab, setActiveOrderTab] = useState<'open' | 'executed'>('open');
@@ -715,9 +808,36 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   // Toast helper
   const showToast = (msg: string, isError = false) => {
+    // Cancel any pending auto-dismiss so stale timers can't close the new toast early
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
     setToast({ visible: true, msg, isError });
-    setTimeout(() => setToast({ visible: false, msg: '' }), 2000);
+    // Errors stay visible longer so the user can actually read them
+    toastTimerRef.current = setTimeout(() => {
+      setToast({ visible: false, msg: '' });
+      toastTimerRef.current = null;
+    }, isError ? 4000 : 2500);
   };
+
+  // Safety guard: if the toast is visible but the timer was lost (e.g. after
+  // Next.js fast refresh preserves state but resets refs), re-arm the dismiss.
+  useEffect(() => {
+    if (toast.visible && !toastTimerRef.current) {
+      toastTimerRef.current = setTimeout(() => {
+        setToast({ visible: false, msg: '' });
+        toastTimerRef.current = null;
+      }, toast.isError ? 4000 : 2500);
+    }
+    return () => {
+      // Cleanup on unmount so we don't call setToast on a dead component
+      if (!toast.visible && toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
+  }, [toast.visible, toast.isError]);
 
   // Convert timeframe to Binance or Kite interval string
   const getIntervalString = () => {
@@ -913,7 +1033,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const p = positions.find(x => x.id === exitPositionId);
       if (p) {
         orderSymbol = p.symbol;
-        orderSegment = p.settlement || p.segment || segment;
+        orderSegment = p.settlement || (p as any).segment || segment;
       }
     }
 
@@ -992,10 +1112,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     }).then(res => {
       if (res.success) {
         showToast(modifyOrderId ? 'Order Modified Successfully!' : `${orderSide} Order Placed Successfully!`);
-        refreshOrders();
-        refreshBalance();
-        refreshPositions();
-        window.dispatchEvent(new CustomEvent('position-closed'));
+        notifyOrderEvent();
       } else {
         showToast(res.error || 'Failed to place order', true);
       }
@@ -1013,8 +1130,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     const res = await cancelOrder(id);
     if (res.success) {
       showToast('Order cancelled');
-      refreshOrders();
-      refreshBalance();
+      notifyOrderEvent();
       if (modifyOrderId === id) {
         setModifyOrderId(null);
         setIsOrderBlockVisible(false);
@@ -1061,7 +1177,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     // Also set the target symbol info so the order block UI shows the correct position prices
     // instead of the chart's current instrument prices
     setAddMoreSymbol(pos.symbol);
-    setAddMoreSegment(pos.settlement || pos.segment || segment);
+    setAddMoreSegment(pos.settlement || (pos as any).segment || segment);
     setAddMoreKiteInst(pos.kite_instrument || pos.symbol);
     setAddMoreLtp(pos.current_ltp || pos.avg_price || pos.entry_price);
 
@@ -1161,26 +1277,29 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const effectiveLots = finalQty / posLotSize;
 
       showToast(`Placing quick exit order...`);
-      const res = await placeOrder({
-        symbol: pos.symbol,
-        kite_instrument: pos.kite_instrument || pos.symbol,
-        segment: pos.settlement || segment,
-        side: exitSide,
-        qty: finalQty,
-        lots: effectiveLots,
-        order_type: 'MARKET',
-        product_type: pos.product_type || 'INTRADAY',
-        client_price: pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
-        is_exit: true,
-        linked_position_id: positionViewMode === 'detailed' ? pos.id : undefined
-      });
+      const exitTimeout = new Promise<{ success: false; error: string }>((resolve) =>
+        setTimeout(() => resolve({ success: false, error: 'Exit order timed out' }), 15000)
+      );
+      const res = await Promise.race([
+        placeOrder({
+          symbol: pos.symbol,
+          kite_instrument: pos.kite_instrument || pos.symbol,
+          segment: pos.settlement || segment,
+          side: exitSide,
+          qty: finalQty,
+          lots: effectiveLots,
+          order_type: 'MARKET',
+          product_type: pos.product_type || 'INTRADAY',
+          client_price: pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
+          is_exit: true,
+          linked_position_id: positionViewMode === 'detailed' ? pos.id : undefined
+        }),
+        exitTimeout
+      ]);
 
       if (res.success) {
         showToast(`Quick exit order placed`);
-        refreshOrders();
-        refreshBalance();
-        refreshPositions();
-        window.dispatchEvent(new CustomEvent('position-closed'));
+        notifyOrderEvent();
 
         // Reset transient quantity state to 1 lot (configured default) upon exit completion
         setQtyValue(1);
@@ -1241,26 +1360,28 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       positionSnapshotRef.current = `${pos.id}:${pos.qty_open}`;
 
       try {
-        const res = await placeOrder({
-          symbol: pos.symbol,
-          kite_instrument: pos.kite_instrument || pos.symbol,
-          segment: pos.settlement || segment,
-          side: pos.side,
-          qty: qVal,
-          lots: 1,
-          order_type: 'MARKET',
-          product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
-          client_price: 0,
-          is_exit: false
-        });
+        const addTimeout = new Promise<{ success: false; error: string }>((resolve) =>
+          setTimeout(() => resolve({ success: false, error: 'Add to position timed out' }), 15000)
+        );
+        const res = await Promise.race([
+          placeOrder({
+            symbol: pos.symbol,
+            kite_instrument: pos.kite_instrument || pos.symbol,
+            segment: pos.settlement || segment,
+            side: pos.side,
+            qty: qVal,
+            lots: 1,
+            order_type: 'MARKET',
+            product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
+            client_price: currentPrice || pos.current_ltp || pos.avg_price || 0,
+            is_exit: false
+          }),
+          addTimeout
+        ]);
 
         if (res.success) {
           showToast(`Successfully added ${qVal} to position!`);
-          refreshOrders();
-          refreshPositions();
-          refreshBalance();
-          window.dispatchEvent(new Event('order_placed'));
-          window.dispatchEvent(new CustomEvent('position-closed'));
+          notifyOrderEvent();
         } else {
           showToast(res.error || 'Failed to add to position', true);
         }
@@ -1286,6 +1407,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     if (quickEntryLock.current || isSubmitting) return;
     quickEntryLock.current = true;
     setIsSubmitting(true);
+    submitStartTimeRef.current = Date.now(); // track when submission started (used by visibilitychange handler)
     positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
     setOrderSide(side);
 
@@ -1340,6 +1462,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         const s = symbol;
         if (s.includes(':')) return s;
         const upper = s.toUpperCase();
+        if (isCrypto || upper.endsWith('USDT') || ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].some(c => upper === c || upper.startsWith(c + 'USDT'))) {
+          return `BINANCE:${s.replace(/^BINANCE:/i, '')}`;
+        }
+        if (['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'].includes(upper)) {
+          return `FOREX:${s}`;
+        }
+        if (upper.endsWith('=F') || upper.includes('=F')) return `COMEX:${s}`;
         if (upper.endsWith('CE') || upper.endsWith('PE') || upper.endsWith('FUT') || upper.includes('FUT')) {
           if (upper.startsWith('SENSEX') || upper.startsWith('BANKEX')) return `BFO:${s}`;
           if (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD'].some(c => upper.startsWith(c))) return `MCX:${s}`;
@@ -1349,39 +1478,60 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         return `NSE:${s}`;
       })();
 
-      const res = await placeOrder({
-        symbol: symbol,
-        kite_instrument: kiteInst,
-        segment: segment,
-        side: side,
-        qty: finalQty,
-        lots: effectiveUseLots ? qVal : (finalQty / lotSize),
-        order_type: 'MARKET',
-        product_type: 'INTRADAY',
-        client_price: currentPrice,
-        is_exit: false
-      });
+      // 12 s is enough — the server processes in ~2-3 s; anything beyond 12 s on the client
+      // means the connection is stalled. We fail fast and refresh positions so the user
+      // can see any server-side executed order immediately.
+      const quickOrderTimeout = new Promise<{ success: false; error: string }>((resolve) =>
+        setTimeout(() => resolve({ success: false, error: 'Quick order timed out. Please check orders.' }), 12000)
+      );
+
+      const res = await Promise.race([
+        placeOrder({
+          symbol: symbol,
+          kite_instrument: kiteInst,
+          segment: segment,
+          side: side,
+          qty: finalQty,
+          lots: effectiveUseLots ? qVal : (finalQty / lotSize),
+          order_type: 'MARKET',
+          product_type: 'INTRADAY',
+          client_price: currentPrice,
+          frontend_ask: activeLiveQuote?.ask || currentPrice,
+          frontend_bid: activeLiveQuote?.bid || currentPrice,
+          frontend_ltp: currentPrice,
+          client_click_time: Date.now(),
+          is_exit: false
+        }),
+        quickOrderTimeout
+      ]);
 
       if (res.success) {
         showToast(`Quick ${side} Order Placed Successfully!`);
-        // Immediately fire events so PositionsContext refreshes without waiting
-        window.dispatchEvent(new Event('order_placed'));
-        window.dispatchEvent(new CustomEvent('position-closed'));
+        notifyOrderEvent();
         // Inject an optimistic placeholder position so the user sees it INSTANTLY
         // before the DB propagates (which can take 500ms-2s)
-        const dbSeg = mapSegmentWithSymbol(segment, symbol);
-        addOptimisticPosition({
-          symbol,
-          settlement: dbSeg,
-          side,
-          qty_open: finalQty,
-          lots: effectiveUseLots ? qVal : (finalQty / lotSize),
-          entry_price: res.fill_price || currentPrice,
-          avg_price: res.fill_price || currentPrice,
-          ltp: currentPrice,
-          product_type: 'INTRADAY',
-          kite_instrument: kiteInst,
-        });
+        try {
+          const dbSeg = mapSegmentWithSymbol(segment, symbol);
+          addOptimisticPosition({
+            symbol,
+            settlement: dbSeg,
+            side,
+            qty_open: finalQty,
+            lots: effectiveUseLots ? qVal : (finalQty / lotSize),
+            entry_price: res.fill_price || currentPrice,
+            avg_price: res.fill_price || currentPrice,
+            ltp: currentPrice,
+            product_type: 'INTRADAY',
+            kite_instrument: kiteInst,
+            // Snapshot of the position qty BEFORE this order — used by PositionsContext
+            // smart merge to know when the DB has actually written the new qty.
+            // Without this, the merge evicts the optimistic entry the moment the first
+            // fetch returns (which still has the old qty), causing a stale flash.
+            _preOrderQty: currentInstrumentPosition?.qty_open ?? 0,
+          } as any);
+        } catch (optErr) {
+          console.warn('[TradingChart] Optimistic position injection failed:', optErr);
+        }
         // Flash the button
         const btn = document.getElementById(side === 'BUY' ? 'buyButton' : 'sellButton');
         if (btn) {
@@ -1389,20 +1539,27 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           void btn.offsetWidth; // force reflow
           btn.classList.add('quick-flash');
         }
+        // Switch to positions tab so the user sees the result immediately
+        setActiveSegment('positions');
+        // NOTE: do NOT call refreshPositions() here — notifyOrderEvent() already dispatches
+        // 'order_placed' which triggers an immediate + 800ms debounced fetch in PositionsContext.
+        // An extra early fetch would race against and wipe the optimistic placeholder before
+        // the DB write has propagated (fetchPositions replaces the full rawPositions array).
         // Release lock immediately on success — don't wait for position watcher
         setIsSubmitting(false);
         positionSnapshotRef.current = null;
         quickEntryLock.current = false;
-        refreshOrders();
-        refreshBalance();
-        refreshPositions();
       } else {
         showToast(res.error || 'Failed to place quick order', true);
+        // The order may have executed server-side despite the client timeout.
+        // Refresh positions so the panel shows any newly created position.
+        refreshPositions();
+        refreshBalance();
       }
     } catch (err: any) {
       showToast(err?.message || 'Quick order failed', true);
     } finally {
-      setTimeout(() => { quickEntryLock.current = false; }, 100);
+      quickEntryLock.current = false;
       setIsSubmitting(false);
       positionSnapshotRef.current = null;
       window.dispatchEvent(new Event('global-loader-end'));
@@ -1435,6 +1592,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         const s = symbol;
         if (s.includes(':')) return s;
         const upper = s.toUpperCase();
+        if (isCrypto || upper.endsWith('USDT') || ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].some(c => upper === c || upper.startsWith(c + 'USDT'))) {
+          return `BINANCE:${s.replace(/^BINANCE:/i, '')}`;
+        }
+        if (['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'].includes(upper)) {
+          return `FOREX:${s}`;
+        }
+        if (upper.endsWith('=F') || upper.includes('=F')) return `COMEX:${s}`;
         if (upper.endsWith('CE') || upper.endsWith('PE') || upper.endsWith('FUT') || upper.includes('FUT')) {
           if (upper.startsWith('SENSEX') || upper.startsWith('BANKEX')) return `BFO:${s}`;
           if (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD'].some(c => upper.startsWith(c))) return `MCX:${s}`;
@@ -1444,32 +1608,40 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         return `NSE:${s}`;
       })();
 
-      const res = await placeOrder({
-        symbol: symbol,
-        kite_instrument: kiteInst,
-        segment: segment,
-        side: pos.side,
-        qty: addQty,
-        lots: 0,
-        order_type: 'MARKET',
-        product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
-        client_price: 0,
-        is_exit: false
-      });
+      const quickAddTimeout = new Promise<{ success: false; error: string }>((resolve) =>
+        setTimeout(() => resolve({ success: false, error: 'Add to position timed out' }), 25000)
+      );
+
+      const res = await Promise.race([
+        placeOrder({
+          symbol: symbol,
+          kite_instrument: kiteInst,
+          segment: segment,
+          side: pos.side,
+          qty: addQty,
+          lots: 0,
+          order_type: 'MARKET',
+          product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
+          client_price: currentPrice || pos.current_ltp || pos.avg_price || 0,
+          frontend_ask: activeLiveQuote?.ask || currentPrice,
+          frontend_bid: activeLiveQuote?.bid || currentPrice,
+          frontend_ltp: currentPrice,
+          client_click_time: Date.now(),
+          is_exit: false
+        }),
+        quickAddTimeout
+      ]);
 
       if (res.success) {
         showToast(`Successfully added ${addQty} to position!`);
-        refreshOrders();
-        refreshBalance();
-        refreshPositions();
-        window.dispatchEvent(new CustomEvent('position-closed'));
+        notifyOrderEvent();
       } else {
         showToast(res.error || 'Failed to add to position', true);
       }
     } catch (err: any) {
       showToast(err?.message || 'Failed to add to position', true);
     } finally {
-      setTimeout(() => { quickEntryLock.current = false; }, 200);
+      quickEntryLock.current = false;
       setIsSubmitting(false);
       setAddingPosId(null);
       positionSnapshotRef.current = null;
@@ -1478,11 +1650,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   };
 
   // ── Safety Watchdog to prevent permanent button lockups ──
-  useEffect(() => {
-    if (!isSubmitting && exitingPosIds.current.size === 0) return;
+  const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    const timer = setTimeout(() => {
-      if (isSubmitting || exitingPosIds.current.size > 0) {
+  useEffect(() => {
+    if (isSubmitting || exitingPosIds.current.size > 0) {
+      if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
+      // Reduced from 18 s → 10 s: fail fast so the user can retry sooner.
+      watchdogTimerRef.current = setTimeout(() => {
         console.warn('[TradingChart Watchdog] Auto-clearing stuck submitting/exiting state');
         setIsSubmitting(false);
         setAddingPosId(null);
@@ -1492,11 +1666,62 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         quickExitLock.current = false;
         setForceRender(prev => prev + 1);
         window.dispatchEvent(new Event('global-loader-end'));
+        // Refresh in case the order executed server-side while we were stuck
+        refreshPositions();
+        refreshBalance();
+      }, 10000);
+    } else {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
       }
-    }, 4000);
+    }
+  }, [isSubmitting, refreshPositions, refreshBalance]);
 
-    return () => clearTimeout(timer);
-  }, [isSubmitting]);
+  // ── Page-visibility safety net ──
+  // Mobile browsers throttle setTimeout / useEffect when the tab is backgrounded.
+  // If the user switches apps while waiting for an order, the watchdog (above) may
+  // never fire, leaving isSubmitting = true indefinitely.
+  // When the tab becomes visible again, check whether we've been stuck > 8 s and
+  // force-clear if so, then refresh positions in case the order went through.
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const elapsed = Date.now() - submitStartTimeRef.current;
+      const stuck =
+        (isSubmitting || quickEntryLock.current || exitingPosIds.current.size > 0) &&
+        submitStartTimeRef.current > 0 &&
+        elapsed > 8000;
+      if (!stuck) return;
+      console.warn('[TradingChart] Tab visible with stuck state after', elapsed, 'ms — force-clearing');
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+        watchdogTimerRef.current = null;
+      }
+      setIsSubmitting(false);
+      setAddingPosId(null);
+      positionSnapshotRef.current = null;
+      exitingPosIds.current.clear();
+      quickEntryLock.current = false;
+      quickExitLock.current = false;
+      submitStartTimeRef.current = 0;
+      setForceRender(prev => prev + 1);
+      window.dispatchEvent(new Event('global-loader-end'));
+      // Refresh so newly-created positions are reflected immediately
+      refreshPositions();
+      refreshBalance();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [isSubmitting, refreshPositions, refreshBalance]);
+
+  useEffect(() => {
+    return () => {
+      if (watchdogTimerRef.current) {
+        clearTimeout(watchdogTimerRef.current);
+      }
+    };
+  }, []);
 
   // ── Watch for position changes while submitting ──
   // Keep buttons in loading state until positions actually refresh and the UI changes
@@ -1528,6 +1753,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setIsSubmitting(false);
       setAddingPosId(null);
       positionSnapshotRef.current = null;
+      quickEntryLock.current = false;
       window.dispatchEvent(new Event('global-loader-end'));
       if (submittingTimeoutRef.current) {
         clearTimeout(submittingTimeoutRef.current);
@@ -1632,6 +1858,16 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     ? parseFloat(limitPrice) : resolvedPrice;
   const chargeQty = orderQty;
   const chargeExposure = chargeQty * chargePrice;
+
+  // Fallback defaults if segSetting is missing or incomplete
+  const fallbackCommType = 'Per Crore';
+  let fallbackCommVal = 4500;
+  const sUpper = (dbSeg || '').toUpperCase();
+  if (sUpper.includes('FOREX') || sUpper.includes('CDS')) {
+    fallbackCommVal = 2000;
+  } else if (sUpper.includes('CRYPTO')) {
+    fallbackCommVal = 1000;
+  }
 
   const computeCharge = (commType: string, commVal: number) => {
     if (commType === 'Per Crore') return (chargeExposure * commVal) / 10000000;
@@ -1846,8 +2082,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               fontWeight: positionViewMode === 'cumulative' ? 700 : 600,
               border: 'none', borderRadius: 0, cursor: 'pointer',
               background: 'transparent',
-              color: positionViewMode === 'cumulative' ? ((themeMode === 'dark' || themeMode === 'black' || themeMode === 'blue') ? '#2962FF' : 'var(--navy, #101828)') : 'var(--text-secondary, #6b7280)',
-              borderBottom: positionViewMode === 'cumulative' ? ((themeMode === 'dark' || themeMode === 'black' || themeMode === 'blue') ? '2.5px solid #2962FF' : '2.5px solid var(--navy, #101828)') : '2.5px solid transparent',
+              color: positionViewMode === 'cumulative' ? ((themeMode === 'dark' || themeMode === 'black') ? '#2962FF' : 'var(--navy, #101828)') : 'var(--text-secondary, #6b7280)',
+              borderBottom: positionViewMode === 'cumulative' ? ((themeMode === 'dark' || themeMode === 'black') ? '2.5px solid #2962FF' : '2.5px solid var(--navy, #101828)') : '2.5px solid transparent',
               marginBottom: '-2px',
               transition: 'all 0.15s',
             }}
@@ -1861,8 +2097,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               fontWeight: positionViewMode === 'detailed' ? 700 : 600,
               border: 'none', borderRadius: 0, cursor: 'pointer',
               background: 'transparent',
-              color: positionViewMode === 'detailed' ? ((themeMode === 'dark' || themeMode === 'black' || themeMode === 'blue') ? '#2962FF' : 'var(--navy, #101828)') : 'var(--text-secondary, #6b7280)',
-              borderBottom: positionViewMode === 'detailed' ? ((themeMode === 'dark' || themeMode === 'black' || themeMode === 'blue') ? '2.5px solid #2962FF' : '2.5px solid var(--navy, #101828)') : '2.5px solid transparent',
+              color: positionViewMode === 'detailed' ? ((themeMode === 'dark' || themeMode === 'black') ? '#2962FF' : 'var(--navy, #101828)') : 'var(--text-secondary, #6b7280)',
+              borderBottom: positionViewMode === 'detailed' ? ((themeMode === 'dark' || themeMode === 'black') ? '2.5px solid #2962FF' : '2.5px solid var(--navy, #101828)') : '2.5px solid transparent',
               marginBottom: '-2px',
               transition: 'all 0.15s',
             }}
@@ -1977,7 +2213,49 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     >
       {/* Top Toolbar */}
       <div className="tc-top-toolbar" onMouseLeave={() => setOpenTopFlyout(null)}>
-        {/* ── Back button removed per user request ── */}
+        {/* ── Back button ── */}
+        <button
+          className="tc-tb-btn tc-back-btn"
+          title="Back (Esc)"
+          aria-label="Back"
+          onClick={() => {
+            if (onCloseRef.current) {
+              onCloseRef.current();
+            } else {
+              const sheet = document.getElementById('chartSheet');
+              const overlay = document.getElementById('chartSheetOverlay');
+              if (sheet) sheet.classList.remove('open');
+              if (overlay) overlay.classList.remove('active');
+              window.history.back();
+            }
+          }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--text-secondary, #8b949e)',
+            cursor: 'pointer',
+            padding: '6px 8px',
+            borderRadius: '6px',
+            marginRight: '2px',
+            transition: 'all 0.15s ease',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = 'var(--text-primary, #ffffff)';
+            e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--text-secondary, #8b949e)';
+            e.currentTarget.style.background = 'transparent';
+          }}
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+        </button>
 
         {/* ── Symbol ── */}
         {isSearchActive ? (
@@ -2057,33 +2335,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               </div>
               
               {/* Native React Countdown - Bypasses TradingView entirely */}
-              {(() => {
-                if (timeframe === 'day') return null;
-                const [timeLeft, setTimeLeft] = useState('');
-                useEffect(() => {
-                  const resMs = 
-                    timeframe === '1m' ? 60000 : timeframe === '2m' ? 120000 : timeframe === '3m' ? 180000 :
-                    timeframe === '5m' ? 300000 : timeframe === '10m' ? 600000 : timeframe === '15m' ? 900000 :
-                    timeframe === '30m' ? 1800000 : timeframe === '60m' ? 3600000 : 0;
-                  if (!resMs) return;
-                  const interval = setInterval(() => {
-                    const nowMs = Date.now();
-                    // Anchor to 09:15 for non-crypto 60m candles if needed, but standard modulo works for all intraday
-                    // The modulo handles the standard UTC epoch offsets perfectly for all timeframes <= 60m
-                    const next = Math.ceil(nowMs / resMs) * resMs;
-                    const diff = Math.max(0, next - nowMs);
-                    const m = Math.floor(diff / 60000);
-                    const s = Math.floor((diff % 60000) / 1000);
-                    setTimeLeft(`${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`);
-                  }, 1000);
-                  return () => clearInterval(interval);
-                }, [timeframe]);
-                return timeLeft ? (
-                  <div style={{ marginLeft: '4px', fontSize: '12px', fontWeight: 600, color: '#f23645' }}>
-                    ({timeLeft})
-                  </div>
-                ) : null;
-              })()}
+              <CandleCountdown timeframe={timeframe} />
 
               {openTopFlyout === 'interval' && (
                 <div className="tc-top-flyout" style={{ minWidth: '110px' }}>
@@ -2582,7 +2834,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                         if (['OPTIDX', 'FUTIDX', 'OPTSTK', 'FUTSTK', 'OPTCOM', 'FUTCOM', 'OPTCUR', 'FUTCUR'].includes(dbSeg)) {
                           kiteInstForOrder = isMcx ? `MCX:${baseKiteInst}` : `NFO:${baseKiteInst}`;
                         }
-                        
                         setSymbol(targetSymbol);
                         // Derive the correct display segment so mapSegmentToDbSegment works
                         if (chainContract) {
@@ -2898,7 +3149,16 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       </div>
       {/* End of Content Split Container */}
       {toast.visible && (
-        <div className={`toast-message toast-show ${toast.isError ? 'neg' : ''}`}>
+        <div
+          className={`toast-message toast-show ${toast.isError ? 'neg' : ''}`}
+          onClick={() => {
+            if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+            toastTimerRef.current = null;
+            setToast({ visible: false, msg: '' });
+          }}
+          style={{ cursor: 'pointer' }}
+          title="Tap to dismiss"
+        >
           {toast.msg}
         </div>
       )}

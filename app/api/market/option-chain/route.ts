@@ -37,6 +37,24 @@ const MCX_BASE_MAP: Record<string, string> = {
   GOLDM: 'GOLD', SILVERM: 'SILVER', CRUDEOILM: 'CRUDEOIL', NATGASMINI: 'NATURALGAS',
 };
 
+// ── In-Memory Cache for Sub-Millisecond Servicing ──────────────────────────────
+// Prevents ~1,363ms remote Redis round-trip latency on cold keys
+const memCache = new Map<string, { val: any; expiresAt: number }>();
+
+function getMem<T>(key: string): T | null {
+  const item = memCache.get(key);
+  if (!item) return null;
+  if (Date.now() > item.expiresAt) {
+    memCache.delete(key);
+    return null;
+  }
+  return item.val as T;
+}
+
+function setMem(key: string, val: any, ttlSec: number) {
+  memCache.set(key, { val, expiresAt: Date.now() + ttlSec * 1000 });
+}
+
 export async function GET(request: Request) {
   const supabase = getSupabase();
   try {
@@ -57,11 +75,22 @@ export async function GET(request: Request) {
     const cacheKey = `optionChain:${symbol}_${expiry || 'default'}_${atmBucket}`;
     const redis = getRedisClient();
 
-    // ── 1. Full response cache (10s TTL) ──────────────────────────────────────
-    // Attempt Redis cache regardless of connection status — catch handles failures
+    // ── 1. Full response cache (in-memory fast hit, then Redis) ───────────────
+    const memCached = getMem<any>(cacheKey) || getMem<any>(`optionChain:${symbol}_${expiry || 'default'}`);
+    if (memCached) {
+      return NextResponse.json(memCached);
+    }
+
     try {
-      const cached = await redis.get(cacheKey);
-      if (cached) return NextResponse.json(JSON.parse(cached));
+      const cached = await Promise.race([
+        redis.get(cacheKey),
+        new Promise<string | null>((r) => setTimeout(() => r(null), 300)),
+      ]);
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        setMem(cacheKey, parsed, 30);
+        return NextResponse.json(parsed);
+      }
     } catch { /* Redis not ready or key missing — proceed to live fetch */ }
 
     // ── 2. Helper functions ───────────────────────────────────────────────────
@@ -70,10 +99,20 @@ export async function GET(request: Request) {
     async function resolveMcxUnderlyingId(): Promise<string> {
       const baseSymbol = MCX_BASE_MAP[symbol] ?? symbol;
       const cacheKeyMcx = `mcxUnderlyingCache:${baseSymbol}`;
+      const memMcx = getMem<string>(cacheKeyMcx);
+      if (memMcx) return memMcx;
+
       try {
-        const cached = await redis.get(cacheKeyMcx);
-        if (cached) return cached;
+        const cached = await Promise.race([
+          redis.get(cacheKeyMcx),
+          new Promise<string | null>((r) => setTimeout(() => r(null), 300)),
+        ]);
+        if (cached) {
+          setMem(cacheKeyMcx, cached, 3600);
+          return cached;
+        }
       } catch { /* ignore */ }
+
       try {
         const { data: futs } = await supabase
           .from('instruments')
@@ -86,28 +125,44 @@ export async function GET(request: Request) {
         if (!futs?.length) return `MCX:${symbol}`;
         const candidates = futs.map((f: any) => `MCX:${f.tradingsymbol}`);
         try {
-          const prices = await redis.hmget('market:quotes', ...candidates);
+          const prices = await Promise.race([
+            redis.hmget('market:quotes', ...candidates),
+            new Promise<any[]>((r) => setTimeout(() => r([]), 400)),
+          ]);
           const live = candidates.find((_: string, i: number) => {
             try { return !!(prices[i] && JSON.parse(prices[i] as string).last_price > 0); }
             catch { return false; }
           });
           if (live) {
+            setMem(cacheKeyMcx, live, 3600);
             redis.setex(cacheKeyMcx, 3600, live).catch(() => {});
             return live;
           }
         } catch { /* fall through to first candidate */ }
+        setMem(cacheKeyMcx, candidates[0], 3600);
         redis.setex(cacheKeyMcx, 3600, candidates[0]).catch(() => {});
         return candidates[0];
       } catch { return `MCX:${symbol}`; }
     }
 
-    // Fetch expiries (Redis 1h cache → Supabase)
+    // Fetch expiries (In-memory 1h cache → Redis → Supabase)
     async function getExpiries(): Promise<string[]> {
       const k = `optionChainExpiries:${symbol}`;
+      const mem = getMem<string[]>(k);
+      if (mem) return mem;
+
       try {
-        const cached = await redis.get(k);
-        if (cached) return JSON.parse(cached);
+        const cached = await Promise.race([
+          redis.get(k),
+          new Promise<string | null>((r) => setTimeout(() => r(null), 300)),
+        ]);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setMem(k, parsed, 3600);
+          return parsed;
+        }
       } catch { /* fall through */ }
+
       const { data, error } = await supabase
         .from('instruments')
         .select('expiry')
@@ -119,18 +174,31 @@ export async function GET(request: Request) {
         .order('expiry', { ascending: true });
       if (error) throw error;
       const expiries = Array.from(new Set(data.map((e: any) => e.expiry))) as string[];
-      if (expiries.length > 0)
+      if (expiries.length > 0) {
+        setMem(k, expiries, 86400);
         redis.setex(k, 86400, JSON.stringify(expiries)).catch(() => {}); // 24h — expiries rarely change
+      }
       return expiries;
     }
 
-    // Fetch options for a given expiry (Redis 1h cache → Supabase)
+    // Fetch options for a given expiry (In-memory 1h cache → Redis → Supabase)
     async function getOptions(forExpiry: string): Promise<any[]> {
       const k = `optionChainOptions:${symbol}_${forExpiry}`;
+      const mem = getMem<any[]>(k);
+      if (mem) return mem;
+
       try {
-        const cached = await redis.get(k);
-        if (cached) return JSON.parse(cached);
+        const cached = await Promise.race([
+          redis.get(k),
+          new Promise<string | null>((r) => setTimeout(() => r(null), 300)),
+        ]);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setMem(k, parsed, 3600);
+          return parsed;
+        }
       } catch { /* fall through */ }
+
       const { data, error } = await supabase
         .from('instruments')
         .select('id, instrument_token, tradingsymbol, strike_price, option_type, exchange')
@@ -140,18 +208,32 @@ export async function GET(request: Request) {
         .in('option_type', ['CE', 'PE'])
         .order('strike_price', { ascending: true });
       if (error) throw error;
-      if (data?.length)
+      if (data?.length) {
+        setMem(k, data, 86400);
         redis.setex(k, 86400, JSON.stringify(data)).catch(() => {}); // 24h — instrument rows don't change intraday
+      }
       return data ?? [];
     }
 
     async function getStrikeConfig() {
       const k = 'strikeConfigCache';
+      const mem = getMem<any>(k);
+      if (mem) return mem;
+
       try {
-        const cached = await redis.get(k);
-        if (cached) return JSON.parse(cached);
+        const cached = await Promise.race([
+          redis.get(k),
+          new Promise<string | null>((r) => setTimeout(() => r(null), 300)),
+        ]);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setMem(k, parsed, 300);
+          return parsed;
+        }
       } catch { /* ignore */ }
+
       const cfg = await loadStrikeConfig(supabase);
+      setMem(k, cfg, 300);
       redis.setex(k, 300, JSON.stringify(cfg)).catch(() => {}); // 5 minutes cache
       return cfg;
     }
@@ -180,7 +262,10 @@ export async function GET(request: Request) {
     // ── 4. Parallel fetch: options rows + ATM price from Redis ────────────────
     const [options, atmRedisRaw] = await Promise.all([
       getOptions(selectedExpiry),
-      redis.hget('market:quotes', underlyingKiteId).catch(() => null),
+      Promise.race([
+        redis.hget('market:quotes', underlyingKiteId).catch(() => null),
+        new Promise<null>((r) => setTimeout(() => r(null), 400)),
+      ]),
     ]);
 
     if (!options.length) {
@@ -293,11 +378,14 @@ export async function GET(request: Request) {
       usedFallback,
     };
 
-    if (!usedFallback) {
-      // 60s TTL — longer than before so cold starts always hit cache
-      redis.setex(cacheKey, 60, JSON.stringify(responseData)).catch(() => {});
-      redis.setex(`optionChain:${symbol}_${selectedExpiry}`, 60, JSON.stringify(responseData)).catch(() => {});
-    }
+    // 30s in-memory cache + 60s Redis TTL (15s if fallback ATM price was used)
+    // Ensures repeated requests off-market or cold keys hit memory instantly (<5ms)
+    const memTtl = usedFallback ? 15 : 30;
+    const redisTtl = usedFallback ? 30 : 60;
+    setMem(cacheKey, responseData, memTtl);
+    setMem(`optionChain:${symbol}_${selectedExpiry}`, responseData, memTtl);
+    redis.setex(cacheKey, redisTtl, JSON.stringify(responseData)).catch(() => {});
+    redis.setex(`optionChain:${symbol}_${selectedExpiry}`, redisTtl, JSON.stringify(responseData)).catch(() => {});
 
     return NextResponse.json(responseData);
 

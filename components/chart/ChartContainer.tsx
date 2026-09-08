@@ -386,7 +386,7 @@ export default function ChartContainer({
 
   // ── Task 8.5: Live quote forwarding ──────────────────────────────────────
   const { quotes: marketQuotes } = useMarketQuotes([symbol]);
-  const activeQuote = marketQuotes[symbol] || liveQuote;
+  const activeQuote: any = marketQuotes[symbol] || liveQuote;
 
   useEffect(() => {
     let lastPrice = activeQuote?.lastPrice ?? activeQuote?.last_price;

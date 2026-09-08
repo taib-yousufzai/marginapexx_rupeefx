@@ -44,7 +44,7 @@ export type PositionItem = {
 
 export async function GET(
   request: Request,
-  { params }: { params: Promise<{ id: string }> | { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   try {
     // Step 1: Authenticate and authorize the caller
@@ -55,8 +55,7 @@ export async function GET(
     const callerRole = getRole(callerUser);
 
     // Step 2: Resolve params
-    const resolvedParams = await Promise.resolve(params);
-    const id = resolvedParams.id;
+    const { id } = await params;
 
     // Step 3: Parse query params
     // Validates: Requirements 7.3–7.6

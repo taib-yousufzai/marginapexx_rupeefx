@@ -41,10 +41,19 @@ export function useMobileBack(isOpen: boolean, onClose: () => void, hash: string
         }
       };
 
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          onCloseRef.current();
+        }
+      };
+
       window.addEventListener('popstate', handlePopState);
+      window.addEventListener('keydown', handleKeyDown);
 
       return () => {
         window.removeEventListener('popstate', handlePopState);
+        window.removeEventListener('keydown', handleKeyDown);
         
         // If the modal is closing, but NOT because the user pressed the back button
         // (e.g., they clicked an "X" button, backdrop, or opened another sheet), clean up

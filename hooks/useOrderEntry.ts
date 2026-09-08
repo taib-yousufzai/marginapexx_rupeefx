@@ -21,6 +21,10 @@ export interface OrderEntryState {
   order_type: OrderType;
   product_type: ProductType;
   client_price: number;
+  frontend_ask?: number;
+  frontend_bid?: number;
+  frontend_ltp?: number;
+  client_click_time?: number;
   trigger_price?: number;
   stop_loss?: number;
   target?: number;

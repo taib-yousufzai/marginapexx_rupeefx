@@ -150,8 +150,7 @@ async function apiCall<T>(
             keysToRemove.forEach((k) => localStorage.removeItem(k));
           } catch {}
           window.location.href = '/login?expired=1';
-          // Return pending promise to prevent throwing uncaught ApiError during page unload
-          return new Promise<T>(() => {});
+          throw new ApiError(401, 'Session expired. Please log in again.');
         }
       }
     }
