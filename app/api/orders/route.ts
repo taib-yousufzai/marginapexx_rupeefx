@@ -364,6 +364,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           symbol: pos.symbol,
           segment: pos.settlement || '',
           side: pos.side === 'BUY' ? 'SELL' : 'BUY', // Stop loss exit is opposite side
+          is_exit: true,
           status: 'PENDING',
           qty: Number(pos.qty_open),
           lots: Number(pos.lots ?? 0) || (pos.qty_open > 0 ? 1 : 0),
@@ -385,6 +386,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           symbol: pos.symbol,
           segment: pos.settlement || '',
           side: pos.side === 'BUY' ? 'SELL' : 'BUY', // Target exit is opposite side
+          is_exit: true,
           status: 'PENDING',
           qty: Number(pos.qty_open),
           lots: Number(pos.lots ?? 0) || (pos.qty_open > 0 ? 1 : 0),

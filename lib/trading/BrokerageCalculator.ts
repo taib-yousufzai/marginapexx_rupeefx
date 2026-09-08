@@ -140,11 +140,13 @@ export function calculateOrderBrokerage({
   const entryIntradayCharge = Math.round(singleIntraday * 100) / 100;
   const intradayCharge = Math.round(singleIntraday * multiplier * 100) / 100;
 
-  // 2. Carry Charge (applies if CARRY product or GTT order type)
+  // 2. Carry Charge (applies ONLY if CARRY product type)
+  // NOTE: GTT is an order execution type, NOT a product type.
+  // GTT + INTRADAY trades must NOT incur carry charges.
   let singleCarry = 0;
   let entryCarryCharge = 0;
   let carryCharge = 0;
-  if (productType === 'CARRY' || orderType === 'GTT') {
+  if (productType === 'CARRY') {
     const rawCarryVal = segSetting?.carry_commission_value;
     const isCarryExplicit = rawCarryVal != null && Number(rawCarryVal) > 0 && (Number(rawCarryVal) !== 4500 || Number(intradayCommVal) === 4500);
     const carryCommType = (isCarryExplicit && segSetting?.carry_commission_type) ? segSetting.carry_commission_type : intradayCommType;

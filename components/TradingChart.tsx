@@ -1895,7 +1895,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     segSetting.carry_commission_value ?? segSetting.commission_value ?? fallbackCommVal
   ) : computeCharge(fallbackCommType, fallbackCommVal)) * multiplier;
 
-  const activeCarryCharge = (orderCarry === 'carry' || orderType === 'gtt') ? carryCharge : 0;
+  // NOTE: GTT is an execution type, NOT a product type — carry charges must NOT auto-apply on GTT+INTRADAY
+  const activeCarryCharge = orderCarry === 'carry' ? carryCharge : 0;
   const activeGttCharge = orderType === 'gtt' ? gttCharge : 0;
 
   const totalBrokerage = isExitFlow ? 0 : (
