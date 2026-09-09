@@ -177,6 +177,16 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
     normalizedSymbol = 'MCX:' + normalizedSymbol.slice(4);
   }
 
+  const isOptSymbol = normalizedSymbol.endsWith('CE') || normalizedSymbol.endsWith('PE');
+  if (isOptSymbol && !normalizedSymbol.includes(':')) {
+    const upperOpt = normalizedSymbol.toUpperCase();
+    const prefix = (upperOpt.includes('SENSEX') || upperOpt.includes('BANKEX')) ? 'BFO'
+      : (upperOpt.includes('GOLD') || upperOpt.includes('SILVER') || upperOpt.includes('CRUDE') || upperOpt.includes('NATURALGAS') || upperOpt.includes('NATGAS')) ? 'MCX'
+      : (upperOpt.includes('USDINR') || upperOpt.includes('EURINR') || upperOpt.includes('GBPINR') || upperOpt.includes('JPYINR')) ? 'CDS'
+      : 'NFO';
+    normalizedSymbol = `${prefix}:${normalizedSymbol}`;
+  }
+
   // Fast path: symbol contains ':' (e.g. "MCX:GOLD26AUG161500CE") — exact id match
   if (normalizedSymbol.includes(':')) {
     const { data } = await getSupabase()

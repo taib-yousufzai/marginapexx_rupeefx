@@ -15,6 +15,7 @@ interface OptionChainTableProps {
   spotPrice: number;
   symbol?: string;
   onTrade: (symbol: string, side: 'BUY' | 'SELL') => void;
+  onOpenChart?: (symbol: string, kiteId?: string) => void;
   priceMode?: 'BA' | 'LTP';
   stickyTop?: number;
   hideMainHeader?: boolean;
@@ -65,12 +66,13 @@ const SkeletonRow = React.memo(function SkeletonRow({ isCenter }: { isCenter: bo
 // ─── Memoized live row ────────────────────────────────────────────────────────
 interface StrikeRowProps {
   strike: number;
-  ceSymbol?: string; ceStaticPrice?: number; ceQuote: QuoteData | null;
-  peSymbol?: string; peStaticPrice?: number; peQuote: QuoteData | null;
+  ceSymbol?: string; ceStaticPrice?: number; ceQuote: QuoteData | null; ceId?: string;
+  peSymbol?: string; peStaticPrice?: number; peQuote: QuoteData | null; peId?: string;
   isAtm: boolean;
   atmRef: React.RefObject<HTMLDivElement | null>;
   priceMode: 'BA' | 'LTP';
   onTrade: (symbol: string, side: 'BUY' | 'SELL') => void;
+  onOpenChart?: (symbol: string, kiteId?: string) => void;
   bidBuffer?: number;
   useLtpMode?: boolean;
 }
@@ -93,9 +95,9 @@ function applyBidBuffer(ltp: number, rawBid: number | null, rawAsk: number | nul
 }
 
 const StrikeRow = React.memo(function StrikeRow({
-  strike, ceSymbol, ceStaticPrice, ceQuote,
-  peSymbol, peStaticPrice, peQuote,
-  isAtm, atmRef, priceMode, onTrade, bidBuffer = 0, useLtpMode = false,
+  strike, ceSymbol, ceStaticPrice, ceQuote, ceId,
+  peSymbol, peStaticPrice, peQuote, peId,
+  isAtm, atmRef, priceMode, onTrade, onOpenChart, bidBuffer = 0, useLtpMode = false,
 }: StrikeRowProps) {
   const ceLtpVal = ceQuote?.lastPrice ?? ceStaticPrice;
   const peLtpVal = peQuote?.lastPrice ?? peStaticPrice;
@@ -125,6 +127,11 @@ const StrikeRow = React.memo(function StrikeRow({
   const click = (e: React.MouseEvent, sym?: string, side?: 'BUY' | 'SELL') => {
     e.stopPropagation();
     if (sym && side) onTrade(sym, side);
+  };
+
+  const openChart = (e: React.MouseEvent, sym?: string, kiteId?: string) => {
+    e.stopPropagation();
+    if (sym && onOpenChart) onOpenChart(sym, kiteId);
   };
 
   const showHover = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -165,6 +172,7 @@ const StrikeRow = React.memo(function StrikeRow({
   };
   const BTN_B: React.CSSProperties = { width: 28, height: 28, borderRadius: 4, border: 'none', fontSize: 11, fontWeight: 800, color: '#fff', cursor: 'pointer', background: '#12B76A' };
   const BTN_S: React.CSSProperties = { ...BTN_B, background: '#F04438' };
+  const BTN_C: React.CSSProperties = { ...BTN_B, background: '#2563EB', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' };
 
   return (
     <div ref={isAtm ? atmRef : null} style={ROW}>
@@ -175,6 +183,7 @@ const StrikeRow = React.memo(function StrikeRow({
         {ceSymbol && <div className="oc-ha" style={HOVER}>
           <button style={BTN_B} onClick={(e) => click(e, ceSymbol, 'BUY')}>B</button>
           <button style={BTN_S} onClick={(e) => click(e, ceSymbol, 'SELL')}>S</button>
+          {onOpenChart && <button style={BTN_C} onClick={(e) => openChart(e, ceSymbol, ceId)} title="Chart"><i className="fas fa-chart-line"></i></button>}
         </div>}
       </div>
       <div style={STR}>
@@ -187,6 +196,7 @@ const StrikeRow = React.memo(function StrikeRow({
         {peSymbol && <div className="oc-ha" style={HOVER}>
           <button style={BTN_B} onClick={(e) => click(e, peSymbol, 'BUY')}>B</button>
           <button style={BTN_S} onClick={(e) => click(e, peSymbol, 'SELL')}>S</button>
+          {onOpenChart && <button style={BTN_C} onClick={(e) => openChart(e, peSymbol, peId)} title="Chart"><i className="fas fa-chart-line"></i></button>}
         </div>}
       </div>
     </div>
@@ -203,7 +213,7 @@ const StrikeRow = React.memo(function StrikeRow({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function OptionChainTable({
-  strikes, quotes, spotPrice, symbol = '', onTrade,
+  strikes, quotes, spotPrice, symbol = '', onTrade, onOpenChart,
   priceMode = 'LTP', stickyTop = 58, hideMainHeader = false,
   strikeRange = 0, loading = false, bidBuffer = 0, useLtpMode = false,
 }: OptionChainTableProps) {
@@ -281,14 +291,15 @@ export default function OptionChainTable({
                 <StrikeRow
                   key={`${s.strike}_${s.ce?.symbol || ''}_${s.pe?.symbol || ''}`}
                   strike={s.strike}
-                  ceSymbol={s.ce?.symbol} ceStaticPrice={s.ce?.price}
-                  peSymbol={s.pe?.symbol} peStaticPrice={s.pe?.price}
+                  ceSymbol={s.ce?.symbol} ceStaticPrice={s.ce?.price} ceId={s.ce?.id}
+                  peSymbol={s.pe?.symbol} peStaticPrice={s.pe?.price} peId={s.pe?.id}
                   ceQuote={getQuote(s.ce?.id, s.ce?.token)}
                   peQuote={getQuote(s.pe?.id, s.pe?.token)}
                   isAtm={index === centeredAtmIndex}
                   atmRef={atmRef}
                   priceMode={priceMode}
                   onTrade={stableOnTrade}
+                  onOpenChart={onOpenChart}
                   bidBuffer={bidBuffer}
                   useLtpMode={useLtpMode}
                 />

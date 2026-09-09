@@ -12,7 +12,6 @@ import AnimatedLoader from '@/components/AnimatedLoader';
 import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
 import { api, ApiError } from '@/lib/api';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
-import { useMobileBack } from '@/hooks/useMobileBack';
 import './option-chain.css';
 import dynamic from 'next/dynamic';
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
@@ -35,12 +34,10 @@ function addToWatchlist(item: {
   category?: string;
   lotSize?: number;
 }, userId?: string) {
-  const WATCHLIST_KEY = 'niveshX_watchlist';
-  const LEGACY_WATCHLIST_KEY = 'marginApex_watchlist';
+  const WATCHLIST_KEY = 'marginApex_watchlist';
   try {
     const key = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
-    const legacyKey = userId ? `${LEGACY_WATCHLIST_KEY}_${userId}` : LEGACY_WATCHLIST_KEY;
-    const raw = localStorage.getItem(key) || localStorage.getItem(legacyKey);
+    const raw = localStorage.getItem(key);
     const list = raw ? JSON.parse(raw) : [];
 
     const targetCat = item.category || 'WATCHLIST';
@@ -64,28 +61,15 @@ declare global {
   }
 }
 
-// Read cache safely from sessionStorage with a 5-minute TTL for instant SWR rendering
+// Read cache safely from localStorage — used only for expiry list, never for strikes
 function getLocalCache(key: string) {
-  try {
-    if (typeof window === 'undefined') return null;
-    const raw = sessionStorage.getItem(`oc_cache_${key}`);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (Date.now() - parsed.ts > 5 * 60 * 1000) {
-      sessionStorage.removeItem(`oc_cache_${key}`);
-      return null;
-    }
-    return parsed.data;
-  } catch {
-    return null;
-  }
+  // Always return null — we never serve stale option chain data from cache.
+  // The API is always called fresh so the ATM window reflects the current spot.
+  return null;
 }
 
-function setLocalCache(key: string, data: any) {
-  try {
-    if (typeof window === 'undefined') return;
-    sessionStorage.setItem(`oc_cache_${key}`, JSON.stringify({ data, ts: Date.now() }));
-  } catch { /* ignore storage quota errors */ }
+function setLocalCache(_key: string, _data: any) {
+  // No-op — caching disabled to ensure strikes are always fresh
 }
 
 function OptionChainContent() {
@@ -118,14 +102,6 @@ function OptionChainContent() {
   const [userId, setUserId] = useState<string>('');
   // segmentSettings and scriptSettings come from the shared TradeConfigProvider
   const { segmentSettings, scriptSettings } = useTradeConfig();
-
-  useMobileBack(!!chartItem, () => {
-    setChartItem(null);
-    const sheet = document.getElementById('chartSheet');
-    const overlay = document.getElementById('chartSheetOverlay');
-    if (sheet) sheet.classList.remove('open');
-    if (overlay) overlay.classList.remove('active');
-  }, 'occhart');
 
   useEffect(() => {
     async function fetchUserId() {
@@ -284,13 +260,11 @@ function OptionChainContent() {
     }
 
     async function fetchData() {
-      if (!cached) {
-        setLoading(true);
-      }
+      setLoading(true);
       setLoadingError(null);
       try {
         const spotPriceParam = lastSpotPriceRef.current > 0 ? `&spotPrice=${lastSpotPriceRef.current}` : '';
-        const url = `/api/market/option-chain?symbol=${normalizedSymbol}${selectedExpiry ? `&expiry=${selectedExpiry}` : ''}${spotPriceParam}`;
+        const url = `/api/market/option-chain?symbol=${normalizedSymbol}${selectedExpiry ? `&expiry=${selectedExpiry}` : ''}${spotPriceParam}&_t=${Date.now()}`;
         const json = await api.get<{ success: boolean; expiry: string; error?: string; strikes: any[]; expiries: string[]; underlyingPrice?: number; underlyingSymbol?: string }>(url);
         if (json.success) {
           setLocalCache(cacheKey, json);
@@ -298,14 +272,14 @@ function OptionChainContent() {
           setData(json);
           if (!selectedExpiry) setSelectedExpiry(json.expiry);
         } else {
-          if (!cached) setLoadingError(json.error || 'Failed to fetch option chain');
+          setLoadingError(json.error || 'Failed to fetch option chain');
         }
       } catch (err: any) {
         if (err instanceof ApiError && err.status === 403) {
           setLoadingError('locked');
         } else {
           console.error('Failed to fetch option chain', err);
-          if (!cached) setLoadingError('Failed to fetch option chain');
+          setLoadingError('Failed to fetch option chain');
         }
       } finally {
         setLoading(false);
@@ -388,6 +362,30 @@ function OptionChainContent() {
       setSheetView('DETAILS');
       setSheetSide(side);
     }
+  };
+
+  const handleOpenChart = (instrSymbol: string, kiteIdParam?: string) => {
+    const strikeMatch = data?.strikes.find(s => s.ce?.symbol === instrSymbol || s.pe?.symbol === instrSymbol);
+    const contractData = strikeMatch?.ce?.symbol === instrSymbol ? strikeMatch?.ce : strikeMatch?.pe;
+    const kiteId = kiteIdParam || contractData?.id || (instrSymbol.includes(':') ? instrSymbol : null);
+
+    const isMcxOpt = symbol.includes('GOLD') || symbol.includes('SILVER') || symbol.includes('CRUDE') || symbol.includes('NATGAS') || symbol.includes('NATURALGAS');
+    const isBfoOpt = symbol.includes('SENSEX') || symbol.includes('BANKEX');
+    const isCdsOpt = symbol.includes('USDINR') || symbol.includes('EURINR') || symbol.includes('GBPINR') || symbol.includes('JPYINR');
+    const optSegment = isMcxOpt ? 'MCX - Options' : (isBfoOpt ? 'BFO' : (isCdsOpt ? 'CDS' : 'NFO'));
+    const prefix = isMcxOpt ? 'MCX' : (isBfoOpt ? 'BFO' : (isCdsOpt ? 'CDS' : 'NFO'));
+    const fullKiteSymbol = kiteId || (instrSymbol.includes(':') ? instrSymbol : `${prefix}:${instrSymbol}`);
+
+    setChartItem({
+      symbol: instrSymbol,
+      kiteSymbol: fullKiteSymbol,
+      segment: optSegment
+    });
+    setSelectedContract(null);
+    const chartSheet = document.getElementById('chartSheet');
+    const chartOverlay = document.getElementById('chartSheetOverlay');
+    if (chartSheet) chartSheet.classList.add('open');
+    if (chartOverlay) chartOverlay.classList.add('active');
   };
 
   const closeTradeSheet = () => {
@@ -537,6 +535,7 @@ function OptionChainContent() {
                   quotes={quotes}
                   spotPrice={spotPrice}
                   onTrade={handleTrade}
+                  onOpenChart={handleOpenChart}
                   priceMode={priceMode}
                   strikeRange={0}
                   loading={loading}
@@ -805,12 +804,12 @@ function OptionChainContent() {
                   <div style={{ background: 'var(--card-alt-bg)', border: '1px solid var(--border-card)', borderRadius: '14px', padding: '8px 12px', display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
                     <div style={{ flex: 1, textAlign: 'center' }}>
                       <div style={{ fontSize: '0.58rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>BID</div>
-                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#059669' }}>₹{bid ? bid.toFixed(2) : '-'}</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#059669' }}>₹{bid.toFixed(2)}</div>
                     </div>
                     <div style={{ width: '1px', background: 'var(--border-card)', height: '24px' }}></div>
                     <div style={{ flex: 1, textAlign: 'center' }}>
-                       <div style={{ fontSize: '0.58rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>ASK</div>
-                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#DC2626' }}>₹{ask ? ask.toFixed(2) : '-'}</div>
+                      <div style={{ fontSize: '0.58rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>ASK</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#DC2626' }}>₹{ask.toFixed(2)}</div>
                     </div>
                   </div>
 
@@ -862,18 +861,7 @@ function OptionChainContent() {
                       marginBottom: '8px',
                       transition: 'all 0.18s'
                     }}
-                    onClick={() => {
-                      setChartItem({
-                        symbol: selectedContract.symbol,
-                        kiteSymbol: kiteId || selectedContract.symbol,
-                        segment: symbol.includes('SENSEX') || symbol.includes('BANKEX') ? 'BFO' : 'NFO'
-                      });
-                      setSelectedContract(null);
-                      const chartSheet = document.getElementById('chartSheet');
-                      const chartOverlay = document.getElementById('chartSheetOverlay');
-                      if (chartSheet) chartSheet.classList.add('open');
-                      if (chartOverlay) chartOverlay.classList.add('active');
-                    }}
+                    onClick={() => handleOpenChart(selectedContract.symbol, kiteId)}
                   >
                     <svg 
                       viewBox="0 0 24 24" 
@@ -980,7 +968,7 @@ function OptionChainContent() {
               </div>
               <div style={{ flex: 1, position: 'relative' }}>
                 <TradeSheet 
-                  item={tradeSheetItem as any} 
+                  item={tradeSheetItem} 
                   side={sheetSide} 
                   onClose={closeTradeSheet} 
                 />
@@ -1016,8 +1004,8 @@ function OptionChainContent() {
         }}
       />
 
-      <div id="chartSheetOverlay" className={`trade-sheet-overlay${chartItem ? ' active' : ''}`} onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); }}></div>
-      <div id="chartSheet" className={`trade-sheet${chartItem ? ' open' : ''}`} style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
+      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); }}></div>
+      <div id="chartSheet" className="trade-sheet" style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
           {chartItem && (
             <TradingChart
@@ -1025,11 +1013,11 @@ function OptionChainContent() {
               segment={chartItem.segment}
               liveQuote={quotes[chartItem.kiteSymbol]}
               onClose={() => {
-                setChartItem(null);
                 const sheet = document.getElementById('chartSheet');
                 const overlay = document.getElementById('chartSheetOverlay');
                 if (sheet) sheet.classList.remove('open');
                 if (overlay) overlay.classList.remove('active');
+                setChartItem(null);
               }}
             />
           )}
