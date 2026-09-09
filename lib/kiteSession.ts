@@ -102,8 +102,8 @@ const SHARED_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
  */
 export async function getSharedKiteSession(): Promise<KiteSessionData | null> {
   const now = Date.now();
-  if (sharedSessionCache && (now - lastSharedFetchTime < SHARED_CACHE_TTL)) {
-    // Check if it's still valid (not expired)
+  if (now - lastSharedFetchTime < SHARED_CACHE_TTL) {
+    if (!sharedSessionCache) return null;
     if (sharedSessionCache.expiresAt > new Date()) {
       return sharedSessionCache;
     }
@@ -116,10 +116,8 @@ export async function getSharedKiteSession(): Promise<KiteSessionData | null> {
   }
 
   const session = await loadKiteSession(masterId);
-  if (session) {
-    sharedSessionCache = session;
-    lastSharedFetchTime = now;
-  }
+  sharedSessionCache = session;
+  lastSharedFetchTime = now;
   return session;
 }
 

@@ -3,7 +3,7 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import ChartContainer from '@/components/chart/ChartContainer';
 import { ErrorModal } from '@/components/ErrorModal';
-import { getDefaultWatchlistItems, getTabForItem } from '@/app/watchlist/page';
+import { getDefaultWatchlistItems, getTabForItem, TAB_LABELS, TabLabel } from '@/app/watchlist/page';
 import { Candle } from '@/components/chart/types';
 import { useMyOrders } from '@/hooks/useMyOrders';
 import type { MyOrder } from '@/lib/types/order';
@@ -13,11 +13,12 @@ import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
 import OptionChainTable from '@/app/option-chain/OptionChainTable';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
+import { useComexQuotes } from '@/hooks/useComexQuotes';
 import useSWR from 'swr';
 import { parseOptionSymbol } from '@/lib/parseOptionSymbol';
 import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
 import { mapSegmentToDbSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
-import { formatShortName } from '@/lib/datafeed/symbolResolver';
+import { formatShortName, isForexSymbol } from '@/lib/datafeed/symbolResolver';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { useBalance } from '@/hooks/useBalance';
@@ -216,11 +217,11 @@ function getStoredWatchlistItems() {
   return getDefaultWatchlistItems();
 }
 
-const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar }: any) => {
+const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments = [], toggleStar }: any) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [activeSearchTab, setActiveSearchTab] = useState('All');
+  const [activeSearchTab, setActiveSearchTab] = useState<TabLabel>('All');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -230,12 +231,14 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
   const localScripts = getDefaultWatchlistItems();
   const normalizedQuery = searchQuery.replace(/\s+/g, ' ').trim();
 
+  const searchReqIdRef = useRef(0);
+
   function wordStartMatch(text: string, term: string): boolean {
     if (!text) return false;
     const t = text.toLowerCase();
     const q = term.toLowerCase();
-    if (t.startsWith(q)) return true;
-    const words = t.split(/[\s\-_\/]/);
+    if (t.startsWith(q) || t.includes(q)) return true;
+    const words = t.split(/[\s\-_\/:]/);
     return words.some(w => w.startsWith(q));
   }
 
@@ -256,11 +259,21 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
     'FOREX': 'USDINR',
   };
 
+  const UNDERLYING_KEYS = [
+    'NSE:NIFTY 50',
+    'NSE:NIFTY BANK',
+    'BSE:SENSEX',
+    'BSE:BANKEX',
+    'NSE:NIFTY FIN SERVICE',
+    'NSE:NIFTY MID SELECT',
+    'MCX:GOLD',
+    'MCX:SILVER',
+    'MCX:CRUDEOIL',
+  ];
+
   const fetchLiveResults = async (q: string, tab: string, signal: AbortSignal) => {
     try {
-      const url = tab === 'All'
-        ? `/api/market/instruments/search?q=${encodeURIComponent(q)}`
-        : `/api/market/instruments/search?q=${encodeURIComponent(q)}&tab=${encodeURIComponent(tab)}`;
+      const url = `/api/market/instruments/search?q=${encodeURIComponent(q)}&tab=${encodeURIComponent(tab)}`;
       const data = await api.get<any[]>(url, { signal });
       return Array.isArray(data) ? data : [];
     } catch (err: any) {
@@ -270,24 +283,27 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
   };
 
   useEffect(() => {
+    const reqId = ++searchReqIdRef.current;
     setIsSearching(true);
-    setSearchResults([]);
+
+    const qLower = normalizedQuery.toLowerCase();
+    const localMatches = localScripts.filter(s => {
+      if (activeSearchTab !== 'All' && getTabForItem(s) !== activeSearchTab) return false;
+      if (normalizedQuery.length === 0) return true;
+      return wordStartMatch(s.name, qLower) || wordStartMatch(s.symbol, qLower);
+    });
+
+    if (localMatches.length > 0 || normalizedQuery.length === 0) {
+      setSearchResults(localMatches);
+    }
+
     const abortController = new AbortController();
 
     const timer = setTimeout(async () => {
       try {
         const actualQuery = normalizedQuery.length >= 1 ? normalizedQuery : (SEGMENT_DEFAULTS[activeSearchTab] || 'NIFTY');
-        const qLower = actualQuery.toLowerCase();
-
-        const localMatches = localScripts.filter(s => {
-          const match = wordStartMatch(s.name, qLower) || wordStartMatch(s.symbol, qLower);
-          if (!match) return false;
-          if (activeSearchTab === 'All') return true;
-          return getTabForItem(s) === activeSearchTab;
-        });
-
         const liveMatches = await fetchLiveResults(actualQuery, activeSearchTab, abortController.signal);
-        if (abortController.signal.aborted) return;
+        if (reqId !== searchReqIdRef.current) return;
 
         const merged = [...liveMatches];
         const liveSymbols = new Set(liveMatches.map((r: any) => r.symbol));
@@ -300,18 +316,160 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
         }
 
         setSearchResults(merged);
+      } catch (err) {
+        console.error('Chart search error:', err);
       } finally {
-        if (!abortController.signal.aborted) {
+        if (reqId === searchReqIdRef.current) {
           setIsSearching(false);
         }
       }
-    }, 180);
+    }, 150);
 
     return () => {
       clearTimeout(timer);
       abortController.abort();
     };
   }, [normalizedQuery, activeSearchTab]);
+
+  const resultIds = React.useMemo(() => {
+    const ids = searchResults.map(r => r.binanceSymbol || r.kiteSymbol || r.symbol).filter(Boolean);
+    return Array.from(new Set([...ids, ...UNDERLYING_KEYS]));
+  }, [searchResults]);
+  const { quotes } = useMarketQuotes(resultIds);
+
+  const comexIds = React.useMemo(() => {
+    const ids = searchResults.map(r => r.comexSymbol).filter((s): s is string => !!s);
+    return Array.from(new Set(ids));
+  }, [searchResults]);
+  const { quotes: comexQuotes } = useComexQuotes(comexIds);
+
+  const displayResults = React.useMemo(() => {
+    if (!searchResults || searchResults.length === 0) return [];
+    const hasOptions = searchResults.some((r: any) => r.strike !== undefined || r.segment?.includes('Options'));
+    if (!hasOptions) return searchResults;
+
+    const firstOption = searchResults.find((r: any) => r.strike !== undefined || r.segment?.includes('Options')) as any;
+    if (!firstOption) return searchResults;
+
+    const uSym = (firstOption.underlyingSymbol || firstOption.name || '').toUpperCase();
+    let spotKey = '';
+    if (uSym.includes('NIFTY') && !uSym.includes('BANK') && !uSym.includes('FIN') && !uSym.includes('MID')) spotKey = 'NSE:NIFTY 50';
+    else if (uSym.includes('BANKNIFTY')) spotKey = 'NSE:NIFTY BANK';
+    else if (uSym.includes('FINNIFTY')) spotKey = 'NSE:NIFTY FIN SERVICE';
+    else if (uSym.includes('MID')) spotKey = 'NSE:NIFTY MID SELECT';
+    else if (uSym.includes('SENSEX')) spotKey = 'BSE:SENSEX';
+    else if (uSym.includes('BANKEX')) spotKey = 'BSE:BANKEX';
+    else if (uSym.includes('GOLD')) spotKey = 'MCX:GOLD';
+    else if (uSym.includes('SILVER')) spotKey = 'MCX:SILVER';
+    else if (uSym.includes('CRUDE')) spotKey = 'MCX:CRUDEOIL';
+
+    const spotPrice = spotKey && quotes[spotKey]?.lastPrice ? quotes[spotKey].lastPrice : 0;
+    if (spotPrice <= 0) return searchResults;
+
+    const nonOptions = searchResults.filter((r: any) => r.strike === undefined && !r.segment?.includes('Options'));
+    const options = searchResults.filter((r: any) => r.strike !== undefined || r.segment?.includes('Options'));
+
+    const strikeSet = new Set<number>();
+    options.forEach((o: any) => {
+      if (o.strike !== undefined) strikeSet.add(Number(o.strike));
+    });
+    const strikes = Array.from(strikeSet).sort((a, b) => a - b);
+    if (strikes.length === 0) return searchResults;
+
+    let closestIdx = 0, minDiff = Infinity;
+    strikes.forEach((s, idx) => {
+      const diff = Math.abs(s - spotPrice);
+      if (diff < minDiff) { minDiff = diff; closestIdx = idx; }
+    });
+
+    const range = 11;
+    const half = Math.floor(range / 2);
+    let startIdx = closestIdx - half;
+    let endIdx = closestIdx + half;
+    if (startIdx < 0) { endIdx += Math.abs(startIdx); startIdx = 0; }
+    if (endIdx >= strikes.length) { startIdx = Math.max(0, startIdx - (endIdx - strikes.length + 1)); endIdx = strikes.length - 1; }
+
+    const selStrikes = new Set(strikes.slice(startIdx, endIdx + 1));
+    const filteredOptions = options.filter((o: any) => selStrikes.has(Number(o.strike)));
+
+    return [...nonOptions, ...filteredOptions];
+  }, [searchResults, quotes, isSearching]);
+
+  const renderResultItem = (res: any, idx: number) => {
+    const isStarred = starredInstruments.some((p: any) => (p.kiteSymbol || p.symbol) === (res.kiteSymbol || res.symbol));
+    const q = (res.binanceSymbol ? quotes[res.binanceSymbol] : null) || (res.comexSymbol ? comexQuotes[res.comexSymbol] : null) || quotes[res.kiteSymbol] || quotes[res.symbol] || quotes[(res.kiteSymbol || '').split(':').pop() || ''];
+    let price = (q?.lastPrice && q.lastPrice > 0) ? q.lastPrice : (res.price || 0);
+    let high = (q?.high && q.high > 0) ? q.high : (res.high || 0);
+    let low = (q?.low && q.low > 0) ? q.low : (res.low || 0);
+    const isForexUsd = ['GBPUSD', 'EURUSD'].includes((res.symbol || '').toUpperCase());
+    if (isForexUsd && price > 0 && price < 20) {
+      price = price * 83.85;
+      if (high > 0 && high < 20) high = high * 83.85;
+      if (low > 0 && low < 20) low = low * 83.85;
+    }
+
+    return (
+      <div
+        key={`${res.kiteSymbol || res.symbol}-${idx}`}
+        className="tc-search-result-item"
+        style={{ cursor: 'pointer' }}
+        onClick={() => onSelect(res)}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+          {toggleStar && (
+            <button
+              className="tc-star-btn"
+              onClick={(e) => { e.stopPropagation(); toggleStar(res); }}
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '22px', color: isStarred ? '#F59E0B' : '#D1D5DB', display: 'flex', alignItems: 'center', padding: 0 }}
+            >
+              {isStarred ? '★' : '☆'}
+            </button>
+          )}
+          <div className="tc-res-info" style={{ flex: 1, minWidth: 0 }}>
+            <div className="tc-res-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {res.name || res.symbol}
+            </div>
+            <div className="tc-res-segment" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span>{res.segment}</span>
+              {res.contractDate && (
+                <>
+                  <span>•</span>
+                  <span>{res.contractDate}</span>
+                </>
+              )}
+            </div>
+            {(high > 0 || low > 0) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#15803D', letterSpacing: 0.2 }}>
+                  H {high.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span style={{ fontSize: '0.6rem', color: '#9CA3AF' }}>|</span>
+                <span style={{ fontSize: '0.65rem', fontWeight: 700, color: '#C62E2E', letterSpacing: 0.2 }}>
+                  L {low.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0, marginLeft: '12px' }}>
+          {price > 0 && (
+            <div style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text-primary, #111827)', textAlign: 'right' }}>
+              ₹{price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </div>
+          )}
+          <button
+            className="tc-res-open-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect(res);
+            }}
+          >
+            Open
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="tc-search-overlay-fullscreen">
@@ -327,20 +485,33 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search stocks, options, futures..."
-            style={{ width: '100%', paddingRight: '40px', paddingLeft: '40px' }}
+            style={{ width: '100%', paddingRight: '72px', paddingLeft: '40px' }}
           />
-          <button
-            className="tc-icon-btn"
-            onClick={onClose}
-            style={{ position: 'absolute', right: '8px', background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
-          </button>
+          <div style={{ position: 'absolute', right: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            {searchQuery && (
+              <button
+                className="tc-icon-btn"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear"
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </button>
+            )}
+            <button
+              className="tc-icon-btn"
+              onClick={onClose}
+              aria-label="Close"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '4px', color: '#9CA3AF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+            </button>
+          </div>
         </div>
       </div>
       <div className="tc-search-body-fs">
         <div className="tc-search-tabs">
-          {['All', 'INDEX-FUT', 'INDEX-OPT', 'MCX-FUT', 'MCX-OPT', 'STOCK-FUT', 'STOCK-OPT', 'STOCKS', 'US-EQ', 'CRYPTO', 'COMEX', 'FOREX'].map(tab => (
+          {TAB_LABELS.map(tab => (
             <div
               key={tab}
               className={`tc-search-tab ${activeSearchTab === tab ? 'active' : ''}`}
@@ -350,63 +521,59 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments, toggleStar 
             </div>
           ))}
         </div>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '8px 16px',
+          borderBottom: '1px solid var(--border-color, #2d3748)',
+          background: 'var(--header-bg, rgba(255,255,255,0.03))',
+          fontSize: '0.7rem',
+          fontWeight: 700,
+          color: '#8F9BB3',
+          letterSpacing: '0.5px'
+        }}>
+          <span>{activeSearchTab} RESULTS</span>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            {isSearching ? <AnimatedLoader size="small" text="SEARCHING..." /> : `${displayResults.length} MATCHES`}
+          </span>
+        </div>
+
         <div className="tc-search-results-fs">
-          {isSearching ? <div className="tc-search-msg">Searching...</div> :
+          {displayResults.length > 0 ? (
             searchQuery.trim().length === 0 && activeSearchTab === 'All' ? (
-              starredInstruments.length > 0 ? (
-                starredInstruments.map((res: any, idx: number) => (
-                  <SwipeableItem key={`${res.kiteSymbol}-${idx}`} onDelete={() => toggleStar(res)}>
-                    <div className="tc-search-result-item" style={{ borderBottom: 'none' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <button
-                          className="tc-star-btn"
-                          onClick={(e) => { e.stopPropagation(); toggleStar(res); }}
-                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '24px', color: '#F59E0B', display: 'flex', alignItems: 'center' }}
-                        >
-                          ★
-                        </button>
-                        <div className="tc-res-info">
-                          <div className="tc-res-name">{res.name}</div>
-                          <div className="tc-res-segment">{res.segment}</div>
-                        </div>
-                      </div>
-                      <button className="tc-res-open-btn" onClick={(e) => {
-                        e.stopPropagation();
-                        onSelect(res);
-                      }}>Open</button>
+              <>
+                {starredInstruments && starredInstruments.length > 0 && (
+                  <div style={{ marginBottom: '8px' }}>
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8F9BB3', padding: '4px 8px 8px', letterSpacing: '0.5px' }}>
+                      FAVORITES
                     </div>
-                  </SwipeableItem>
-                ))
-              ) : <div className="tc-search-msg">Type to search for an instrument</div>
+                    {starredInstruments.map((res: any, idx: number) => (
+                      <SwipeableItem key={`fav-${res.kiteSymbol || res.symbol}-${idx}`} onDelete={() => toggleStar(res)}>
+                        {renderResultItem(res, idx)}
+                      </SwipeableItem>
+                    ))}
+                  </div>
+                )}
+                <div>
+                  {starredInstruments && starredInstruments.length > 0 && (
+                    <div style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8F9BB3', padding: '12px 8px 8px', letterSpacing: '0.5px' }}>
+                      POPULAR INSTRUMENTS
+                    </div>
+                  )}
+                  {displayResults.map((res: any, idx: number) => renderResultItem(res, idx))}
+                </div>
+              </>
             ) : (
-              searchResults.length > 0 ? (
-                searchResults.map((res: any, idx: number) => {
-                  const isStarred = starredInstruments.some((p: any) => p.kiteSymbol === res.kiteSymbol);
-                  return (
-                    <div key={`${res.kiteSymbol}-${idx}`} className="tc-search-result-item">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <button
-                          className="tc-star-btn"
-                          onClick={(e) => { e.stopPropagation(); toggleStar(res); }}
-                          style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '24px', color: isStarred ? '#F59E0B' : '#D1D5DB', display: 'flex', alignItems: 'center' }}
-                        >
-                          {isStarred ? '★' : '☆'}
-                        </button>
-                        <div className="tc-res-info">
-                          <div className="tc-res-name">{res.name}</div>
-                          <div className="tc-res-segment">{res.segment}</div>
-                        </div>
-                      </div>
-                      <button className="tc-res-open-btn" onClick={(e) => {
-                        e.stopPropagation();
-                        onSelect(res);
-                      }}>Open</button>
-                    </div>
-                  )
-                })
-              ) : <div className="tc-search-msg">No results found</div>
+              displayResults.map((res: any, idx: number) => renderResultItem(res, idx))
             )
-          }
+          ) : isSearching ? (
+            <div className="tc-search-msg" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+              <AnimatedLoader size="small" text="Searching instruments..." />
+            </div>
+          ) : (
+            <div className="tc-search-msg">No results found for &quot;{normalizedQuery || activeSearchTab}&quot;</div>
+          )}
         </div>
       </div>
     </div>
@@ -2283,16 +2450,46 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               setExitPositionId(null);
               setActiveSegment('orders');
 
-              // Set new symbol/segment — use binanceSymbol for crypto, kiteSymbol for others
-              const isCryptoRes = !!res.binanceSymbol || (res.segment || '').toUpperCase().includes('CRYPTO');
-              const newSymbol = isCryptoRes
-                ? (res.binanceSymbol || res.kiteSymbol || res.symbol)
-                : (res.kiteSymbol || res.symbol);
-              const newSegment = isCryptoRes ? 'CRYPTO' : res.segment;
+              // Set new symbol/segment matching the watchlist chart routing logic
+              const symUpper = (res.symbol || '').toUpperCase();
+              const isGlobalForex = isForexSymbol(res.symbol) || isForexSymbol(res.comexSymbol || '') || (res.segment?.toUpperCase() === 'FOREX' && !symUpper.includes('INR') && !symUpper.endsWith('FUT') && !symUpper.startsWith('CDS:'));
+              const isChartComex = !isGlobalForex && !!res.comexSymbol && (!(res.kiteSymbol) || res.preferredView === 'comex');
+
+              const newSymbol = isGlobalForex
+                ? (res.comexSymbol || res.symbol)
+                : isChartComex
+                  ? (res.comexSymbol || res.symbol)
+                  : (res.binanceSymbol || res.kiteSymbol || res.symbol);
+
+              const isCryptoRes = !isGlobalForex && !isChartComex && (
+                !!res.binanceSymbol ||
+                ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC'].includes(res.symbol) ||
+                (res.segment || '').toUpperCase().includes('CRYPTO')
+              );
+
+              const newSegment = isGlobalForex
+                ? 'FOREX'
+                : isChartComex
+                  ? 'COMEX'
+                  : isCryptoRes
+                    ? 'CRYPTO'
+                    : (res.segment || 'NSE');
+
+              const newLoadId = Math.random().toString(36).substring(2, 8);
+              setLoadId(newLoadId);
               setSymbol(newSymbol);
               setSegment(newSegment);
               setIsSearchActive(false);
               setOrderBlockTitle(newSymbol);
+
+              if (typeof window !== 'undefined' && typeof (window as any).__reactSetChartItem === 'function') {
+                (window as any).__reactSetChartItem({
+                  ...res,
+                  symbol: newSymbol,
+                  segment: newSegment,
+                  kiteSymbol: res.kiteSymbol || newSymbol,
+                });
+              }
             }}
           />
         ) : (
@@ -2300,10 +2497,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
             setIsSearchActive(true);
             setTimeout(() => searchInputRef.current?.focus(), 100);
           }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.85 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.85 }}>
               <circle cx="11" cy="11" r="8"></circle>
               <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
             </svg>
+            <span className="tc-symbol-name">
+              {formatShortName(symbol.includes(':') ? symbol.split(':')[1] : symbol)}
+            </span>
           </div>
         )}
 
@@ -2503,9 +2703,28 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               </div>
             )}
 
-            {/* BUY/price/SELL widget — HIDDEN */}
+            {/* Loading screen overlay while chart is switching */}
+            {loading && (
+              <div style={{
+                position: 'absolute',
+                inset: 0,
+                zIndex: 20,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: 'var(--container-bg, #071824)',
+                backdropFilter: 'blur(4px)',
+                transition: 'opacity 0.2s ease',
+              }}>
+                <AnimatedLoader
+                  text={`Loading ${formatShortName(symbol.includes(':') ? symbol.split(':')[1] : symbol)} chart...`}
+                  fullScreen={false}
+                />
+              </div>
+            )}
 
             <ChartContainer
+              key={`${symbol}-${segment}-${loadId}`}
               loadId={loadId}
               symbol={symbol}
               segment={segment}

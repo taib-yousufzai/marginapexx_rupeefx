@@ -22,6 +22,7 @@ import {
 
 import { parseOptionSymbol } from '@/lib/positionStore';
 import { fetchUSStockQuotes } from '@/lib/datafeed/USStockService';
+import { getCurrentFuturesSymbol } from '@/lib/contractExpiry';
 
 const US_STOCK_ITEMS = [
   { name: 'Apple Inc.', symbol: 'AAPL', segment: 'US - Equity' },
@@ -582,9 +583,14 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Fallback: tradingsymbol ilike (spaces/slashes removed) or numeric strike
-    if (!data || data.length === 0) {
-      const qNoSpace = q.replace(/[\s\/]+/g, '').toUpperCase();
+    // Fast path: if pure Forex query or Forex tab, skip expensive DB full-table scans
+    // In-memory forexSearchItems covers all Forex pairs (CDS currency futures & global pairs) with active contracts instantly (<1ms).
+    const qNoSpace = q.replace(/[\s\/]+/g, '').toUpperCase();
+    const isForexPairQuery = tab === 'FOREX' || ['USDINR', 'EURINR', 'GBPINR', 'JPYINR', 'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD', 'FOREX'].some(p => qNoSpace.startsWith(p) || qNoSpace.includes(p));
+
+    if (isForexPairQuery) {
+      data = [];
+    } else if (!data || data.length === 0) {
       const isEquitySearch = tab === 'All' || tab === 'STOCKS' || tab === 'NSE-EQ' || tab === 'Equity' || tab === 'EQUITY' || tab === 'Stocks';
 
       // 1. Dedicated Equity & Spot Index Query (NSE/BSE EQ & INDEX) to guarantee real stocks and indices (e.g. NIFTY 50, AARTIIND, ADANIENT) load at top priority
@@ -674,7 +680,17 @@ export async function GET(request: NextRequest) {
         return applyTabFilter(qry);
       };
 
-      const [eqRes, futRes, optRes] = await Promise.all([eqPromise, buildFuturesQuery(), buildOptionsQuery()]);
+      const timeoutPromise = <T>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+        Promise.race([
+          p,
+          new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))
+        ]);
+
+      const [eqRes, futRes, optRes] = await Promise.all([
+        timeoutPromise(eqPromise, 2000, { data: [], error: null }),
+        timeoutPromise(buildFuturesQuery(), 2000, { data: [], error: null }),
+        timeoutPromise(buildOptionsQuery(), 2000, { data: [], error: null }),
+      ]);
 
       error = eqRes.error || futRes.error || optRes.error;
       const rawEq = (eqRes.data ?? []).filter((r: any) => {
@@ -1250,7 +1266,30 @@ export async function GET(request: NextRequest) {
     }
 
     // Append matching FOREX items if tab is All or FOREX
-    if (matchingForex.length > 0) {
+    if (tab === 'All' || tab === 'FOREX') {
+      const curMonthYear = `${new Date().toLocaleString('en-US', { month: 'short' })} ${new Date().getFullYear()}`;
+      const forexSearchItems = [
+        { name: 'EUR/USD', symbol: 'EURUSD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'EURUSD=X', segment: 'Forex', category: 'FOREX' },
+        { name: 'GBP/USD', symbol: 'GBPUSD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'GBPUSD=X', segment: 'Forex', category: 'FOREX' },
+        { name: 'USD/JPY', symbol: 'USDJPY', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'USDJPY=X', segment: 'Forex', category: 'FOREX' },
+        { name: 'USD/CHF', symbol: 'USDCHF', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'USDCHF=X', segment: 'Forex', category: 'FOREX' },
+        { name: 'USD/CAD', symbol: 'USDCAD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'USDCAD=X', segment: 'Forex', category: 'FOREX' },
+        { name: 'AUD/USD', symbol: 'AUDUSD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'AUDUSD=X', segment: 'Forex', category: 'FOREX' },
+        { name: 'NZD/USD', symbol: 'NZDUSD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'NZDUSD=X', segment: 'Forex', category: 'FOREX' },
+        { name: 'USD/INR', symbol: getCurrentFuturesSymbol('CDS', 'USDINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'USDINR'), comexSymbol: '', segment: 'CDS - Futures', category: 'FOREX' },
+        { name: 'EUR/INR', symbol: getCurrentFuturesSymbol('CDS', 'EURINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'EURINR'), comexSymbol: '', segment: 'CDS - Futures', category: 'FOREX' },
+        { name: 'GBP/INR', symbol: getCurrentFuturesSymbol('CDS', 'GBPINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'GBPINR'), comexSymbol: '', segment: 'CDS - Futures', category: 'FOREX' },
+        { name: 'JPY/INR', symbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), comexSymbol: '', segment: 'CDS - Futures', category: 'FOREX' },
+      ];
+      const searchTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const qClean = q.replace(/[\s\/]+/g, '').toLowerCase();
+      const matchingForex = forexSearchItems
+        .filter(item => {
+          const itemText = `${item.name} ${item.symbol} ${item.segment} forex`.toLowerCase();
+          const cleanText = itemText.replace(/[\s\/]+/g, '');
+          return searchTerms.every(term => itemText.includes(term) || cleanText.includes(term.replace(/[\s\/]+/g, '')) || cleanText.includes(qClean));
+        });
+
       const mappedForex = matchingForex.map(item => {
         const qInfo = quoteMap[item.kiteSymbol] || quoteMap[item.comexSymbol] || quoteMap[item.symbol];
         return {
@@ -1262,7 +1301,7 @@ export async function GET(request: NextRequest) {
           price: qInfo?.price ?? 0,
           change: '0%',
           segment: item.segment,
-          contractDate: item.contractDate || 'Continuous',
+          contractDate: item.segment.includes('CDS') ? curMonthYear : 'Continuous',
           open: 0,
           high: qInfo?.high ?? 0,
           low: qInfo?.low ?? 0,

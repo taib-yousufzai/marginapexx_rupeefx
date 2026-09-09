@@ -167,8 +167,41 @@ export class Datafeed implements IBasicDataFeed {
     this.realtimeProvider.unsubscribe(listenerGuid);
   }
 
-  searchSymbols(): void {
-    // no-op
+  searchSymbols(
+    userInput: string,
+    _exchange: string,
+    _symbolType: string,
+    onResult: (result: any[]) => void,
+  ): void {
+    if (!userInput || !userInput.trim()) {
+      onResult([]);
+      return;
+    }
+    const q = userInput.trim();
+    fetch(`/api/market/instruments/search?q=${encodeURIComponent(q)}&tab=All`)
+      .then(res => res.json())
+      .then((items: any[]) => {
+        if (!Array.isArray(items)) {
+          onResult([]);
+          return;
+        }
+        const results = items.slice(0, 30).map(item => ({
+          symbol: item.symbol,
+          full_name: item.kiteSymbol || item.symbol,
+          description: item.name || item.symbol,
+          exchange: item.segment || 'NSE',
+          ticker: item.kiteSymbol || item.symbol,
+          type: (item.segment || '').toLowerCase().includes('option')
+            ? 'options'
+            : (item.segment || '').toLowerCase().includes('future')
+            ? 'futures'
+            : 'stock',
+        }));
+        onResult(results);
+      })
+      .catch(() => {
+        onResult([]);
+      });
   }
 
   getServerTime(callback: (serverTime: number) => void): void {

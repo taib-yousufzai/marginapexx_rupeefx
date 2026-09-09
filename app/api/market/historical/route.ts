@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import { getRedisClient, isRedisMock } from '@/lib/redis';
+import { isContractExpired } from '@/lib/contractExpiry';
 
 function getSupabase() {
   return createClient(
@@ -85,6 +86,39 @@ const STATIC_TOKENS: Record<string, ResolvedInstrument> = {
   'NATURALGAS':         { token: 145470727, canonicalId: 'MCX:NATURALGAS26SEPFUT' },
   'MCX:NATURALGAS':     { token: 145470727, canonicalId: 'MCX:NATURALGAS26SEPFUT' },
   'MCX:NATURALGAS26SEPFUT': { token: 145470727, canonicalId: 'MCX:NATURALGAS26SEPFUT' },
+  // Currency Futures (CDS) — eliminates any DB round-trip and instantly routes to active front-month
+  'GBPINR':             { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
+  'CDS:GBPINR':         { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
+  'GBPINR_FUT':         { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
+  'CDS:GBPINR_FUT':     { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
+  'GBPINR26SEPFUT':     { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
+  'CDS:GBPINR26SEPFUT': { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
+  'GBPINR26AUGFUT':     { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
+  'CDS:GBPINR26AUGFUT': { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
+  'EURINR':             { token: 451331,  canonicalId: 'CDS:EURINR26SEPFUT' },
+  'CDS:EURINR':         { token: 451331,  canonicalId: 'CDS:EURINR26SEPFUT' },
+  'EURINR_FUT':         { token: 451331,  canonicalId: 'CDS:EURINR26SEPFUT' },
+  'CDS:EURINR_FUT':     { token: 451331,  canonicalId: 'CDS:EURINR26SEPFUT' },
+  'EURINR26SEPFUT':     { token: 451331,  canonicalId: 'CDS:EURINR26SEPFUT' },
+  'CDS:EURINR26SEPFUT': { token: 451331,  canonicalId: 'CDS:EURINR26SEPFUT' },
+  'EURINR26AUGFUT':     { token: 451331,  canonicalId: 'CDS:EURINR26SEPFUT' },
+  'CDS:EURINR26AUGFUT': { token: 451331,  canonicalId: 'CDS:EURINR26SEPFUT' },
+  'JPYINR':             { token: 452611,  canonicalId: 'CDS:JPYINR26SEPFUT' },
+  'CDS:JPYINR':         { token: 452611,  canonicalId: 'CDS:JPYINR26SEPFUT' },
+  'JPYINR_FUT':         { token: 452611,  canonicalId: 'CDS:JPYINR26SEPFUT' },
+  'CDS:JPYINR_FUT':     { token: 452611,  canonicalId: 'CDS:JPYINR26SEPFUT' },
+  'JPYINR26SEPFUT':     { token: 452611,  canonicalId: 'CDS:JPYINR26SEPFUT' },
+  'CDS:JPYINR26SEPFUT': { token: 452611,  canonicalId: 'CDS:JPYINR26SEPFUT' },
+  'JPYINR26AUGFUT':     { token: 452611,  canonicalId: 'CDS:JPYINR26SEPFUT' },
+  'CDS:JPYINR26AUGFUT': { token: 452611,  canonicalId: 'CDS:JPYINR26SEPFUT' },
+  'USDINR':             { token: 452867,  canonicalId: 'CDS:USDINR26SEPFUT' },
+  'CDS:USDINR':         { token: 452867,  canonicalId: 'CDS:USDINR26SEPFUT' },
+  'USDINR_FUT':         { token: 452867,  canonicalId: 'CDS:USDINR26SEPFUT' },
+  'CDS:USDINR_FUT':     { token: 452867,  canonicalId: 'CDS:USDINR26SEPFUT' },
+  'USDINR26SEPFUT':     { token: 452867,  canonicalId: 'CDS:USDINR26SEPFUT' },
+  'CDS:USDINR26SEPFUT': { token: 452867,  canonicalId: 'CDS:USDINR26SEPFUT' },
+  'USDINR26AUGFUT':     { token: 452867,  canonicalId: 'CDS:USDINR26SEPFUT' },
+  'CDS:USDINR26AUGFUT': { token: 452867,  canonicalId: 'CDS:USDINR26SEPFUT' },
 };
 
 async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | null> {
@@ -147,10 +181,19 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
   if (normalizedSymbol.includes(':')) {
     const { data } = await getSupabase()
       .from('instruments')
-      .select('instrument_token')
+      .select('instrument_token, expiry')
       .eq('id', normalizedSymbol)
       .single();
-    if (data?.instrument_token) return save(data.instrument_token, normalizedSymbol);
+    if (data?.instrument_token) {
+      const isOption = normalizedSymbol.endsWith('CE') || normalizedSymbol.endsWith('PE');
+      const todayIso = new Date().toISOString().split('T')[0];
+      // Only auto-roll futures contracts that have expired; options stay on their exact contract token
+      const isExpiredFuture = !isOption && (isContractExpired(normalizedSymbol) || (data.expiry && data.expiry < todayIso));
+      if (!isExpiredFuture) {
+        return save(data.instrument_token, normalizedSymbol);
+      }
+      console.log(`[API PERF] resolveInstrument: Future ${normalizedSymbol} is EXPIRED (expiry=${data.expiry}). Auto-resolving to active contract.`);
+    }
   }
 
   const cleanSymbol = (normalizedSymbol.includes(':') ? normalizedSymbol.split(':')[1] : normalizedSymbol).replace(/\//g, '');
@@ -178,15 +221,15 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
     if (data?.instrument_token) return save(data.instrument_token, resolvedSymbol);
   }
 
-  // Handle base commodity and currency shortcuts to resolve to active front-month contracts
-  const baseCommodities = ['GOLD', 'CRUDEOIL', 'SILVER', 'NATURALGAS', 'USDINR'];
+  // Handle base commodity and currency shortcuts or expired contracts to resolve to active front-month contracts
+  const baseCommodities = ['GOLD', 'CRUDEOIL', 'SILVER', 'NATURALGAS', 'USDINR', 'EURINR', 'GBPINR', 'JPYINR'];
   const isOption = upperSymbol.endsWith('CE') || upperSymbol.endsWith('PE');
   if (!isOption) {
     const matchedCommodity = baseCommodities.find(c => upperSymbol.includes(c));
     if (matchedCommodity) {
-      const isCurrency = matchedCommodity === 'USDINR';
+      const isCurrency = ['USDINR', 'EURINR', 'GBPINR', 'JPYINR'].includes(matchedCommodity);
       const exchange = isCurrency ? 'CDS' : 'MCX';
-      const instrumentTypes = isCurrency ? ['FUT'] : ['FUTCOM', 'FUT', 'MAPPED_FUT'];
+      const instrumentTypes = isCurrency ? ['FUT', 'MAPPED_FUT'] : ['FUTCOM', 'FUT', 'MAPPED_FUT'];
       
       const { data } = await getSupabase()
         .from('instruments')
@@ -202,6 +245,27 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
       if (data?.instrument_token) {
         const canonicalId = `${exchange}:${data.tradingsymbol}`;
         return save(data.instrument_token, canonicalId);
+      }
+    }
+
+    const baseIndicesFut = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
+    if (upperSymbol.includes('FUT') || symbol.includes('_')) {
+      const matchedIndex = baseIndicesFut.find(idx => upperSymbol.startsWith(idx));
+      if (matchedIndex) {
+        const exchange = (matchedIndex === 'SENSEX' || matchedIndex === 'BANKEX') ? 'BFO' : 'NFO';
+        const { data } = await getSupabase()
+          .from('instruments')
+          .select('instrument_token, tradingsymbol')
+          .eq('name', matchedIndex)
+          .eq('exchange', exchange)
+          .gte('expiry', new Date().toISOString().split('T')[0])
+          .order('expiry', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        if (data?.instrument_token) {
+          const canonicalId = `${exchange}:${data.tradingsymbol}`;
+          return save(data.instrument_token, canonicalId);
+        }
       }
     }
   }
@@ -384,7 +448,7 @@ export async function GET(request: Request) {
           'X-Kite-Version': '3',
           'Authorization': `token ${process.env.KITE_API_KEY || process.env.NEXT_PUBLIC_KITE_API_KEY}:${session.accessToken}`
         },
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(3500)
       });
       const data = await response.json();
       console.log(`[API PERF] Kite historical API finished in ${(performance.now() - kiteStart).toFixed(1)}ms (ok=${response.ok})`);
@@ -429,6 +493,11 @@ export async function GET(request: Request) {
 
     // Fallback 2: Synthesize a sequence of flat placeholder candles strictly bounded within [fromMs, toMs]
     if (!candlesData || candlesData.length === 0) {
+      // If requested historical chunk is older than 30 days and has no data, return empty candles so TV chart stops backward paging loop
+      if (toMs < Date.now() - 30 * 86400 * 1000) {
+        return NextResponse.json({ candles: [] });
+      }
+
       console.warn(`[historical] No historical data found in Kite or DB for ${canonicalSymbol}. Synthesizing flat-line placeholder candles bounded within requested timeframe.`);
       let lastPrice = 0;
       try {
@@ -460,7 +529,20 @@ export async function GET(request: Request) {
       // Default to minimum positive tick price if untraded / unknown
       if (lastPrice <= 0) {
         const isOption = symbol.match(/(?:CE|PE)$/i);
-        lastPrice = isOption ? 0.05 : 10.0;
+        const upperSym = symbol.toUpperCase();
+        if (isOption) {
+          lastPrice = 0.05;
+        } else if (upperSym.includes('GBPINR')) {
+          lastPrice = 128.75;
+        } else if (upperSym.includes('EURINR')) {
+          lastPrice = 92.5;
+        } else if (upperSym.includes('USDINR')) {
+          lastPrice = 83.9;
+        } else if (upperSym.includes('JPYINR')) {
+          lastPrice = 0.58;
+        } else {
+          lastPrice = 10.0;
+        }
       }
 
       let spacingMs = 60 * 1000;

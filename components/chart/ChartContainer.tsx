@@ -6,6 +6,7 @@ import { Candle, Timeframe } from '@/components/chart/types';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
 import { getSavedTheme } from '@/lib/theme';
+import { formatShortName } from '@/lib/datafeed/symbolResolver';
 
 // ─── Supporting types ────────────────────────────────────────────────────────
 
@@ -360,19 +361,16 @@ export default function ChartContainer({
   // ── Task 8.3: symbol, timeframe, chartType effects ───────────────────────
 
   useEffect(() => {
+    if (datafeedRef.current) {
+      datafeedRef.current.setSegment(segment);
+    }
     if (!isReadyRef.current) { pendingRef.current.symbol = symbol; return; }
     tvWidgetRef.current?.chart().setSymbol(symbol, () => {
       try {
         tvWidgetRef.current?.chart().executeActionById('timeScaleReset');
       } catch (e) { }
     });
-  }, [symbol]);
-
-  useEffect(() => {
-    if (datafeedRef.current) {
-      datafeedRef.current.setSegment(segment);
-    }
-  }, [segment]);
+  }, [symbol, segment]);
 
   useEffect(() => {
     if (!isReadyRef.current) { pendingRef.current.timeframe = timeframe; return; }
@@ -455,12 +453,18 @@ export default function ChartContainer({
       />
 
       {/* Loading overlay */}
-      {chartStatus === 'loading' && (
+      {(chartStatus === 'loading' || loading) && (
         <div style={{
-          position: 'absolute', inset: 0, zIndex: 10,
-          background: isDark ? 'rgba(7, 24, 36, 0.85)' : 'rgba(255, 255, 255, 0.85)',
+          position: 'absolute',
+          inset: 0,
+          zIndex: 10,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: isDark ? 'rgba(7, 24, 36, 0.88)' : 'rgba(255, 255, 255, 0.88)',
+          backdropFilter: 'blur(3px)',
         }}>
-          <AnimatedLoader text="Loading chart data..." fullScreen={false} />
+          <AnimatedLoader text={`Loading ${formatShortName(symbol.includes(':') ? symbol.split(':')[1] : symbol)} chart...`} fullScreen={false} />
         </div>
       )}
 
