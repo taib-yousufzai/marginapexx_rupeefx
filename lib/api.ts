@@ -1,6 +1,6 @@
 'use client';
 
-import { getSharedSessionSync, clearSharedSession } from '@/lib/sharedSession';
+import { getSharedSession, getSharedSessionSync, clearSharedSession } from '@/lib/sharedSession';
 import { clearAuthCache } from '@/lib/auth';
 
 
@@ -11,6 +11,8 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Per-request timeout in milliseconds. No timeout applied when omitted. */
   timeout?: number;
+  /** @internal Retry flag to prevent infinite loops */
+  _retry?: boolean;
 }
 
 export class ApiError extends Error {
@@ -137,6 +139,28 @@ async function apiCall<T>(
       if (typeof window !== 'undefined') {
         const path = window.location.pathname;
         if (path !== '/login' && path !== '/register' && path !== '/forgot-password' && path !== '/reset-password') {
+          // Attempt a session refresh and retry once if not already retried
+          if (!options?._retry) {
+            try {
+              const fresh = await getSharedSession();
+              if (fresh && fresh.token && fresh.token !== token) {
+                return apiCall<T>(method, path, body, { ...options, _retry: true });
+              }
+            } catch {}
+          }
+
+          // Check whether an active session still exists before kicking user to login
+          try {
+            const { supabase: sb } = await import('@/lib/supabaseClient');
+            const { data: { session } } = await sb.auth.getSession();
+            if (session) {
+              // Active session is still valid; do not force-redirect or clear auth
+              throw new ApiError(401, 'Unauthorized request');
+            }
+          } catch (e) {
+            if (e instanceof ApiError) throw e;
+          }
+
           clearSharedSession();
           clearAuthCache();
           try {
@@ -150,7 +174,7 @@ async function apiCall<T>(
             keysToRemove.forEach((k) => localStorage.removeItem(k));
           } catch {}
           window.location.href = '/login?expired=1';
-          throw new ApiError(401, 'Session expired. Please log in again.');
+          return new Promise<T>(() => {});
         }
       }
     }

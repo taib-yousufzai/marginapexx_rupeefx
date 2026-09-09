@@ -44,11 +44,15 @@ function getTokenFromLocalStorage(): { token: string | null; userId: string | nu
     const parsed = JSON.parse(stored);
     const token = parsed?.access_token || null;
     
-    // Check if the token is expired or close to expiring (within 60 seconds)
+    // Check if the token is expired; if expiring soon (< 60s), schedule background refresh
     const expiresAt = parsed?.expires_at;
-    if (expiresAt && Date.now() / 1000 > expiresAt - 60) {
-      console.log('[SharedSession] LocalStorage token is expired or expiring soon.');
+    if (expiresAt && Date.now() / 1000 > expiresAt) {
       return { token: null, userId: null };
+    }
+    if (expiresAt && Date.now() / 1000 > expiresAt - 60) {
+      if (typeof window !== 'undefined') {
+        setTimeout(() => { getSharedSession().catch(() => {}); }, 0);
+      }
     }
     
     let userId: string | null = null;
@@ -76,7 +80,7 @@ export async function getSharedSession(): Promise<{ token: string | null; userId
     try {
       const payload = JSON.parse(atob(cachedToken.split('.')[1]));
       const exp = payload.exp;
-      if (exp && Date.now() / 1000 < exp - 60) {
+      if (exp && Date.now() / 1000 < exp) {
         return { token: cachedToken, userId: cachedUserId };
       }
     } catch {
@@ -126,7 +130,7 @@ export function getSharedSessionSync(): { token: string | null; userId: string |
     try {
       const payload = JSON.parse(atob(cachedToken.split('.')[1]));
       const exp = payload.exp;
-      if (exp && Date.now() / 1000 < exp - 60) {
+      if (exp && Date.now() / 1000 < exp) {
         return { token: cachedToken, userId: cachedUserId };
       }
     } catch {
