@@ -139,26 +139,74 @@ function getSupabase() {
   );
 }
 
+// In-memory cache for library catalog (30-minute TTL with SWR)
+let memoryLibraryCache: {
+  data: any;
+  expiresAt: number;
+  dateStr: string;
+} | null = null;
+let revalidatingPromise: Promise<any> | null = null;
+
 export async function GET(request: Request) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // 1. Instant 0ms memory cache hit
+    if (memoryLibraryCache && memoryLibraryCache.dateStr === today && memoryLibraryCache.expiresAt > Date.now()) {
+      return NextResponse.json(memoryLibraryCache.data);
+    }
+
+    // 2. SWR: If we have an existing cache for today, serve it immediately and revalidate in the background
+    if (memoryLibraryCache && memoryLibraryCache.dateStr === today) {
+      if (!revalidatingPromise) {
+        revalidatingPromise = buildLibrary(request, today).finally(() => {
+          revalidatingPromise = null;
+        });
+      }
+      return NextResponse.json(memoryLibraryCache.data);
+    }
+
+    // 3. Fast Redis cache check (300ms timeout)
+    const redis = getRedisClient();
+    const cacheKey = 'market:library:segments:v9';
+    try {
+      const cached = await Promise.race([
+        redis.get(cacheKey),
+        new Promise((_, r) => setTimeout(() => r(null), 300))
+      ]);
+      if (cached) {
+        const parsed = JSON.parse(cached as string);
+        memoryLibraryCache = {
+          data: parsed,
+          expiresAt: Date.now() + 1800 * 1000,
+          dateStr: today,
+        };
+        return NextResponse.json(parsed);
+      }
+    } catch (e) {
+      console.error('[library] Redis get cache error:', e);
+    }
+
+    return await buildLibrary(request, today);
+  } catch (error: any) {
+    console.error('Library API Error:', error);
+    if (memoryLibraryCache?.data) {
+      return NextResponse.json(memoryLibraryCache.data);
+    }
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+async function buildLibrary(request: Request, today: string) {
   try {
     const url = new URL(request.url);
     const qsAtm: Record<string, number> = {
       'NIFTY': Number(url.searchParams.get('nifty')) || 0,
       'BANKNIFTY': Number(url.searchParams.get('banknifty')) || 0,
     };
-
+    const cacheKey = 'market:library:segments:v9';
     const redis = getRedisClient();
-    const cacheKey = 'market:library:segments:v8';
-    try {
-      const cached = await redis.get(cacheKey);
-      if (cached) {
-        return NextResponse.json(JSON.parse(cached));
-      }
-    } catch (e) {
-      console.error('[library] Redis get cache error:', e);
-    }
 
-    const today = new Date().toISOString().split('T')[0];
     const segments: any[] = [];
     let usedFallback = false;
 
@@ -833,17 +881,29 @@ export async function GET(request: Request) {
     ];
     segments.push({ name: 'US-EQ', icon: 'fa-flag-usa', instruments: usStockCatalog });
 
+    const responsePayload = { success: true, segments };
+
+    // Update in-memory cache for 30 minutes
+    memoryLibraryCache = {
+      data: responsePayload,
+      expiresAt: Date.now() + 1800 * 1000,
+      dateStr: today,
+    };
+
     try {
-      // Cache for 60 seconds so that strikes auto-update with spot price movements
-      const ttl = usedFallback ? 60 : 60;
-      await redis.set(cacheKey, JSON.stringify({ success: true, segments }), 'EX', ttl);
+      // Cache in Redis for 1800 seconds (30 mins)
+      const ttl = 1800;
+      await redis.set(cacheKey, JSON.stringify(responsePayload), 'EX', ttl);
     } catch (e) {
       console.error('[library] Redis set cache error:', e);
     }
 
-    return NextResponse.json({ success: true, segments });
+    return NextResponse.json(responsePayload);
   } catch (error: any) {
     console.error('Library API Error:', error);
+    if (memoryLibraryCache?.data) {
+      return NextResponse.json(memoryLibraryCache.data);
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

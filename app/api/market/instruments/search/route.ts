@@ -483,6 +483,13 @@ async function fetchLivePrices(
   }
 }
 
+interface SearchCacheEntry {
+  results: any[];
+  cachedAt: number;
+}
+const searchCache = new Map<string, SearchCacheEntry>();
+const MAX_SEARCH_CACHE_SIZE = 500;
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -493,6 +500,13 @@ export async function GET(request: NextRequest) {
 
     if (q.length < 1) {
       return NextResponse.json([]);
+    }
+
+    const authHeader = request.headers.get('Authorization') || 'anon';
+    const cacheKey = `${authHeader.slice(-16)}:${tab}:${q.toUpperCase()}`;
+    const cached = searchCache.get(cacheKey);
+    if (cached && (Date.now() - cached.cachedAt < 120_000)) {
+      return NextResponse.json(cached.results);
     }
 
     let data: any[] | null = null;
@@ -1312,6 +1326,12 @@ export async function GET(request: NextRequest) {
         return forexPattern.test(text) && !/GOLD|SILVER|CRUDEOIL|NATURALGAS|COPPER|ZINC|LEAD|ALUMINIUM/i.test(text);
       });
     }
+
+    if (searchCache.size >= MAX_SEARCH_CACHE_SIZE) {
+      const firstKey = searchCache.keys().next().value;
+      if (firstKey) searchCache.delete(firstKey);
+    }
+    searchCache.set(cacheKey, { results, cachedAt: Date.now() });
 
     return NextResponse.json(results);
   } catch (err: any) {

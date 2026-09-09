@@ -90,14 +90,24 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       await fetchOrders();
       if (cancelled) return;
       intervalRef.current = setInterval(() => {
-        fetchOrders();
-      }, refreshInterval);
+        if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+          fetchOrders();
+        }
+      }, Math.max(refreshInterval, 8000));
     }
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchOrders();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
     init();
 
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', handleVisibility);
       if (intervalRef.current) clearInterval(intervalRef.current);
       supabase.removeChannel(channel);
       window.removeEventListener('order_placed', handleOrderPlaced);

@@ -125,15 +125,25 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       if (!cancelled) setLoading(false);
     }
 
-    // Active balance polling fallback: fetch balance every 5 seconds to ensure
-    // accurate account balance under any network/realtime latency.
+    // Active balance polling fallback: fetch balance every 10 seconds as safety net
+    // (paused when tab is hidden, immediate refresh when tab becomes visible)
     const timer = setInterval(() => {
-      if (!cancelled) fetchBalance();
-    }, 5000);
+      if (!cancelled && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
+        fetchBalance();
+      }
+    }, 10000);
+
+    const handleVisibility = () => {
+      if (!cancelled && document.visibilityState === 'visible') {
+        fetchBalance();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       cancelled = true;
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
       subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
       window.removeEventListener('order_placed', handleOrderPlaced);

@@ -653,9 +653,6 @@ function WatchlistContent() {
     };
 
     fetchSegments(); // Initial fetch
-    const interval = setInterval(fetchSegments, 60000); // Re-fetch every 60s to auto-update strikes
-
-    return () => clearInterval(interval);
   }, []);
 
   const router = useRouter();

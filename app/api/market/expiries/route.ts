@@ -9,14 +9,23 @@ function getSupabase() {
   });
 }
 
+// In-memory cache for index expiries (1-hour TTL)
+let cachedExpiries: { data: Record<string, string>; expiresAt: number; dateStr: string } | null = null;
+
 export async function GET() {
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+
+  // Return cached expiries if fresh and for the current calendar date
+  if (cachedExpiries && cachedExpiries.dateStr === todayStr && cachedExpiries.expiresAt > Date.now()) {
+    return NextResponse.json({ success: true, expiries: cachedExpiries.data });
+  }
+
   const supabase = getSupabase();
   try {
-    const todayStr = new Date().toISOString().split('T')[0];
     const symbols = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'];
     const earliest: Record<string, string> = {};
 
-    const now = new Date();
     const marketClose = new Date();
     marketClose.setHours(15, 30, 0, 0);
 
@@ -46,9 +55,19 @@ export async function GET() {
       }
     }));
 
+    // Cache for 1 hour
+    cachedExpiries = {
+      data: earliest,
+      expiresAt: Date.now() + 3600 * 1000,
+      dateStr: todayStr,
+    };
+
     return NextResponse.json({ success: true, expiries: earliest });
   } catch (err: any) {
     console.error('[market/expiries] Error:', err);
+    if (cachedExpiries?.data) {
+      return NextResponse.json({ success: true, expiries: cachedExpiries.data });
+    }
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

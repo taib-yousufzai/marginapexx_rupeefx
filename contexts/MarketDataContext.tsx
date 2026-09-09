@@ -727,13 +727,22 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
     };
 
-    fetchInitialQuotesRef.current = fetchInitialQuotes;
-    fetchInitialQuotes();
+    const pollInterval = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        fetchInitialQuotes();
+      }
+    }, 4000);
 
-    const pollInterval = setInterval(fetchInitialQuotes, 4000);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchInitialQuotes();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibility);
       wsManager.removeListener(onMessage);
     };
   }, []);

@@ -152,7 +152,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       settlement: partialPos.settlement || '',
       side: partialPos.side || 'BUY',
       qty_open: partialPos.qty_open || 0,
-      lots: partialPos.lots || 0,
+      lots: (partialPos as any).lots || 0,
       entry_price: partialPos.entry_price || 0,
       avg_price: partialPos.avg_price || partialPos.entry_price || 0,
       ltp: partialPos.ltp || partialPos.entry_price || 0,
@@ -163,7 +163,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       locked_margin: partialPos.locked_margin || 0,
       brokerage: 0,
       ...partialPos,
-      id: tempId,
     } as MyPosition;
 
     optimisticPositionIds.current.add(tempId);
@@ -365,14 +364,24 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     window.addEventListener('order_executed', handleOrderPlaced);
 
     // Active polling fallback: even when subscribed to realtime channels,
-    // poll every refreshInterval (default 5s) to guarantee zero latency on backend liquidations.
-    const pollTime = Math.min(refreshInterval, 5000);
+    // poll every 8s as a safety net (paused when tab is in background)
+    const pollTime = Math.max(refreshInterval, 8000);
     const timer = setInterval(() => {
-      fetchPositions();
+      if (document.visibilityState === 'visible') {
+        fetchPositions();
+      }
     }, pollTime);
+
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchPositions();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', handleVisibility);
       supabase.removeChannel(channel);
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('order_placed_with_data', handleOrderPlacedWithData);

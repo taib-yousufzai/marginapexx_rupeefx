@@ -348,10 +348,20 @@ export default function Page() {
 
   const [marketRow1Keys, setMarketRow1Keys] = useState<string[]>(getInitialMarketRow1);
   const [marketRow2Keys, setMarketRow2Keys] = useState<string[]>(getInitialMarketRow2);
-  const [isResolvingContracts, setIsResolvingContracts] = useState<boolean>(true);
+  const [isResolvingContracts, setIsResolvingContracts] = useState<boolean>(false);
 
   useEffect(() => {
     async function resolveExpiredContracts() {
+      const initialR1 = getInitialMarketRow1();
+      const initialR2 = getInitialMarketRow2();
+      const allKeys = [...initialR1, ...initialR2];
+      
+      // Fast path: If all initial contracts are already active and valid, skip DB queries entirely
+      const hasExpired = allKeys.some(k => isContractExpired(k));
+      if (!hasExpired) {
+        return;
+      }
+
       setIsResolvingContracts(true);
       try {
         const bases = [
@@ -362,26 +372,32 @@ export default function Page() {
           { name: 'NATURALGAS', prefix: 'MCX', type: ['FUTCOM', 'FUT', 'MAPPED_FUT'] }
         ];
 
-        const initialR1 = getInitialMarketRow1();
-        const initialR2 = getInitialMarketRow2();
         const newRow1 = [...initialR1];
         const newRow2 = [...initialR2];
         let changed = false;
 
-        for (const base of bases) {
+        // Query in parallel with 1500ms timeout instead of 5 sequential blocking queries
+        const todayStr = new Date().toISOString().split('T')[0];
+        await Promise.all(bases.map(async (base) => {
           const row1Idx = newRow1.findIndex(k => k.includes(base.name));
           const row2Idx = newRow2.findIndex(k => k.includes(base.name));
           
           if (row1Idx !== -1 || row2Idx !== -1) {
-            const { data } = await supabase
+            const queryPromise = supabase
               .from('instruments')
               .select('tradingsymbol')
               .eq('name', base.name)
               .in('instrument_type', base.type)
-              .gte('expiry', new Date().toISOString().split('T')[0])
+              .gte('expiry', todayStr)
               .order('expiry', { ascending: true })
               .limit(1)
               .maybeSingle();
+
+            const timeoutPromise = new Promise<{ data: any }>((resolve) =>
+              setTimeout(() => resolve({ data: null }), 1500)
+            );
+
+            const { data } = await Promise.race([queryPromise, timeoutPromise]);
 
             if (data?.tradingsymbol) {
               const resolvedKey = `${base.prefix}:${data.tradingsymbol}`;
@@ -395,7 +411,7 @@ export default function Page() {
               }
             }
           }
-        }
+        }));
 
         if (changed) {
           setMarketRow1Keys(newRow1);

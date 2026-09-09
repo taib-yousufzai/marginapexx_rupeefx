@@ -273,9 +273,36 @@ const COMMODITY_ALIAS_MAP: Record<string, string> = {
   'USDINR_FUT': 'CDS:USDINR26SEPFUT',
 };
 
+// In-memory quote cache with 2500ms TTL to eliminate redundant polling latency
+const inMemoryQuoteCache = new Map<string, { quote: any; cachedAt: number }>();
+
 async function handleQuotesRequest(instruments: string[], request: NextRequest): Promise<NextResponse> {
   if (instruments.length === 0) {
     return NextResponse.json({ data: {} });
+  }
+
+  // 0. Check in-memory quote cache first
+  const now = Date.now();
+  const finalMappedData: Record<string, any> = {};
+  const uncachedInstruments: string[] = [];
+
+  for (const id of instruments) {
+    if (!id) continue;
+    const cleanSym = id.includes(':') ? id.split(':')[1] : id;
+    const unspaced = cleanSym.replace(/\s+/g, '');
+    const entry = inMemoryQuoteCache.get(id) || inMemoryQuoteCache.get(cleanSym) || inMemoryQuoteCache.get(unspaced);
+    if (entry && (now - entry.cachedAt < 2500)) {
+      finalMappedData[id] = entry.quote;
+      finalMappedData[cleanSym] = entry.quote;
+      finalMappedData[unspaced] = entry.quote;
+    } else {
+      uncachedInstruments.push(id);
+    }
+  }
+
+  // If all requested quotes were in memory and fresh, return immediately (<1ms)
+  if (uncachedInstruments.length === 0) {
+    return NextResponse.json({ data: finalMappedData });
   }
 
   try {
@@ -288,7 +315,7 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
     const usRequestIds: string[] = [];
 
     // Separate Crypto symbols, Forex symbols, US symbols, direct Kite IDs (NSE:RELIANCE), and DB IDs
-    for (const rawId of instruments) {
+    for (const rawId of uncachedInstruments) {
       if (!rawId) continue;
       const id = rawId.trim();
       const idUpper = id.toUpperCase();
@@ -300,7 +327,6 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
         if (!directKiteIds.includes(aliasTarget)) directKiteIds.push(aliasTarget);
         continue;
       }
-
       if (isCryptoSymbol(id)) {
         cryptoRequestIds.push(id);
         realToRequestedMap[id] = id;
@@ -464,7 +490,7 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
         const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : null);
         if (tickerUrl) {
           const params = new URLSearchParams({ symbols: remainingKiteIds.join(',') });
-          const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(2000) });
+          const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(500) });
           if (resTicker.ok) {
             const json = await resTicker.json();
             if (json.success && json.data) {
@@ -576,6 +602,14 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
         finalMappedData[cleanSym] = fallbackQuote;
         finalMappedData[unspaced] = fallbackQuote;
         if (realToRequestedMap[reqId]) finalMappedData[realToRequestedMap[reqId]] = fallbackQuote;
+      }
+    }
+
+    // Save all resolved quotes into process memory cache (2500ms TTL)
+    const cacheTime = Date.now();
+    for (const [key, quote] of Object.entries(finalMappedData)) {
+      if (quote) {
+        inMemoryQuoteCache.set(key, { quote, cachedAt: cacheTime });
       }
     }
 
