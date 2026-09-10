@@ -402,11 +402,7 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments = [], toggle
     let high = (q?.high && q.high > 0) ? q.high : (res.high || 0);
     let low = (q?.low && q.low > 0) ? q.low : (res.low || 0);
     const isForexUsd = ['GBPUSD', 'EURUSD'].includes((res.symbol || '').toUpperCase());
-    if (isForexUsd && price > 0 && price < 20) {
-      price = price * 83.85;
-      if (high > 0 && high < 20) high = high * 83.85;
-      if (low > 0 && low < 20) low = low * 83.85;
-    }
+    // Keep raw currency prices for Forex/Crypto/COMEX
 
     return (
       <div

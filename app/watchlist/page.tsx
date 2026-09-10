@@ -453,11 +453,8 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
     absoluteChange = ltp - prevClose;
     percentChange = prevClose !== 0 ? ((ltp - prevClose) / prevClose) * 100 : 0;
   } else if (showComex) {
-    const rawLtp = comexQuote?.lastPrice ?? item.price ?? 0;
-    const rawClose = comexQuote?.close ?? (item.close || rawLtp);
-    const rate = comexQuote?.currency === 'USD' ? 83.85 : 1;
-    ltp = rawLtp * rate;
-    prevClose = rawClose * rate;
+    ltp = comexQuote?.lastPrice ?? item.price ?? 0;
+    prevClose = comexQuote?.close ?? (item.close || ltp);
     absoluteChange = ltp - prevClose;
     percentChange = prevClose !== 0 ? ((ltp - prevClose) / prevClose) * 100 : 0;
   } else {
@@ -484,12 +481,7 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
   }
 
   const isForexUsd = symCheck.includes('GBPUSD') || symCheck.includes('EURUSD') || symCheck.includes('GBP/USD') || symCheck.includes('EUR/USD');
-  if (isForexUsd && ltp > 0 && ltp < 20) {
-    ltp *= 83.85;
-    if (prevClose > 0 && prevClose < 20) prevClose *= 83.85;
-    absoluteChange = ltp - prevClose;
-    percentChange = prevClose !== 0 ? ((ltp - prevClose) / prevClose) * 100 : 0;
-  }
+  // Raw currency prices maintained for Forex/Crypto/COMEX
 
   const isLoading = ltp === 0;
 
@@ -930,13 +922,8 @@ function WatchlistContent() {
     currentLtp = currentBinanceQuote.lastPrice;
     currentChangePercent = currentBinanceQuote.changePercent;
   } else if (isComex && currentComexQuote) {
-    const rate = currentComexQuote.currency === 'USD' ? 83.85 : 1;
-    currentLtp = currentComexQuote.lastPrice * rate;
+    currentLtp = currentComexQuote.lastPrice;
     currentChangePercent = currentComexQuote.changePercent;
-    if (detailOpen) detailOpen *= rate;
-    if (detailHigh) detailHigh *= rate;
-    if (detailLow) detailLow *= rate;
-    if (detailClose) detailClose *= rate;
   } else if (currentKiteQuote) {
     currentLtp = currentKiteQuote.lastPrice;
     currentChangePercent = currentKiteQuote.changePercent;
@@ -963,20 +950,16 @@ function WatchlistContent() {
   const isDetailForexUsd = detailSymCheck.includes('GBPUSD') || detailSymCheck.includes('EURUSD') || detailSymCheck.includes('GBP/USD') || detailSymCheck.includes('EUR/USD');
 
   if (isDetailForexUsd && currentLtp > 0 && currentLtp < 20) {
-    currentLtp *= 83.85;
+    // Keep raw price
   }
 
   const formatPrice = (price: number | undefined | null) => {
     if (price === undefined || price === null || isNaN(price as number)) return '--';
     let p = price;
-    if (isDetailForexUsd && p > 0 && p < 20) {
-      p *= 83.85;
-    } else if (isComex && currentComexQuote?.currency === 'USD' && p > 0 && p < 20000) {
-      p *= 83.85;
-    }
-    const sym = '₹';
-    const locale = 'en-IN';
-    return `${sym}${p.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const isUsCurrency = isDetailForexUsd || isComex || isCrypto || selectedItem?.segment?.includes('US') || selectedItem?.segment?.includes('FOREX');
+    const sym = isUsCurrency ? '$' : '₹';
+    const locale = isUsCurrency ? 'en-US' : 'en-IN';
+    return `${sym}${p.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: isUsCurrency ? 4 : 2 })}`;
   };
 
   const dbSeg = selectedItem ? mapSegmentWithSymbol(selectedItem.segment, selectedItem.symbol || selectedItem.name || '') : '';
@@ -1011,8 +994,7 @@ function WatchlistContent() {
   }
 
   if (isDetailForexUsd) {
-    if (rawBid > 0 && rawBid < 20) rawBid *= 83.85;
-    if (rawAsk > 0 && rawAsk < 20) rawAsk *= 83.85;
+    // Keep raw bid/ask
   }
 
 
@@ -1466,12 +1448,11 @@ function WatchlistContent() {
     if (legItem.comexSymbol) {
       return comexQuotes?.[legItem.comexSymbol]?.lastPrice ?? legItem.price;
     }
-    return (
-      (legItem.kiteSymbol && marketQuotes?.[legItem.kiteSymbol]) ||
-      (legItem.symbol && marketQuotes?.[legItem.symbol]) ||
-      (legItem.symbol && marketQuotes?.[legItem.symbol.replace(/\s+/g, '')]) ||
-      (legItem.name && marketQuotes?.[legItem.name])
-    )?.lastPrice ?? legItem.price;
+    const q = (legItem.kiteSymbol ? marketQuotes?.[legItem.kiteSymbol] : null) ||
+      (legItem.symbol ? marketQuotes?.[legItem.symbol] : null) ||
+      (legItem.symbol ? marketQuotes?.[legItem.symbol.replace(/\s+/g, '')] : null) ||
+      (legItem.name ? marketQuotes?.[legItem.name] : null);
+    return (q && typeof q !== 'string' ? q.lastPrice : undefined) ?? legItem.price;
   };
 
   useEffect(() => {
@@ -2095,7 +2076,7 @@ function WatchlistContent() {
                 
                 const ltp = currentLtp;
                 const chgPct = currentChangePercent;
-                const fmt = (v: number) => formatPrice(v);
+                const fmt = (v: number | undefined) => formatPrice(v);
                 return (
                   <div style={{ padding: '0' }}>
                     <div style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
@@ -2198,10 +2179,10 @@ function WatchlistContent() {
                       <div style={{ marginBottom: '8px' }}>
                         <div style={{ fontSize: '0.62rem', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '6px' }}>PRICE SUMMARY</div>
                         <div style={{ background: 'var(--card-alt-bg)', border: '1px solid var(--border-card)', borderRadius: '14px', padding: '8px 10px', display: 'flex', justifyContent: 'space-between' }}>
-                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>OPEN</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669' }}>{fmt(detailOpen)}</div></div>
-                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>HIGH</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669' }}>{fmt(detailHigh)}</div></div>
-                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>LOW</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#DC2626' }}>{fmt(detailLow)}</div></div>
-                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>CLOSE</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: 'var(--text-primary)' }}>{fmt(detailClose)}</div></div>
+                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>OPEN</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669' }}>{fmt(detailOpen ?? 0)}</div></div>
+                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>HIGH</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#059669' }}>{fmt(detailHigh ?? 0)}</div></div>
+                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>LOW</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#DC2626' }}>{fmt(detailLow ?? 0)}</div></div>
+                          <div style={{ textAlign: 'center' }}><div style={{ fontSize: '0.52rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>CLOSE</div><div style={{ fontSize: '0.72rem', fontWeight: '700', color: 'var(--text-primary)' }}>{fmt(detailClose ?? 0)}</div></div>
                         </div>
                       </div>
                       <div style={{ background: 'var(--card-alt-bg)', border: '1px solid var(--border-card)', borderRadius: '14px', padding: '8px 12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>

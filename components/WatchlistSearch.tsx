@@ -466,11 +466,7 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
                 let high = (q?.high && q.high > 0) ? q.high : (r.high || 0);
                 let low = (q?.low && q.low > 0) ? q.low : (r.low || 0);
                 const isForexUsd = ['GBPUSD', 'EURUSD'].includes((r.symbol || '').toUpperCase());
-                if (isForexUsd && price > 0 && price < 20) {
-                  price = price * 83.85;
-                  if (high > 0 && high < 20) high = high * 83.85;
-                  if (low > 0 && low < 20) low = low * 83.85;
-                }
+                // Keep raw currency prices for Forex/Crypto/COMEX
                 return (
                   <div
                     key={`${r.kiteSymbol || r.symbol}-${i}`}

@@ -404,7 +404,7 @@ async function fetchLivePrices(
     }
 
     // 4. Fetch missing Binance / Forex quotes in parallel
-    const usdInrRate = 83.85;
+    const usdInrRate = 1;
     await Promise.all(
       missingKiteIds.map(async (id) => {
         const cleanSym = id.split(':').pop() || id;

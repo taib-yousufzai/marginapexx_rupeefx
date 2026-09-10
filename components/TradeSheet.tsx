@@ -118,7 +118,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   // getLotSize and getSegment come from the shared TradeConfigProvider
   const { getLotSize, getSegment } = useTradeConfig();
-  const currencySymbol = '₹';
   const [showCharges, setShowCharges] = useState(false);
 
   const { positions: activePositions, refreshPositions } = useActivePositions();
@@ -137,6 +136,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const isComex = item && (item as any).preferredView
     ? (item as any).preferredView === 'comex'
     : (dbSeg.toUpperCase().includes('COMEX') || !!item?.comexSymbol);
+
+  const isUsCurrency = isCrypto || isComex || (item?.segment || '').includes('US') || (item?.segment || '').includes('FOREX') || ['GBPUSD', 'EURUSD'].some(s => (item?.symbol || '').includes(s));
+  const currencySymbol = isUsCurrency ? '$' : '₹';
 
   let bSymbol = item?.binanceSymbol || (item && isCrypto && item.symbol ? item.symbol.replace('/', '') : '');
   if (bSymbol && !bSymbol.endsWith('USDT')) {
@@ -195,7 +197,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const symCheck = ((item?.symbol || '') + ' ' + (item?.name || '') + ' ' + (item?.kiteSymbol || '')).toUpperCase();
   const isForexUsd = symCheck.includes('GBPUSD') || symCheck.includes('EURUSD') || symCheck.includes('GBP/USD') || symCheck.includes('EUR/USD');
-  const usdInrRate = 83.85;
+  const usdInrRate = 1;
 
   const cryptoQuote = isCrypto && bSymbol ? (marketQuotes[bSymbol] || marketQuotes[item?.symbol?.replace('/', '') || '']) : null;
   const activeKiteQuote = (computedKiteSymbol && marketQuotes[computedKiteSymbol]) ||
@@ -210,10 +212,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     const prevClose = (cryptoQuote as any).prevClosePrice ?? (cryptoQuote as any).close ?? currentLtp;
     currentChangePercent = (cryptoQuote as any).changePercent ?? (prevClose > 0 ? ((currentLtp - prevClose) / prevClose) * 100 : 0);
   } else if (isComex && item?.comexSymbol && comexQuotes[item.comexSymbol]) {
-    const cQuote = comexQuotes[item.comexSymbol];
-    const rate = cQuote.currency === 'USD' ? usdInrRate : 1;
-    currentLtp = cQuote.lastPrice * rate;
-    currentChangePercent = cQuote.changePercent;
+    currentLtp = comexQuotes[item.comexSymbol].lastPrice;
+    currentChangePercent = comexQuotes[item.comexSymbol].changePercent;
   } else if (activeKiteQuote) {
     currentLtp = activeKiteQuote.lastPrice;
     currentChangePercent = activeKiteQuote.changePercent;
@@ -223,12 +223,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     currentLtp *= usdInrRate;
   }
 
-  // Fallback: if still no price and comexSymbol exists, use COMEX USD price converted to INR
+  // Fallback: if still no price and comexSymbol exists, use COMEX USD price
   if (currentLtp === 0 && item?.comexSymbol && comexQuotes[item.comexSymbol]) {
-    const cQuote = comexQuotes[item.comexSymbol];
-    const rate = cQuote.currency === 'USD' ? usdInrRate : 1;
-    currentLtp = cQuote.lastPrice * rate;
-    currentChangePercent = cQuote.changePercent;
+    currentLtp = comexQuotes[item.comexSymbol].lastPrice;
+    currentChangePercent = comexQuotes[item.comexSymbol].changePercent;
   }
 
   if (currentLtp === 0 && initialOrder) {
@@ -267,10 +265,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       rawBid = (activeCryptoQuote?.bid && activeCryptoQuote.bid > 0) ? activeCryptoQuote.bid : currentLtp;
       rawAsk = (activeCryptoQuote?.ask && activeCryptoQuote.ask > 0) ? activeCryptoQuote.ask : currentLtp;
     } else if (isComex && item?.comexSymbol && comexQuotes[item.comexSymbol]) {
-      const cQuote = comexQuotes[item.comexSymbol];
-      const rate = cQuote.currency === 'USD' ? usdInrRate : 1;
-      rawBid = (cQuote.bid || currentLtp) * rate;
-      rawAsk = (cQuote.ask || currentLtp) * rate;
+      rawBid = comexQuotes[item.comexSymbol].bid || currentLtp;
+      rawAsk = comexQuotes[item.comexSymbol].ask || currentLtp;
     } else if (activeKiteQuote) {
       rawBid = activeKiteQuote.bid || currentLtp;
       rawAsk = activeKiteQuote.ask || currentLtp;
@@ -861,7 +857,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         const hasLimitPrice = ['LIMIT', 'SL', 'GTT'].includes(resolvedOrderType) && resolvedClientPrice !== undefined && !isNaN(resolvedClientPrice);
         if (isLong) {
           if (resolvedStopLoss !== undefined && !isNaN(resolvedStopLoss)) {
-            const referencePrice = hasLimitPrice ? resolvedClientPrice : currentLtp;
+            const referencePrice = (hasLimitPrice && resolvedClientPrice !== undefined) ? resolvedClientPrice : currentLtp;
             if (resolvedStopLoss >= referencePrice) {
               showOrderError(`Stop loss price must be below the ${hasLimitPrice ? 'limit' : 'market'} price.`);
               return;
@@ -876,7 +872,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           }
         } else {
           if (resolvedStopLoss !== undefined && !isNaN(resolvedStopLoss)) {
-            const referencePrice = hasLimitPrice ? resolvedClientPrice : currentLtp;
+            const referencePrice = (hasLimitPrice && resolvedClientPrice !== undefined) ? resolvedClientPrice : currentLtp;
             if (resolvedStopLoss <= referencePrice) {
               showOrderError(`Stop loss price must be above the ${hasLimitPrice ? 'limit' : 'market'} price.`);
               return;
@@ -894,12 +890,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
       if (resolvedOrderType === 'LIMIT') {
         if (placeSide === 'BUY') {
-          if (resolvedClientPrice >= currentLtp) {
+          if (resolvedClientPrice !== undefined && resolvedClientPrice >= currentLtp) {
             showOrderError('Limit price must be lower than the current market price.');
             return;
           }
         } else {
-          if (resolvedClientPrice <= currentLtp) {
+          if (resolvedClientPrice !== undefined && resolvedClientPrice <= currentLtp) {
             showOrderError('Limit price must be higher than the current market price.');
             return;
           }
@@ -922,7 +918,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
 
       if (['LIMIT', 'SL', 'GTT'].includes(resolvedOrderType)) {
-        const parsedPrice = resolvedClientPrice;
+        const parsedPrice = resolvedClientPrice ?? currentLtp;
         if (placeSide === 'BUY') {
           if (pTopLimit > 0) {
             const maxAllowed = currentLtp * (1 + pTopLimit / 100);
@@ -1039,7 +1035,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             lots: finalLots,
             order_type: resolvedOrderType as any,
             product_type: ((currentLinkedPosId ? activePositions.find(p => p.id === currentLinkedPosId)?.product_type : undefined) || existingPos?.product_type || targetPT || 'INTRADAY') as 'INTRADAY' | 'CARRY',
-            client_price: resolvedClientPrice,
+            client_price: resolvedClientPrice ?? currentLtp,
             trigger_price: resolvedTriggerPrice,
             stop_loss: resolvedStopLoss,
             target: resolvedTarget,
@@ -1153,7 +1149,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             lots: finalLots,
             order_type: resolvedOrderType as any,
             product_type: productType,
-            client_price: resolvedClientPrice,
+            client_price: resolvedClientPrice ?? currentLtp,
             trigger_price: resolvedTriggerPrice,
             stop_loss: resolvedStopLoss,
             target: resolvedTarget,

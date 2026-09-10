@@ -75,7 +75,7 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
     ]);
 
     const isForexUsd = ['GBPUSD', 'EURUSD'].includes(cleanSym.replace('USDT', ''));
-    const usdInrRate = isForexUsd ? 83.85 : 1;
+    const usdInrRate = 1;
 
     if (bookRes?.ok && priceRes?.ok) {
       const bookData = await bookRes.json();

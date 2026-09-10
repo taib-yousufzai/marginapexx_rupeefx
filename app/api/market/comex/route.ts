@@ -83,18 +83,10 @@ export async function GET(req: NextRequest) {
           const meta = result.meta || {};
           const quote = result.indicators?.quote?.[0] || {};
           
-          const lastPriceUsd = meta.regularMarketPrice ?? quote.close?.[0] ?? 0;
-          const closeUsd = meta.chartPreviousClose ?? 0;
-          const changeUsd = lastPriceUsd - closeUsd;
-          const changePercent = closeUsd !== 0 ? (changeUsd / closeUsd) * 100 : 0;
-
-          const USD_INR_RATE = 83.85;
-          const lastPrice = Number((lastPriceUsd * USD_INR_RATE).toFixed(2));
-          const close = Number((closeUsd * USD_INR_RATE).toFixed(2));
-          const change = Number((changeUsd * USD_INR_RATE).toFixed(2));
-          const open = Number(((quote.open?.[0] ?? lastPriceUsd) * USD_INR_RATE).toFixed(2));
-          const high = Number(((meta.regularMarketDayHigh ?? quote.high?.[0] ?? lastPriceUsd) * USD_INR_RATE).toFixed(2));
-          const low = Number(((meta.regularMarketDayLow ?? quote.low?.[0] ?? lastPriceUsd) * USD_INR_RATE).toFixed(2));
+          const lastPrice = meta.regularMarketPrice ?? quote.close?.[0] ?? 0;
+          const close = meta.chartPreviousClose ?? 0;
+          const change = lastPrice - close;
+          const changePercent = close !== 0 ? (change / close) * 100 : 0;
 
           // meta.shortName gives the friendly contract name (e.g. "Gold Aug 26").
           // meta.symbol is just the generic ticker (GC=F), not the front-month contract code.
@@ -104,12 +96,12 @@ export async function GET(req: NextRequest) {
             lastPrice,
             change,
             changePercent,
-            open,
-            high,
-            low,
+            open:          quote.open?.[0] ?? lastPrice,
+            high:          meta.regularMarketDayHigh ?? quote.high?.[0] ?? lastPrice,
+            low:           meta.regularMarketDayLow ?? quote.low?.[0] ?? lastPrice,
             close,
             volume:        meta.regularMarketVolume ?? quote.volume?.[0] ?? 0,
-            currency:      'INR',
+            currency:      meta.currency ?? 'USD',
             name:          meta.shortName ?? symbol,
           };
         } catch (e) {

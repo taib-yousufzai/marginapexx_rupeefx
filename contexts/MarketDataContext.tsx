@@ -495,7 +495,7 @@ export function normalizeQuote(q: any, symbolKey?: string): QuoteData {
   const cleanSym = rawSym.replace(/^(CRYPTO|FOREX|MCX|COMEX|NCO|NFO|NSE|BSE):/, '');
 
   const isForexUsd = ['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'].includes(cleanSym);
-  const usdInrRate = 83.85;
+  const usdInrRate = 1;
 
   let close = Number(q.ohlc?.close ?? q.close ?? 0);
   let rawLastPrice = Number(q.last_price ?? q.lastPrice ?? q.price ?? close ?? 0);
