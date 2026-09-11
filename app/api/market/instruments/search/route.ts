@@ -240,17 +240,32 @@ function formatUIExpiry(dateStr: string | null): string {
  */
 function buildDisplayName(tradingsymbol: string, underlying: string, strike: number | null, optionType: string | null, expiry: string | null): string {
   const isRealValue = (v: any) => v !== null && v !== undefined && String(v).toLowerCase() !== 'null' && String(v).trim() !== '';
-  
-  const safeUnderlying = isRealValue(underlying) ? underlying : (isRealValue(tradingsymbol) ? tradingsymbol : '');
+
+  let derivedExpiry = isRealValue(expiry) ? expiry : null;
+  if (!derivedExpiry && isRealValue(tradingsymbol)) {
+    const m = tradingsymbol.match(/(\d{2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)/i);
+    if (m) {
+      const monthNames: Record<string, string> = {
+        JAN: 'Jan', FEB: 'Feb', MAR: 'Mar', APR: 'Apr', MAY: 'May', JUN: 'Jun',
+        JUL: 'Jul', AUG: 'Aug', SEP: 'Sep', OCT: 'Oct', NOV: 'Nov', DEC: 'Dec',
+      };
+      derivedExpiry = `${monthNames[m[2].toUpperCase()] || m[2]} 20${m[1]}`;
+    }
+  }
+
+  const cleanSym = isRealValue(tradingsymbol) ? tradingsymbol : '';
+  const safeUnderlying = isRealValue(underlying) && !['SILVER','GOLD','CRUDEOIL','COPPER','NATURALGAS'].includes(underlying.toUpperCase())
+    ? underlying
+    : (cleanSym || underlying || '');
 
   if (isRealValue(strike) && isRealValue(optionType)) {
-    const expLabel = isRealValue(expiry) ? ` (${expiry})` : '';
+    const expLabel = derivedExpiry ? ` (${derivedExpiry})` : '';
     return `${safeUnderlying} ${strike} ${optionType}${expLabel}`.trim();
-  } else if (isRealValue(expiry)) {
-    // Formatting for Futures (has expiry but no strike/optionType)
-    return `${safeUnderlying} FUT (${expiry})`.trim();
+  } else if (derivedExpiry) {
+    const base = isRealValue(underlying) ? underlying : safeUnderlying;
+    return `${base} FUT (${derivedExpiry})`.trim();
   }
-  return isRealValue(tradingsymbol) ? tradingsymbol : 'Unknown';
+  return cleanSym || 'Unknown';
 }
 
 /**
@@ -1133,12 +1148,20 @@ export async function GET(request: NextRequest) {
 
     // Map to watchlist-compatible shape
     let results = validRows.map((inst: any) => {
-      let segmentLabel = '';
-      const exch = inst.exchange === 'NFO' ? 'NSE' : inst.exchange === 'BFO' ? 'BSE' : inst.exchange;
+      const symUpper = (inst.tradingsymbol || '').toUpperCase();
+      const nameUpper = (inst.name || '').toUpperCase();
+      const isMcxCommodity = ['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUM'].some(c => symUpper.includes(c) || nameUpper.includes(c));
+      const exch = isMcxCommodity ? 'MCX' : (inst.exchange === 'NFO' ? 'NSE' : inst.exchange === 'BFO' ? 'BSE' : inst.exchange);
       const isIndex = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'].includes(inst.name);
       const type = inst.instrument_type;
 
-      if (type === 'OPTSTK' || (!isIndex && (type === 'CE' || type === 'PE' || type === 'OPT'))) {
+      if (isMcxCommodity) {
+        if (type === 'CE' || type === 'PE' || symUpper.endsWith('CE') || symUpper.endsWith('PE')) {
+          segmentLabel = 'MCX - Options';
+        } else {
+          segmentLabel = 'MCX - Futures';
+        }
+      } else if (type === 'OPTSTK' || (!isIndex && (type === 'CE' || type === 'PE' || type === 'OPT'))) {
         segmentLabel = `${exch} - Stock Options`;
       } else if (type === 'OPTIDX' || (isIndex && (type === 'CE' || type === 'PE' || type === 'OPT'))) {
         segmentLabel = `${exch} - Options`;

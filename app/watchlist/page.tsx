@@ -111,14 +111,13 @@ const DEFAULT_FOREX_ITEMS: WatchlistItem[] = [
   { name: 'JPY/INR', symbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
 ];
 
-// ── Default COMEX Items (MCX ₹ via Kite + COMEX $ via Yahoo proxy) ──────────────
-// Rows with both kiteSymbol + comexSymbol show a ₹⇄$ toggle pill
+// ── Default COMEX Items (Pure COMEX via Yahoo proxy) ──────────────
 
 const DEFAULT_COMEX_ITEMS: WatchlistItem[] = [
-  { name: 'GOLD', symbol: getCurrentFuturesSymbol('MCX', 'GOLD'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'GOLD'), comexSymbol: 'GC=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
-  { name: 'SILVER', symbol: getCurrentFuturesSymbol('MCX', 'SILVER'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'SILVER'), comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
-  { name: 'CRUDEOIL', symbol: getCurrentFuturesSymbol('MCX', 'CRUDEOIL'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'CRUDEOIL'), comexSymbol: 'CL=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
-  { name: 'COPPER', symbol: getCurrentFuturesSymbol('MCX', 'COPPER'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'COPPER'), comexSymbol: 'HG=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0 },
+  { name: 'Gold', symbol: 'GC=F', kiteSymbol: '', comexSymbol: 'GC=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'Silver', symbol: 'SI=F', kiteSymbol: '', comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'Crude Oil', symbol: 'CL=F', kiteSymbol: '', comexSymbol: 'CL=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'Copper', symbol: 'HG=F', kiteSymbol: '', comexSymbol: 'HG=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
 ];
 
 const DEFAULT_US_ITEMS: WatchlistItem[] = [
@@ -127,9 +126,9 @@ const DEFAULT_US_ITEMS: WatchlistItem[] = [
   { name: 'Nvidia Corp.', symbol: 'US:NVDA', kiteSymbol: 'US:NVDA', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
   { name: 'Microsoft Corp.', symbol: 'US:MSFT', kiteSymbol: 'US:MSFT', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
   { name: 'Amazon.com Inc.', symbol: 'US:AMZN', kiteSymbol: 'US:AMZN', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'S&P 500 E-mini Futures', symbol: 'US:ES=F', kiteSymbol: 'US:ES=F', comexSymbol: 'ES=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'Nasdaq 100 E-mini Futures', symbol: 'US:NQ=F', kiteSymbol: 'US:NQ=F', comexSymbol: 'NQ=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'Dow Jones E-mini Futures', symbol: 'US:YM=F', kiteSymbol: 'US:YM=F', comexSymbol: 'YM=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'S&P 500 E-mini Futures', symbol: 'ES=F', kiteSymbol: '', comexSymbol: 'ES=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'Nasdaq 100 E-mini Futures', symbol: 'NQ=F', kiteSymbol: '', comexSymbol: 'NQ=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'Dow Jones E-mini Futures', symbol: 'YM=F', kiteSymbol: '', comexSymbol: 'YM=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
 ];
 
 export function getDefaultWatchlistItems(): WatchlistItem[] {
@@ -332,9 +331,92 @@ export function filterBySearch(items: WatchlistItem[], query: string): Watchlist
 }
 
 /** Derives the exchange badge string from segment, name, and symbol. */
+export function getTabForItem(item: WatchlistItem): TabLabel {
+  const comb = `${item.name || ''} ${item.symbol || ''} ${item.segment || ''} ${item.category || ''}`.toUpperCase();
+  if (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUM'].some(c => comb.includes(c))) {
+    if (comb.includes(' CE') || comb.includes(' PE') || comb.endsWith('CE') || comb.endsWith('PE') || comb.includes('OPT')) return 'MCX-OPT';
+    if (comb.includes('COMEX') || (item.symbol || '').endsWith('=F')) return 'COMEX';
+    return 'MCX-FUT';
+  }
+
+  if (item.category) {
+    const c = item.category.toUpperCase();
+    if (c.includes('INDEX-FUT') || c.includes('INDEX - FUTURE')) return 'INDEX-FUT';
+    if (c.includes('INDEX-OPT') || c.includes('INDEX - OPTIONS')) return 'INDEX-OPT';
+    if (c.includes('STOCK-FUT') || c.includes('STOCKS - FUTURE')) return 'STOCK-FUT';
+    if (c.includes('STOCK-OPT') || c.includes('STOCKS - OPTIONS')) return 'STOCK-OPT';
+    if (c.includes('MCX-FUT') || c.includes('MCX - FUTURE')) return 'MCX-FUT';
+    if (c.includes('MCX-OPT') || c.includes('MCX - OPTIONS')) return 'MCX-OPT';
+    if (c.includes('NSE-EQ') || c.includes('EQUITY') || c.includes('STOCKS')) return 'STOCKS';
+    if (c.includes('CRYPTO')) return 'CRYPTO';
+    if (c.includes('FOREX')) return 'FOREX';
+    if (c.includes('COMEX') || c === 'COI') return 'COMEX';
+    if (c.includes('US-EQ') || c.includes('US EQUITY')) return 'US-EQ';
+  }
+
+  if (item.segment && SEGMENT_TAB_MAP[item.segment]) {
+    return SEGMENT_TAB_MAP[item.segment];
+  }
+
+  // Robust fallback for unmapped instruments
+  const n = (item.name || item.symbol || '').toUpperCase();
+  if (n.startsWith('US:') || n.includes('US-EQ')) return 'US-EQ';
+  if (n.includes('NATURALGAS') || n.includes('CRUDEOIL') || n.includes('GOLD') || n.includes('SILVER') || n.includes('COPPER') || n.includes('ZINC') || n.includes('MCX') || n.includes('ALUMINIUM') || n.includes('LEAD')) {
+    if (n.includes('CE') || n.includes('PE') || n.includes('OPT')) return 'MCX-OPT';
+    return 'MCX-FUT';
+  }
+
+  const CRYPTO_BASES = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'];
+  if (n.endsWith('USDT') || n.includes('CRYPTO') || CRYPTO_BASES.some(c => n === c || n.startsWith(`${c}USDT`) || n.startsWith(`${c}/`))) return 'CRYPTO';
+  if (n.includes('USDINR') || n.includes('EURINR') || n.includes('GBPINR') || n.includes('JPYINR') || n.includes('GBPUSD') || n.includes('EURUSD') || n.includes('USDJPY') || n.includes('USDCHF') || n.includes('USDCAD') || n.includes('AUDUSD') || n.includes('NZDUSD') || n.includes('CDS') || n.includes('FOREX')) return 'FOREX';
+
+  const isIndexName = n.includes('NIFTY') || n.includes('SENSEX') || n.includes('BANKEX') || n.includes('FINNIFTY') || n.includes('MIDCP') || n.includes('MIDCAP');
+  if (n.includes('CE') || n.includes('PE') || n.includes('OPT')) {
+    if (isIndexName) return 'INDEX-OPT';
+    return 'STOCK-OPT';
+  }
+  if (n.includes('FUT') || n.includes('FUTURES')) {
+    if (isIndexName) return 'INDEX-FUT';
+    return 'STOCK-FUT';
+  }
+
+  return 'STOCKS';
+}
+
+/** Filters items to those belonging to the active tab. */
+export function filterByTab(items: WatchlistItem[], tab: TabLabel): WatchlistItem[] {
+  if (tab === 'All') return items;
+  return items.filter(item => getTabForItem(item) === tab);
+}
+
+/** Filters items by word-start match on name/symbol. "Nif" matches "NIFTY" but not "FINNIFTY". */
+export function filterBySearch(items: WatchlistItem[], query: string): WatchlistItem[] {
+  if (!query.trim()) return items;
+  const q = query.toLowerCase();
+
+  function wordStartMatch(text: string): boolean {
+    const t = text.toLowerCase();
+    if (t.startsWith(q)) return true;
+    const words = t.split(/[\s\-_\/]/);
+    return words.some(w => w.startsWith(q));
+  }
+
+  return items.filter(
+    item => wordStartMatch(item.name) || wordStartMatch(item.symbol)
+  );
+}
+
+/** Derives the exchange badge string from segment, name, and symbol. */
 export function getExchangeBadge(segment: string, name?: string, symbol?: string): string {
   const segUpper = (segment || '').toUpperCase();
   const comb = `${name || ''} ${symbol || ''} ${segment || ''}`.toUpperCase();
+
+  const isCommodity = ['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUM'].some(c => comb.includes(c));
+  if (isCommodity) {
+    if (comb.includes(' CE') || comb.includes(' PE') || comb.endsWith('CE') || comb.endsWith('PE') || comb.includes('OPT')) return 'MCX-OPT';
+    if (segUpper.includes('COMEX') || (symbol || '').endsWith('=F')) return 'COMEX';
+    return 'MCX-FUT';
+  }
 
   if (segUpper.includes('US-EQ') || segUpper.includes('US EQUITY') || segUpper.includes('US - EQUITY') || (symbol || '').startsWith('US:')) return 'US-EQ';
   if (segUpper === 'STOCK-OPT' || segUpper.includes('STOCK OPTIONS') || segUpper.includes('STOCK OPT')) return 'STOCK-OPT';
@@ -434,7 +516,7 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
     symUp.endsWith('USDT') ||
     CRYPTO_BASES.some(c => symUp === c || symUp.startsWith(`${c}USDT`) || symUp.startsWith(`${c}/`))
   );
-  const isPureComex = !!item.comexSymbol && !item.kiteSymbol;
+  const isPureComex = segUpper.includes('COMEX') || catUpper.includes('COMEX') || symUp.endsWith('=F') || (!!item.comexSymbol && !item.kiteSymbol);
   const hasDualView = false;
   const showComex = isPureComex || (isForex && !!item.comexSymbol);
 
@@ -892,14 +974,42 @@ function WatchlistContent() {
   }, [binanceQuotesAsQuoteData]);
 
   const comexSymbols = Array.from(new Set([
-    ...watchlistItems.map(i => i.comexSymbol).filter((s): s is string => !!s),
-    ...(selectedItem?.comexSymbol ? [selectedItem.comexSymbol] : [])
+    ...watchlistItems.map(i => i.comexSymbol || (i.symbol.endsWith('=F') ? i.symbol : (
+      (i.segment || '').toUpperCase().includes('COMEX') ? (
+        (i.name || i.symbol || '').toUpperCase().includes('SILVER') ? 'SI=F' :
+        (i.name || i.symbol || '').toUpperCase().includes('GOLD') ? 'GC=F' :
+        (i.name || i.symbol || '').toUpperCase().includes('CRUDE') ? 'CL=F' :
+        (i.name || i.symbol || '').toUpperCase().includes('COPPER') ? 'HG=F' :
+        (i.name || i.symbol || '').toUpperCase().includes('NAT') ? 'NG=F' : ''
+      ) : ''
+    ))).filter((s): s is string => !!s),
+    ...(selectedItem?.comexSymbol ? [selectedItem.comexSymbol] : []),
+    ...(selectedItem && (selectedItem.segment || '').toUpperCase().includes('COMEX') ? [
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('SILVER') ? 'SI=F' :
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('GOLD') ? 'GC=F' :
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('CRUDE') ? 'CL=F' :
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('COPPER') ? 'HG=F' :
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('NAT') ? 'NG=F' : ''
+    ].filter(Boolean) : [])
   ]));
   const { quotes: comexQuotes } = useComexQuotes(comexSymbols, 1000);
 
   // ── Detail sheet: resolve live quote from correct source ─────────────────
   const isCrypto = !!(selectedItem?.binanceSymbol);
-  const isComex = !!(selectedItem?.comexSymbol) && (!(selectedItem?.kiteSymbol) || (selectedItem as any).preferredView === 'comex');
+  const isComex = !!selectedItem && (
+    (selectedItem.segment || '').toUpperCase().includes('COMEX') ||
+    (selectedItem.category || '').toUpperCase().includes('COMEX') ||
+    (selectedItem.symbol || '').endsWith('=F') ||
+    (!!selectedItem.comexSymbol && (!(selectedItem.kiteSymbol) || (selectedItem as any).preferredView === 'comex'))
+  );
+
+  const comexSymbolKey = selectedItem?.comexSymbol || (selectedItem?.symbol?.endsWith('=F') ? selectedItem.symbol : (
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('SILVER') ? 'SI=F' :
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('GOLD') ? 'GC=F' :
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('CRUDE') ? 'CL=F' :
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('COPPER') ? 'HG=F' :
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('NAT') ? 'NG=F' : ''
+  ));
 
   const currentKiteQuote = selectedItem ? (
     (selectedItem.kiteSymbol ? marketQuotes[selectedItem.kiteSymbol] : null) ||
@@ -909,7 +1019,7 @@ function WatchlistContent() {
     null
   ) : null;
   const currentBinanceQuote = selectedItem?.binanceSymbol ? (marketQuotes[selectedItem.binanceSymbol] || binanceQuotesAsQuoteData[selectedItem.binanceSymbol]) : null;
-  const currentComexQuote = selectedItem?.comexSymbol ? comexQuotes[selectedItem.comexSymbol] : null;
+  const currentComexQuote = comexSymbolKey ? comexQuotes[comexSymbolKey] : null;
 
   let currentLtp = 0;
   let currentChangePercent = 0;
@@ -956,10 +1066,9 @@ function WatchlistContent() {
   const formatPrice = (price: number | undefined | null) => {
     if (price === undefined || price === null || isNaN(price as number)) return '--';
     let p = price;
-    const isUsCurrency = isDetailForexUsd || isComex || isCrypto || selectedItem?.segment?.includes('US') || selectedItem?.segment?.includes('FOREX');
-    const sym = isUsCurrency ? '$' : '₹';
-    const locale = isUsCurrency ? 'en-US' : 'en-IN';
-    return `${sym}${p.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: isUsCurrency ? 4 : 2 })}`;
+    const sym = '₹';
+    const locale = 'en-IN';
+    return `${sym}${p.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
   const dbSeg = selectedItem ? mapSegmentWithSymbol(selectedItem.segment, selectedItem.symbol || selectedItem.name || '') : '';
@@ -1324,34 +1433,43 @@ function WatchlistContent() {
         const match = DEFAULT_FOREX_ITEMS.find(d => d.name === item.name || d.symbol === item.symbol);
         if (match) { migrated = true; return { ...match }; }
       }
-      // Upgrade legacy COMEX to dual-source MCX pairs
-      if (item.category === 'COI' && (!item.kiteSymbol || !item.kiteSymbol.startsWith('MCX:') || !item.comexSymbol)) {
+      // Ensure COMEX items are pure COMEX (Yahoo proxy symbols SI=F, GC=F, etc., kiteSymbol: '')
+      if (item.category === 'COMEX' || item.category === 'COI' || item.segment === 'COMEX - Futures' || item.segment === 'COMEX' || (item.symbol || '').endsWith('=F') || (item.comexSymbol || '').endsWith('=F')) {
         const itemNameUpper = (item.name || '').toUpperCase();
-        const match = DEFAULT_COMEX_ITEMS.find(d => {
-          const dNameUpper = d.name.toUpperCase();
-          return dNameUpper === itemNameUpper || dNameUpper.includes(itemNameUpper) || itemNameUpper.includes(dNameUpper);
-        });
-        if (match) { migrated = true; return { ...match }; }
-      }
-      // Fix COMEX items that have the wrong name casing, missing comexName, or Yahoo-style name (e.g. 'GC=F' → 'GOLD')
-      if (item.comexSymbol && item.kiteSymbol?.startsWith('MCX:')) {
-        const match = DEFAULT_COMEX_ITEMS.find(d => d.comexSymbol === item.comexSymbol || d.symbol === item.symbol);
-        if (match && (item.name !== match.name || !item.comexName || item.name.includes('=F'))) {
-          migrated = true;
-          return { ...match };
+        const itemSymUpper = (item.symbol || '').toUpperCase();
+        let targetSymbol = item.comexSymbol || (itemSymUpper.endsWith('=F') ? item.symbol : '');
+        if (!targetSymbol) {
+          if (itemNameUpper.includes('GOLD') || itemSymUpper.includes('GOLD')) targetSymbol = 'GC=F';
+          else if (itemNameUpper.includes('SILVER') || itemSymUpper.includes('SILVER')) targetSymbol = 'SI=F';
+          else if (itemNameUpper.includes('CRUDE') || itemSymUpper.includes('CRUDE')) targetSymbol = 'CL=F';
+          else if (itemNameUpper.includes('COPPER') || itemSymUpper.includes('COPPER')) targetSymbol = 'HG=F';
+        }
+        if (targetSymbol) {
+          const match = DEFAULT_COMEX_ITEMS.find(d => d.comexSymbol === targetSymbol || d.symbol === targetSymbol);
+          if (match) {
+            migrated = true;
+            return { ...match };
+          } else {
+            migrated = true;
+            return {
+              ...item,
+              symbol: targetSymbol,
+              kiteSymbol: '',
+              comexSymbol: targetSymbol,
+              category: 'COMEX',
+              segment: 'COMEX - Futures'
+            };
+          }
         }
       }
-      // Backfill missing comexSymbol on known MCX commodity items
-      if (!item.comexSymbol && item.kiteSymbol?.startsWith('MCX:')) {
-        const COMEX_MAP: Record<string, string> = {
-          GOLD: 'GC=F', SILVER: 'SI=F', CRUDEOIL: 'CL=F', COPPER: 'HG=F', NATURALGAS: 'NG=F'
-        };
-        const baseName = (item.name || '').toUpperCase().replace(/\s*\(COMEX\)/i, '').trim();
-        const cSym = COMEX_MAP[baseName];
-        if (cSym) {
-          migrated = true;
-          return { ...item, comexSymbol: cSym };
-        }
+      // Clean up MCX items that had erroneously attached comexSymbol
+      if (item.kiteSymbol?.startsWith('MCX:') && item.comexSymbol) {
+        migrated = true;
+        const copy = { ...item };
+        delete copy.comexSymbol;
+        copy.segment = 'MCX - Futures';
+        copy.category = 'MCX-FUT';
+        return copy;
       }
       // Upgrade expired commodity and forex futures contracts
       if (item.kiteSymbol && (

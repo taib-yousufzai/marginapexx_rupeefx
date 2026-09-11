@@ -479,7 +479,12 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
                     {/* Instrument row */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 8 }}>
                       <div className="sri-left" style={{ flex: 1, minWidth: 0 }}>
-                        <div className="sri-name">{r.name || r.symbol}</div>
+                        {(() => {
+                          const rawName = r.name || '';
+                          const isGenericCommodityName = ['SILVER', 'GOLD', 'CRUDEOIL', 'COPPER', 'NATURALGAS', 'NATGAS'].includes(rawName.toUpperCase().trim());
+                          const searchDisplayName = isGenericCommodityName ? (r.symbol ? r.symbol.replace(/^(MCX|NSE|BSE|CDS|NFO|BFO):/, '') : rawName) : (rawName || r.symbol);
+                          return <div className="sri-name">{searchDisplayName}</div>;
+                        })()}
                         <div className="sri-symbol">{r.segment}{r.contractDate ? ` • ${r.contractDate}` : ''}</div>
                         {/* High / Low range */}
                         {(high > 0 || low > 0) && (

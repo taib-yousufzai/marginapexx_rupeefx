@@ -40,6 +40,16 @@ function getExchangeBadge(segment: string, name?: string, symbol?: string): stri
   const segUpper = (segment || '').toUpperCase();
   const comb = `${name || ''} ${symbol || ''} ${segment || ''}`.toUpperCase();
 
+  if (segUpper.includes('COMEX') || (symbol || '').toUpperCase().endsWith('=F')) return 'COMEX';
+
+  const isCommodity = comb.includes('GOLD') || comb.includes('SILVER') || comb.includes('CRUDE') || comb.includes('NATGAS') || comb.includes('COPPER') || comb.includes('ZINC') || comb.includes('ALUM') || comb.includes('LEAD');
+  const isOption = comb.includes(' CE') || comb.includes(' PE') || comb.endsWith('CE') || comb.endsWith('PE') || comb.includes('OPT');
+
+  if (isCommodity) {
+    if (isOption) return 'MCX-OPT';
+    return 'MCX-FUT';
+  }
+
   if (segUpper === 'STOCK-OPT' || segUpper.includes('STOCK OPTIONS') || segUpper.includes('STOCK OPT')) return 'STOCK-OPT';
   if (segUpper === 'STOCK-FUT' || segUpper.includes('STOCK FUTURES') || segUpper.includes('STOCK FUT')) return 'STOCK-FUT';
   if (segUpper === 'INDEX-OPT' || segUpper.includes('INDEX OPTIONS') || segUpper.includes('INDEX OPT')) return 'INDEX-OPT';
@@ -49,7 +59,6 @@ function getExchangeBadge(segment: string, name?: string, symbol?: string): stri
 
   // Symbol / Name based resolution if segment is generic (e.g. "NSE", "NFO", "BFO")
   const isIndex = comb.includes('NIFTY') || comb.includes('BANKNIFTY') || comb.includes('FINNIFTY') || comb.includes('SENSEX') || comb.includes('BANKEX') || comb.includes('MIDCP') || comb.includes('MIDCAP');
-  const isOption = comb.includes(' CE') || comb.includes(' PE') || comb.endsWith('CE') || comb.endsWith('PE') || comb.includes('OPT');
   const isFuture = comb.includes(' FUT') || comb.endsWith('FUT') || comb.includes('FUTURES');
 
   if (isOption) {
@@ -91,7 +100,9 @@ export default function InstrumentRow({ item, quote, binanceQuote, comexQuote, o
                    symUp.endsWith('USDT') ||
                    CRYPTO_BASES.some(c => symUp === c || symUp.startsWith(`${c}USDT`) || symUp.startsWith(`${c}/`));
 
-  const isStock = !isCrypto && (
+  const isCommoditySymbol = ['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUM'].some(c => symUp.includes(c));
+
+  const isStock = !isCrypto && !isCommoditySymbol && (
     segUpper === 'STOCK-FUT' ||
     segUpper === 'STOCK-OPT' ||
     segUpper.includes('STOCK') ||
@@ -138,7 +149,25 @@ export default function InstrumentRow({ item, quote, binanceQuote, comexQuote, o
       <div className="wc-content instr-row__content">
         <div className="instr-row__left">
           <div className="instr-row__name-line">
-            <span className="instr-row__name">{showComex ? (comexQuote?.contractSymbol ?? item.comexName ?? item.name) : item.name}</span>
+            {(() => {
+              const contractTag = (() => {
+                if (item.contractDate) return item.contractDate;
+                const sym = item.symbol || item.kiteSymbol || '';
+                const m = sym.match(/(\d{2}[A-Z]{3})/i);
+                return m ? m[1].toUpperCase() : '';
+              })();
+
+              const rawName = item.name || '';
+              const isGenericCommodityName = ['SILVER', 'GOLD', 'CRUDEOIL', 'COPPER', 'NATURALGAS', 'NATGAS'].includes(rawName.toUpperCase().trim());
+              const baseName = isGenericCommodityName ? (item.symbol ? item.symbol.replace(/^(MCX|NSE|BSE|CDS|NFO|BFO):/, '') : rawName) : rawName;
+
+              const comexBaseName = comexQuote?.contractSymbol ?? item.comexName ?? baseName;
+              const displayName = showComex
+                ? (contractTag && !comexBaseName.toUpperCase().includes(contractTag.toUpperCase()) ? `${comexBaseName} (${contractTag})` : comexBaseName)
+                : baseName;
+
+              return <span className="instr-row__name">{displayName}</span>;
+            })()}
             <span className="exchange-badge" style={
               isCrypto ? { background: '#F0A500', color: '#fff' } :
                 showComex ? { background: '#4A148C', color: '#fff' } :

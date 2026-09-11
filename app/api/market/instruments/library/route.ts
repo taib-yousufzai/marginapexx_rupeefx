@@ -744,12 +744,12 @@ async function buildLibrary(request: Request, today: string) {
           const matchedMcx = mcxUnderlying ? mcxMap.get(mcxUnderlying) : null;
           return {
             name: i.tradingsymbol,
-            symbol: symbolMap[i.id] || i.tradingsymbol,
-            kiteSymbol: matchedMcx ? `MCX:${matchedMcx.tradingsymbol}` : '',
+            symbol: i.id,
+            kiteSymbol: '',
             comexSymbol: i.id,
             price: 0,
             change: '0%',
-            segment: matchedMcx ? 'MCX - Futures' : 'COMEX',
+            segment: 'COMEX - Futures',
             contractDate: matchedMcx ? matchedMcx.expiry : '',
             open: 0,
             high: 0,
