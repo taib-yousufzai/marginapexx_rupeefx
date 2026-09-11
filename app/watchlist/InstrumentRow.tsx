@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { QuoteData } from '@/hooks/useMarketQuotes';
 import { ComexQuoteData } from '@/contexts/ComexDataContext';
 import TickFlash from '@/components/TickFlash';
+import { fmtSymbolName } from '@/lib/format';
 
 export interface WatchlistItem {
   name: string;
@@ -12,6 +13,7 @@ export interface WatchlistItem {
   kiteSymbol: string;
   binanceSymbol?: string;
   comexSymbol?: string;
+  exchange?: string;
   price: number;
   change: string;
   segment: string;
@@ -160,7 +162,7 @@ export default function InstrumentRow({ item, quote, binanceQuote, comexQuote, o
               const rawName = item.name || '';
               const isComex = item.segment?.includes('COMEX') || item.exchange === 'COMEX' || item.symbol?.endsWith('=F') || item.symbol === 'SI=F' || item.symbol === 'GC=F';
               const isGenericCommodityName = !isComex && ['SILVER', 'GOLD', 'CRUDEOIL', 'COPPER', 'NATURALGAS', 'NATGAS'].includes(rawName.toUpperCase().trim());
-              const baseName = isGenericCommodityName ? (item.symbol ? item.symbol.replace(/^(MCX|NSE|BSE|CDS|NFO|BFO):/, '') : rawName) : (rawName || item.symbol);
+              const baseName = isComex ? fmtSymbolName(item.symbol, item.name) : (isGenericCommodityName ? (item.symbol ? item.symbol.replace(/^(MCX|NSE|BSE|CDS|NFO|BFO):/, '') : rawName) : (rawName || item.symbol));
 
               const comexBaseName = comexQuote?.contractSymbol ?? item.comexName ?? baseName;
               const displayName = showComex

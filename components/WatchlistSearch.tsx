@@ -5,6 +5,7 @@ import AnimatedLoader from '@/components/AnimatedLoader';
 import { api } from '@/lib/api';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
 import { useComexQuotes } from '@/hooks/useComexQuotes';
+import { fmtSymbolName } from '@/lib/format';
 
 interface WatchlistSearchProps {
   activeTab: TabLabel;
@@ -483,7 +484,7 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
                           const rawName = r.name || '';
                           const isComex = r.segment?.includes('COMEX') || r.exchange === 'COMEX' || r.symbol?.endsWith('=F') || r.symbol === 'SI=F' || r.symbol === 'GC=F';
                           const isGenericCommodityName = !isComex && ['SILVER', 'GOLD', 'CRUDEOIL', 'COPPER', 'NATURALGAS', 'NATGAS'].includes(rawName.toUpperCase().trim());
-                          const searchDisplayName = isGenericCommodityName ? (r.symbol ? r.symbol.replace(/^(MCX|NSE|BSE|CDS|NFO|BFO):/, '') : rawName) : (rawName || r.symbol);
+                          const searchDisplayName = isComex ? fmtSymbolName(r.symbol, r.name) : (isGenericCommodityName ? (r.symbol ? r.symbol.replace(/^(MCX|NSE|BSE|CDS|NFO|BFO):/, '') : rawName) : (rawName || r.symbol));
                           return <div className="sri-name">{searchDisplayName}</div>;
                         })()}
                         <div className="sri-symbol">{r.segment}{r.contractDate ? ` • ${r.contractDate}` : ''}</div>

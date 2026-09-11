@@ -9,6 +9,7 @@ interface Instrument {
   symbol: string;
   segment: string;
   kiteSymbol?: string;
+  comexSymbol?: string;
   price?: number;
   strike?: number;
   optionType?: string;
@@ -188,10 +189,10 @@ const BASE_TRADING_SEGMENTS: Segment[] = [
     icon: 'fa-gem',
     count: 4,
     instruments: [
-      { name: 'Gold', symbol: 'GC=F', comexSymbol: 'GC=F', segment: 'COMEX - Futures' },
-      { name: 'Silver', symbol: 'SI=F', comexSymbol: 'SI=F', segment: 'COMEX - Futures' },
-      { name: 'Crude Oil', symbol: 'CL=F', comexSymbol: 'CL=F', segment: 'COMEX - Futures' },
-      { name: 'Copper', symbol: 'HG=F', comexSymbol: 'HG=F', segment: 'COMEX - Futures' }
+      { name: 'GOLD', symbol: 'GC=F', comexSymbol: 'GC=F', segment: 'COMEX - Futures' },
+      { name: 'SILVER', symbol: 'SI=F', comexSymbol: 'SI=F', segment: 'COMEX - Futures' },
+      { name: 'CRUDE OIL', symbol: 'CL=F', comexSymbol: 'CL=F', segment: 'COMEX - Futures' },
+      { name: 'COPPER', symbol: 'HG=F', comexSymbol: 'HG=F', segment: 'COMEX - Futures' }
     ]
   },
   {

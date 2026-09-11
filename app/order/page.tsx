@@ -13,6 +13,7 @@ const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false
 import './page.css';
 import dynamic from 'next/dynamic';
 import { isUserVisibleInfo, sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
+import { fmtSymbolName, fmtPrice, fmtQty, fmtTime, fmtDate } from '@/lib/format';
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
 
@@ -311,7 +312,7 @@ export default function OrderPage() {
                       style={{ cursor: !isPending ? 'pointer' : 'default' }}
                     >
                       <div className="ord-row ord-row-top">
-                        <span className="ord-symbol">{order.symbol}</span>
+                        <span className="ord-symbol">{fmtSymbolName(order.symbol, order.name)}</span>
                         <span className={`ord-badge ${order.is_exit ? 'short' : (isBuy ? 'long' : 'short')}`}>
                           <i className={`fas fa-arrow-${order.is_exit ? 'up' : 'down'}`} />
                           {order.is_exit ? (isBuy ? 'SELL EXIT' : 'BUY EXIT') : (isBuy ? 'BUY' : 'SELL')}
@@ -418,7 +419,7 @@ export default function OrderPage() {
                   {/* Header row */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: '6px' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
-                      <div className="os-symbol" style={{ color: 'var(--text-primary, #1A1A1A)', margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>{selectedOrder.symbol}</div>
+                      <div className="os-symbol" style={{ color: 'var(--text-primary, #1A1A1A)', margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>{fmtSymbolName(selectedOrder.symbol, selectedOrder.name)}</div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                         <span className={`ord-badge ${selectedOrder.is_exit ? 'short' : (selectedOrder.side === 'BUY' ? 'long' : 'short')}`} style={{ fontSize: '0.65rem', padding: '2px 8px' }}>
                           <i className={`fas fa-arrow-${selectedOrder.is_exit ? 'up' : 'down'}`} style={{ marginRight: '4px' }} />

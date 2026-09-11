@@ -20,6 +20,7 @@ import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { generateRealisticFallbackQuote, FallbackQuote } from '@/lib/quoteFallback';
 import type { TradingInstrument } from '@/lib/types/instrument';
 import { useMyOrders } from '@/hooks/useMyOrders';
+import { fmtSymbolName } from '@/lib/format';
 
 /**
  * @deprecated Import `TradingInstrument` from `@/lib/types/instrument` instead.
@@ -1523,7 +1524,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               <div style={{ flex: 1, minWidth: 0 }}>
                 {/* Row 1: Name + Price */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div className="ts2-instr-name">{item.name}</div>
+                  <div className="ts2-instr-name">{fmtSymbolName(item.symbol, item.name)}</div>
                   <div className="ts2-price-value" style={{ flexShrink: 0, marginLeft: '12px' }}>{fmt(currentLtp)}</div>
                 </div>
                 {/* Row 2: Badge + Change% */}

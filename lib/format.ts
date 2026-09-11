@@ -269,3 +269,53 @@ export function fmtDuration(seconds: number): string {
   const s = seconds % 60;
   return `${h}h ${m}m ${s}s`;
 }
+
+// ─── Symbol & Instrument Formatting ──────────────────────────────────────────
+
+const COMEX_SYMBOL_MAP: Record<string, string> = {
+  'GC=F': 'GOLD',
+  'GC': 'GOLD',
+  'SI=F': 'SILVER',
+  'SI': 'SILVER',
+  'CL=F': 'CRUDE OIL',
+  'CL': 'CRUDE OIL',
+  'HG=F': 'COPPER',
+  'HG': 'COPPER',
+  'NG=F': 'NATURAL GAS',
+  'NG': 'NATURAL GAS',
+  'PL=F': 'PLATINUM',
+  'PL': 'PLATINUM',
+  'PA=F': 'PALLADIUM',
+  'PA': 'PALLADIUM',
+  'NQ=F': 'NASDAQ',
+  'NQ': 'NASDAQ',
+  'ES=F': 'S&P 500',
+  'ES': 'S&P 500',
+  'YM=F': 'DOW',
+  'YM': 'DOW',
+};
+
+/**
+ * Returns a clean display name for a trading instrument.
+ * Maps COMEX proxy ticker symbols (e.g. 'GC=F', 'SI=F', 'CL=F') to readable names ('GOLD', 'SILVER', 'CRUDE OIL').
+ */
+export function fmtSymbolName(symbol: string | null | undefined, name?: string | null): string {
+  if (!symbol && !name) return '—';
+  const symClean = (symbol || '').trim();
+  const symUpper = symClean.toUpperCase();
+
+  if (COMEX_SYMBOL_MAP[symUpper]) {
+    return COMEX_SYMBOL_MAP[symUpper];
+  }
+
+  const rawTicker = symUpper.split(':').pop() || '';
+  if (COMEX_SYMBOL_MAP[rawTicker]) {
+    return COMEX_SYMBOL_MAP[rawTicker];
+  }
+
+  if (name && name !== symbol && !name.endsWith('=F') && !name.includes('=F')) {
+    return name;
+  }
+
+  return symClean || name || '—';
+}

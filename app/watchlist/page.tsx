@@ -35,6 +35,7 @@ export interface WatchlistItem {
   binanceSymbol?: string;  // e.g. 'BTCUSDT' — crypto (Binance)
   comexSymbol?: string;  // e.g. 'GC=F'    — COMEX USD price (Yahoo Finance proxy, paired with kiteSymbol for MCX)
   comexName?: string;
+  exchange?: string;
   price: number;
   change: string;
   segment: string;
@@ -114,10 +115,10 @@ const DEFAULT_FOREX_ITEMS: WatchlistItem[] = [
 // ── Default COMEX Items (Pure COMEX via Yahoo proxy) ──────────────
 
 const DEFAULT_COMEX_ITEMS: WatchlistItem[] = [
-  { name: 'Gold', symbol: 'GC=F', kiteSymbol: '', comexSymbol: 'GC=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'Silver', symbol: 'SI=F', kiteSymbol: '', comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'Crude Oil', symbol: 'CL=F', kiteSymbol: '', comexSymbol: 'CL=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'Copper', symbol: 'HG=F', kiteSymbol: '', comexSymbol: 'HG=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'GOLD', symbol: 'GC=F', kiteSymbol: '', comexSymbol: 'GC=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'SILVER', symbol: 'SI=F', kiteSymbol: '', comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'CRUDE OIL', symbol: 'CL=F', kiteSymbol: '', comexSymbol: 'CL=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'COPPER', symbol: 'HG=F', kiteSymbol: '', comexSymbol: 'HG=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
 ];
 
 const DEFAULT_US_ITEMS: WatchlistItem[] = [

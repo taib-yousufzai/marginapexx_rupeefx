@@ -18,6 +18,7 @@ import PullToRefresh from '@/components/PullToRefresh';
 import { ErrorModal } from '@/components/ErrorModal';
 import HoldLockCountdown from '@/components/HoldLockCountdown';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
+import { fmtSymbolName } from '@/lib/format';
 import './page.css';
 
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
@@ -530,7 +531,8 @@ export default function PositionPage() {
   const groupedOpenPositions: GroupedPosition[] = useMemo(() => {
     const map = new Map<string, GroupedPosition>();
     for (const pos of openPositions) {
-      const displaySymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : pos.symbol;
+      const rawSymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : pos.symbol;
+      const displaySymbol = fmtSymbolName(rawSymbol, pos.name || (pos as any).instrument_name);
       const key = `${displaySymbol}|${pos.side}|${pos.product_type}`;
       const existing = map.get(key);
       if (!existing) {
@@ -595,7 +597,8 @@ export default function PositionPage() {
   const groupedClosedPositions: GroupedClosedPosition[] = useMemo(() => {
     const map = new Map<string, GroupedClosedPosition>();
     for (const pos of closedPositions) {
-      const displaySymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : pos.symbol;
+      const rawSymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : pos.symbol;
+      const displaySymbol = fmtSymbolName(rawSymbol, pos.name || (pos as any).instrument_name);
       const key = `${displaySymbol}|${pos.side}|${pos.product_type}`;
       const existing = map.get(key);
       const posBrokerage = Number((pos as any).brokerage || 0);
@@ -1187,7 +1190,7 @@ export default function PositionPage() {
                               {/* Left Side: Symbol and Metadata */}
                               <div className="pos-detail-left-col">
                                 <div className="pos-detail-symbol">
-                                  <span className="pos-symbol-text">{pos.kite_instrument ? pos.kite_instrument.split(':').pop() : pos.symbol}</span>
+                                  <span className="pos-symbol-text">{fmtSymbolName(pos.kite_instrument ? pos.kite_instrument.split(':').pop() : pos.symbol, pos.name)}</span>
                                 </div>
                                 <div className="pos-detail-meta">
                                   <div className="pos-detail-meta-row">
@@ -1290,7 +1293,7 @@ export default function PositionPage() {
                         <div key={pos.id} className="pos-card" onClick={() => handleRowClick(pos)}>
                           <div className="pos-card-left">
                             <div className="pos-card-symbol">
-                              <span className="pos-symbol-text">{pos.kite_instrument ? pos.kite_instrument.split(':').pop() : pos.symbol}</span>
+                              <span className="pos-symbol-text">{fmtSymbolName(pos.kite_instrument ? pos.kite_instrument.split(':').pop() : pos.symbol, pos.name)}</span>
                             </div>
                             <div className="pos-card-details">
                               <span>Entry: <strong>{fmtPrice(pos.entry_price, pos.settlement)}</strong></span>
@@ -1537,7 +1540,7 @@ export default function PositionPage() {
                       <div className="ps-header-row">
                         <div className="ps-header-left">
                           <div className="ps-symbol">
-                            <span className="pos-symbol-text">{selectedPos.symbol}</span>
+                            <span className="pos-symbol-text">{fmtSymbolName(selectedPos.symbol, (selectedPos as any).name)}</span>
                             {selectedPos.product_type && (
                               <span
                                 className="exchange-badge"
