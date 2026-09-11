@@ -518,10 +518,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json([]);
     }
 
+    const isEquityTab = tab === 'NSE-EQ' || tab === 'Equity' || tab === 'EQUITY' || tab === 'Stocks';
     const authHeader = request.headers.get('Authorization') || 'anon';
     const cacheKey = `${authHeader.slice(-16)}:${tab}:${q.toUpperCase()}`;
     const cached = searchCache.get(cacheKey);
-    if (cached && (Date.now() - cached.cachedAt < 120_000)) {
+    if (cached && (Date.now() - cached.cachedAt < 5000)) {
       return NextResponse.json(cached.results);
     }
 
@@ -606,15 +607,13 @@ export async function GET(request: NextRequest) {
     if (isForexPairQuery) {
       data = [];
     } else if (!data || data.length === 0) {
-      const isEquitySearch = tab === 'All' || tab === 'STOCKS' || tab === 'NSE-EQ' || tab === 'Equity' || tab === 'EQUITY' || tab === 'Stocks';
-
-      // 1. Dedicated Equity & Spot Index Query (NSE/BSE EQ & INDEX) to guarantee real stocks and indices (e.g. NIFTY 50, AARTIIND, ADANIENT) load at top priority
+      // 1. Dedicated Spot Index Query (NSE/BSE INDEX) to guarantee real spot indices (e.g. NIFTY 50, BANKNIFTY, SENSEX) load at top priority
       let eqPromise = Promise.resolve<{ data: any[] | null; error: any }>({ data: [], error: null });
-      if (isEquitySearch) {
+      if (tab === 'All' || isEquityTab) {
         let eqQry = getSupabase()
           .from('instruments')
           .select('tradingsymbol, name, exchange, instrument_type, segment, strike_price, option_type, expiry, underlying_symbol')
-          .in('instrument_type', ['EQ', 'INDEX'])
+          .in('instrument_type', isEquityTab ? ['EQ', 'INDEX'] : ['INDEX'])
           .in('exchange', ['NSE', 'BSE']);
 
         if (/^\d+(\.\d+)?$/.test(q)) {
@@ -702,9 +701,9 @@ export async function GET(request: NextRequest) {
         ]);
 
       const [eqRes, futRes, optRes] = await Promise.all([
-        timeoutPromise(eqPromise, 2000, { data: [], error: null }),
-        timeoutPromise(buildFuturesQuery(), 2000, { data: [], error: null }),
-        timeoutPromise(buildOptionsQuery(), 2000, { data: [], error: null }),
+        timeoutPromise(eqPromise, 4000, { data: [], error: null }),
+        timeoutPromise(buildFuturesQuery(), 4000, { data: [], error: null }),
+        timeoutPromise(buildOptionsQuery(), 4000, { data: [], error: null }),
       ]);
 
       error = eqRes.error || futRes.error || optRes.error;
@@ -784,6 +783,8 @@ export async function GET(request: NextRequest) {
     });
     const otherRows = rows.filter((r: any) => {
       if (r.exchange === 'CDS' || r.segment === 'CDS' || r.segment === 'CRYPTO') return false;
+      if (r.exchange === 'COMEX' || r.segment === 'COMEX' || r.instrument_type === 'COMEX') return false; // Handled by static comexSearchItems
+      if (r.instrument_type === 'EQ' && !isEquityTab) return false;
       const sym = (r.tradingsymbol || '').toUpperCase();
       if (r.option_type === 'CE' || r.option_type === 'PE') return false;
       if (r.instrument_type === 'CE' || r.instrument_type === 'PE') return false;
@@ -1030,16 +1031,13 @@ export async function GET(request: NextRequest) {
       // Sort by score
       if (scoreA !== scoreB) return scoreA - scoreB;
       
-      // Tie-breaker 1: Prefer MCX Commodity Futures when searching commodities, else prefer Equity
+      // Tie-breaker 1: Prefer MCX Commodity Futures when searching commodities
       const isCommodity = MCX_UNDERLYINGS.has(q.toUpperCase().trim());
       if (isCommodity) {
         const aIsCommodityFut = a.exchange === 'MCX' && (!a.option_type || a.instrument_type?.startsWith('FUT'));
         const bIsCommodityFut = b.exchange === 'MCX' && (!b.option_type || b.instrument_type?.startsWith('FUT'));
         if (aIsCommodityFut && !bIsCommodityFut) return -1;
         if (!aIsCommodityFut && bIsCommodityFut) return 1;
-      } else {
-        if (a.instrument_type === 'EQ' && b.instrument_type !== 'EQ') return -1;
-        if (b.instrument_type === 'EQ' && a.instrument_type !== 'EQ') return 1;
       }
       
       // Tie-breaker 2: Prefer Futures over Options
@@ -1148,10 +1146,12 @@ export async function GET(request: NextRequest) {
 
     // Map to watchlist-compatible shape
     let results = validRows.map((inst: any) => {
+      let segmentLabel = '';
       const symUpper = (inst.tradingsymbol || '').toUpperCase();
       const nameUpper = (inst.name || '').toUpperCase();
-      const isMcxCommodity = ['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUM'].some(c => symUpper.includes(c) || nameUpper.includes(c));
-      const exch = isMcxCommodity ? 'MCX' : (inst.exchange === 'NFO' ? 'NSE' : inst.exchange === 'BFO' ? 'BSE' : inst.exchange);
+      const rawExch = inst.exchange === 'NFO' ? 'NSE' : inst.exchange === 'BFO' ? 'BSE' : inst.exchange;
+      const isMcxCommodity = rawExch === 'MCX' || (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUM'].some(c => symUpper.includes(c) || nameUpper.includes(c)) && !['NSE', 'BSE', 'CDS', 'NFO', 'BFO'].includes(rawExch));
+      const exch = isMcxCommodity ? 'MCX' : rawExch;
       const isIndex = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY', 'SENSEX', 'BANKEX'].includes(inst.name);
       const type = inst.instrument_type;
 
