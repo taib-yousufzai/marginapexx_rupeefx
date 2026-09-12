@@ -254,6 +254,64 @@ class MarketWSManager {
     }
   }
 
+  private usStockInterval: ReturnType<typeof setInterval> | null = null;
+
+  private connectUSStocks() {
+    if (typeof window === 'undefined') return;
+    if (this.usStockInterval) return;
+
+    const pollUSQuotes = async () => {
+      const usSymbols: string[] = [];
+      const US_STOCKS = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC', 'SPY', 'QQQ', 'DIA'];
+      
+      for (const sym of Array.from(this.symbolRefCount.keys())) {
+        const clean = sym.replace(/^(US:|FOREX:)/i, '').trim().toUpperCase();
+        if (sym.toUpperCase().startsWith('US:') || US_STOCKS.includes(clean)) {
+          usSymbols.push(clean);
+        }
+      }
+
+      if (usSymbols.length === 0) return;
+
+      const unique = Array.from(new Set(usSymbols));
+      try {
+        const res = await fetch(`/api/market/us-quotes?symbols=${encodeURIComponent(unique.join(','))}`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const quotesMap = json?.quotes || {};
+
+        for (const [sym, q] of Object.entries(quotesMap)) {
+          const raw = q as any;
+          const price = raw.price || 0;
+          if (price <= 0) continue;
+
+          const quoteObj = {
+            timestamp: new Date().toISOString(),
+            last_price: price,
+            volume: 0,
+            ohlc: {
+              open: raw.prevClose || price,
+              high: raw.high || price,
+              low: raw.low || price,
+              close: raw.prevClose || price,
+            },
+            net_change: price - (raw.prevClose || price),
+            bid: price,
+            ask: price,
+          };
+
+          this.notifyListeners('update', { symbol: sym, quote: quoteObj });
+          this.notifyListeners('update', { symbol: `US:${sym}`, quote: quoteObj });
+        }
+      } catch (e) {
+        // fail silently
+      }
+    };
+
+    pollUSQuotes();
+    this.usStockInterval = setInterval(pollUSQuotes, 2000);
+  }
+
   private connect() {
     console.log('[MarketWSManager] connect() called, symbolRefCount:', this.symbolRefCount.size, 'ws state:', this.ws?.readyState);
 
@@ -263,6 +321,7 @@ class MarketWSManager {
     }
 
     this.connectBinance();
+    this.connectUSStocks();
 
     // Prevent overlapping connection attempts
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
