@@ -20,6 +20,8 @@ export interface USStockQuote {
 const quoteCache = new Map<string, { quote: USStockQuote; timestamp: number }>();
 const CACHE_TTL_MS = 2000;
 
+import { fetchMT5StockQuote, isMT5Configured } from './MT5StockService';
+
 export async function fetchUSStockQuote(symbol: string): Promise<USStockQuote | null> {
   const cleanSymbol = symbol.replace(/^US:/i, '').trim().toUpperCase();
   const cached = quoteCache.get(cleanSymbol);
@@ -28,37 +30,18 @@ export async function fetchUSStockQuote(symbol: string): Promise<USStockQuote | 
     return cached.quote;
   }
 
+  // 100% MT5 Datafeed
   try {
-    const res = await fetch(`https://query2.finance.yahoo.com/v8/finance/chart/${cleanSymbol}?interval=1d`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(1200),
-    });
-
-    if (!res.ok) return null;
-
-    const json = await res.json();
-    const meta = json?.chart?.result?.[0]?.meta;
-
-    if (!meta) return null;
-
-    const quote: USStockQuote = {
-      symbol: meta.symbol || cleanSymbol,
-      name: meta.longName || meta.shortName || cleanSymbol,
-      price: meta.regularMarketPrice ?? 0,
-      high: meta.regularMarketDayHigh ?? meta.regularMarketPrice ?? 0,
-      low: meta.regularMarketDayLow ?? meta.regularMarketPrice ?? 0,
-      prevClose: meta.chartPreviousClose ?? meta.regularMarketPrice ?? 0,
-      changePercent: meta.regularMarketChangePercent ?? 0,
-      currency: meta.currency || 'USD',
-    };
-
-    quoteCache.set(cleanSymbol, { quote, timestamp: Date.now() });
-    return quote;
+    const mt5Quote = await fetchMT5StockQuote(cleanSymbol);
+    if (mt5Quote) {
+      quoteCache.set(cleanSymbol, { quote: mt5Quote, timestamp: Date.now() });
+      return mt5Quote;
+    }
   } catch (err) {
-    console.warn(`[USStockService] Failed to fetch quote for ${cleanSymbol}:`, err);
-    return null;
+    console.warn(`[USStockService] MT5 fetch failed for ${cleanSymbol}:`, err);
   }
+
+  return null;
 }
 
 export async function fetchUSStockQuotes(symbols: string[]): Promise<Record<string, USStockQuote>> {
