@@ -42,7 +42,7 @@ export async function fetchBars(
     if (isCrypto) {
       return fetchBinanceBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);
     } else if (isGlobalYahooForex || isUs) {
-      return fetchYahooForexBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);
+      return fetchMT5ForexBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);
     } else {
       return fetchKiteBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);
     }
@@ -52,9 +52,9 @@ export async function fetchBars(
 }
 
 /**
- * Fetches bars from the server-side Yahoo Finance Forex proxy API (/api/market/historical-forex).
+ * Fetches bars from the server-side MT5 proxy API (/api/market/historical-forex).
  */
-async function fetchYahooForexBars(
+async function fetchMT5ForexBars(
   symbol: string,
   resolution: ResolutionString,
   periodParams: PeriodParams,

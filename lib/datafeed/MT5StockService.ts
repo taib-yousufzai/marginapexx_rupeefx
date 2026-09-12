@@ -140,3 +140,61 @@ export async function fetchMT5StockQuotes(symbols: string[]): Promise<Record<str
 
   return results;
 }
+
+/**
+ * Fetches historical candle bars from MT5 Web API for chart display.
+ */
+export async function fetchMT5HistoricalBars(
+  symbol: string,
+  interval: string,
+  fromSec: number,
+  toSec: number
+): Promise<any[][]> {
+  if (!isMT5Configured()) return [];
+
+  const mt5Symbol = formatMT5Symbol(symbol);
+  let rawUrl = process.env.MT5_WEB_API_URL!.trim().replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(rawUrl)) {
+    rawUrl = `http://${rawUrl}`;
+  }
+  const webApiUrl = rawUrl;
+  const login = process.env.MT5_LOGIN;
+  const password = process.env.MT5_PASSWORD;
+
+  try {
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
+
+    if (login && password) {
+      const authHeader = Buffer.from(`${login}:${password}`).toString('base64');
+      headers['Authorization'] = `Basic ${authHeader}`;
+    }
+
+    const endpoint = `${webApiUrl}/api/chart/bars?symbol=${encodeURIComponent(mt5Symbol)}&interval=${encodeURIComponent(interval)}&from=${fromSec}&to=${toSec}`;
+    const res = await fetch(endpoint, {
+      method: 'GET',
+      headers,
+      cache: 'no-store',
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (!res.ok) return [];
+
+    const json = await res.json();
+    const bars: any[] = json?.bars ?? json?.candles ?? [];
+    return bars.map(b => [
+      typeof b.time === 'number' ? new Date(b.time * 1000).toISOString() : b.time,
+      b.open,
+      b.high,
+      b.low,
+      b.close,
+      b.volume ?? 0
+    ]);
+  } catch (err) {
+    console.warn(`[MT5StockService] Failed to fetch MT5 bars for ${mt5Symbol}:`, err);
+    return [];
+  }
+}
+
