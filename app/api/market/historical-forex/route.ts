@@ -48,6 +48,53 @@ function generateFallbackCandles(symbol: string, interval: string, fromSec: numb
   return candles;
 }
 
+async function fetchRealNasdaqHistoricalBars(symbol: string): Promise<any[][]> {
+  try {
+    const clean = symbol.replace(/^(US:|FOREX:)/i, '').trim().toUpperCase();
+    const url = `https://api.nasdaq.com/api/quote/${encodeURIComponent(clean)}/chart?assetclass=stocks`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (!res.ok) return [];
+
+    const json = await res.json();
+    const chartList: any[] = json?.data?.chart || [];
+    if (!Array.isArray(chartList) || chartList.length === 0) return [];
+
+    const bars: any[][] = [];
+    for (const item of chartList) {
+      if (item && item.x && typeof item.y === 'number') {
+        const timeIso = new Date(item.x).toISOString();
+        const price = Number(item.y.toFixed(2));
+        const volume = 1000;
+        bars.push([timeIso, price, price, price, price, volume]);
+      }
+    }
+
+    // Sync last bar close with NASDAQ regular live quote
+    if (bars.length > 0) {
+      const liveQuote = await fetchUSStockQuote(clean);
+      if (liveQuote && liveQuote.price > 0) {
+        const lastIdx = bars.length - 1;
+        bars[lastIdx][4] = liveQuote.price;
+        bars[lastIdx][2] = Math.max(bars[lastIdx][2], liveQuote.price);
+        bars[lastIdx][3] = Math.min(bars[lastIdx][3], liveQuote.price);
+      }
+    }
+
+    return bars;
+  } catch (err) {
+    console.warn(`[historical-forex] Failed to fetch NASDAQ chart bars for ${symbol}:`, err);
+    return [];
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -91,12 +138,17 @@ export async function GET(req: NextRequest) {
 
     let candles: any[][] = [];
 
-    // 1. Primary Source: MT5 Historical Bars (0 Yahoo Finance calls)
+    // 1. Primary Source: MT5 Historical Bars (if configured)
     if (isMT5Configured()) {
       candles = await fetchMT5HistoricalBars(rawSymbol, rawInterval, period1, period2);
     }
 
-    // 2. Base Fallback Candles if MT5 is unconfigured / offline
+    // 2. Real Official NASDAQ Live Chart Candles (0 Broker Accounts / Logins Needed, 0 Yahoo Finance)
+    if (!candles || candles.length === 0) {
+      candles = await fetchRealNasdaqHistoricalBars(rawSymbol);
+    }
+
+    // 3. Fallback Candles if offline
     if (!candles || candles.length === 0) {
       candles = generateFallbackCandles(rawSymbol, rawInterval, period1, period2);
     }

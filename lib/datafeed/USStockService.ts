@@ -66,7 +66,48 @@ export async function fetchUSStockQuote(symbol: string): Promise<USStockQuote | 
     }
   } catch (err) { }
 
-  // 2. Base Quote for US Stocks (0 Yahoo Finance calls)
+  // 2. Fetch REAL Official NASDAQ Live Market Quote (0 Broker Logins / Credentials Needed, 0 Yahoo Finance)
+  try {
+    const res = await fetch(`https://api.nasdaq.com/api/quote/${encodeURIComponent(cleanSymbol)}/info?assetclass=stocks`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(3500),
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      const primaryData = json?.data?.primaryData;
+      if (primaryData && primaryData.lastSalePrice) {
+        const rawPriceStr = String(primaryData.lastSalePrice).replace(/[^0-9.]/g, '');
+        const price = parseFloat(rawPriceStr);
+        if (!isNaN(price) && price > 0) {
+          const changeStr = String(primaryData.percentageChange || '0').replace(/[^0-9.-]/g, '');
+          const changePercent = parseFloat(changeStr) || 0;
+
+          const realQuote: USStockQuote = {
+            symbol: cleanSymbol,
+            name: json?.data?.companyName || cleanSymbol,
+            price,
+            high: price,
+            low: price,
+            prevClose: price,
+            changePercent,
+            currency: 'INR',
+          };
+
+          quoteCache.set(cleanSymbol, { quote: realQuote, timestamp: Date.now() });
+          return realQuote;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[USStockService] NASDAQ live quote fetch failed for ${cleanSymbol}:`, err);
+  }
+
+  // Consistent Fallback for US Stocks if network is offline
   const basePrice = getUSStockBasePrice(cleanSymbol);
   const fallbackQuote: USStockQuote = {
     symbol: cleanSymbol,
