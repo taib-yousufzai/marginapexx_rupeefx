@@ -208,9 +208,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const usdInrRate = 1;
 
   const cryptoQuote = isCrypto && bSymbol ? (marketQuotes[bSymbol] || marketQuotes[item?.symbol?.replace('/', '') || '']) : null;
+  const cleanSymUpper = item?.symbol ? item.symbol.replace(/^US:/i, '').trim().toUpperCase() : '';
   const activeKiteQuote = (computedKiteSymbol && marketQuotes[computedKiteSymbol]) ||
     (item?.kiteSymbol && marketQuotes[item.kiteSymbol]) ||
     (item?.symbol && marketQuotes[item.symbol]) ||
+    (cleanSymUpper && marketQuotes[cleanSymUpper]) ||
+    (cleanSymUpper && marketQuotes[`US:${cleanSymUpper}`]) ||
     (item?.symbol && marketQuotes[item.symbol.replace(/\s+/g, '')]) ||
     (item?.name && marketQuotes[item.name]) ||
     null;
