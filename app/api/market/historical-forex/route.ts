@@ -19,14 +19,34 @@ function generateFallbackCandles(symbol: string, interval: string, fromSec: numb
     startSec = toSec - maxBars * stepSec;
   }
 
+  let hash = 0;
+  for (let i = 0; i < symbol.length; i++) {
+    hash = ((hash << 5) - hash) + symbol.charCodeAt(i);
+    hash |= 0;
+  }
+
+  const totalSteps = Math.floor((toSec - startSec) / stepSec);
+  let stepIndex = 0;
+
   for (let t = startSec; t <= toSec; t += stepSec) {
+    stepIndex++;
+    const isLastBar = stepIndex >= totalSteps || t + stepSec > toSec;
     const timeIso = new Date(t * 1000).toISOString();
-    const variation = (Math.random() - 0.49) * (basePrice * 0.003);
+    
+    // Pseudo-random deterministic variation based on timestamp
+    const pseudoRand = Math.abs(Math.sin(t * 0.0001 + hash));
+    const variation = (pseudoRand - 0.49) * (basePrice * 0.002);
+    
     const open = Number((currentPrice).toFixed(2));
-    const close = Number((currentPrice + variation).toFixed(2));
-    const high = Number((Math.max(open, close) + Math.random() * (basePrice * 0.002)).toFixed(2));
-    const low = Number((Math.min(open, close) - Math.random() * (basePrice * 0.002)).toFixed(2));
-    const volume = Math.floor(Math.random() * 5000) + 1000;
+    let close = Number((currentPrice + variation).toFixed(2));
+
+    if (isLastBar) {
+      close = basePrice;
+    }
+
+    const high = Number((Math.max(open, close) + (pseudoRand * (basePrice * 0.001))).toFixed(2));
+    const low = Number((Math.min(open, close) - (pseudoRand * (basePrice * 0.001))).toFixed(2));
+    const volume = Math.floor(pseudoRand * 5000) + 1000;
     
     currentPrice = close;
     candles.push([timeIso, open, high, low, close, volume]);

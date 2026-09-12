@@ -53,7 +53,9 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
 
   let basePrice = 15.2;
 
-  if (US_BASE_PRICES[clean] || symbolKey.toUpperCase().startsWith('US:')) {
+  const isUSStock = Boolean(US_BASE_PRICES[clean] || symbolKey.toUpperCase().startsWith('US:'));
+
+  if (isUSStock) {
     basePrice = getUSStockBasePrice(clean);
   } else if (strike > 0) {
     if (isCall) {
@@ -80,7 +82,9 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
   // Deterministic percentage change ranging from -4.5% to +4.5%
   // Call and Put on same strike get OPPOSITE signs so Call is up while Put is down (or vice versa)!
   let rawChangePct = 0;
-  if (isCall) {
+  if (isUSStock) {
+    rawChangePct = 0;
+  } else if (isCall) {
     rawChangePct = ((posHash % 700) - 280) / 100; // e.g. +1.45% or -1.80%
   } else if (isPut) {
     rawChangePct = -(((posHash + 13) % 700) - 280) / 100; // Inverse movement relative to Call
