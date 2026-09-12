@@ -62,6 +62,57 @@ function generateFallbackCandles(symbol: string, interval: string, fromSec: numb
   return candles;
 }
 
+async function fetchRealHistoricalBars(symbol: string, interval: string, period1: number, period2: number): Promise<any[][]> {
+  try {
+    const clean = symbol.replace(/^(US:|FOREX:)/i, '').trim().toUpperCase();
+    const intervalMap: Record<string, string> = {
+      '1m': '1m', '2m': '2m', '3m': '2m', '5m': '5m', '15m': '15m', '30m': '30m', '60m': '60m', '1h': '60m', '1d': '1d', 'D': '1d'
+    };
+    const validInterval = intervalMap[interval] || '5m';
+
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(clean)}?interval=${validInterval}&period1=${period1}&period2=${period2}`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (!res.ok) return [];
+
+    const json = await res.json();
+    const result = json?.chart?.result?.[0];
+    if (!result) return [];
+
+    const timestamps = result.timestamp || [];
+    const quote = result.indicators?.quote?.[0] || {};
+    const opens = quote.open || [];
+    const highs = quote.high || [];
+    const lows = quote.low || [];
+    const closes = quote.close || [];
+    const volumes = quote.volume || [];
+
+    const bars: any[][] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      if (timestamps[i] && closes[i] !== null && closes[i] !== undefined) {
+        const timeIso = new Date(timestamps[i] * 1000).toISOString();
+        const o = Number((opens[i] ?? closes[i]).toFixed(2));
+        const h = Number((highs[i] ?? closes[i]).toFixed(2));
+        const l = Number((lows[i] ?? closes[i]).toFixed(2));
+        const c = Number((closes[i]).toFixed(2));
+        const v = volumes[i] ?? 0;
+        bars.push([timeIso, o, h, l, c, v]);
+      }
+    }
+    return bars;
+  } catch (err) {
+    console.warn(`[historical-forex] Failed to fetch real bars for ${symbol}:`, err);
+    return [];
+  }
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -99,7 +150,12 @@ export async function GET(req: NextRequest) {
       candles = await fetchMT5HistoricalBars(rawSymbol, rawInterval, period1, period2);
     }
 
-    // Fallback if MT5 is unconfigured or returned 0 bars
+    // Server-side real market chart candles (0 credentials needed)
+    if (!candles || candles.length === 0) {
+      candles = await fetchRealHistoricalBars(rawSymbol, rawInterval, period1, period2);
+    }
+
+    // Synthetic Fallback if offline
     if (!candles || candles.length === 0) {
       candles = generateFallbackCandles(rawSymbol, rawInterval, period1, period2);
     }

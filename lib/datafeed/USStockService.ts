@@ -57,18 +57,56 @@ export async function fetchUSStockQuote(symbol: string): Promise<USStockQuote | 
     return cached.quote;
   }
 
-  // 100% MT5 Datafeed
+  // 1. Try MT5 if configured
   try {
     const mt5Quote = await fetchMT5StockQuote(cleanSymbol);
     if (mt5Quote) {
       quoteCache.set(cleanSymbol, { quote: mt5Quote, timestamp: Date.now() });
       return mt5Quote;
     }
+  } catch (err) { }
+
+  // 2. Fetch REAL Live Market Quote Server-Side (0 Broker Credentials Required)
+  try {
+    const res = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(cleanSymbol)}?interval=1m&range=1d`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json',
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(3500),
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      const meta = json?.chart?.result?.[0]?.meta;
+      if (meta && typeof meta.regularMarketPrice === 'number' && meta.regularMarketPrice > 0) {
+        const price = meta.regularMarketPrice;
+        const prevClose = meta.chartPreviousClose || meta.previousClose || price;
+        const high = meta.regularMarketDayHigh || price;
+        const low = meta.regularMarketDayLow || price;
+        const changePercent = meta.regularMarketChangePercent ?? (prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : 0);
+
+        const realQuote: USStockQuote = {
+          symbol: cleanSymbol,
+          name: meta.shortName || meta.symbol || cleanSymbol,
+          price,
+          high,
+          low,
+          prevClose,
+          changePercent: Number(changePercent.toFixed(2)),
+          currency: 'INR',
+        };
+
+        quoteCache.set(cleanSymbol, { quote: realQuote, timestamp: Date.now() });
+        return realQuote;
+      }
+    }
   } catch (err) {
-    console.warn(`[USStockService] MT5 fetch failed for ${cleanSymbol}:`, err);
+    console.warn(`[USStockService] Real market quote fetch failed for ${cleanSymbol}:`, err);
   }
 
-  // Consistent Fallback for US Stocks when MT5 is unconfigured or unavailable
+  // Consistent Fallback for US Stocks if network is offline
   const basePrice = getUSStockBasePrice(cleanSymbol);
   const fallbackQuote: USStockQuote = {
     symbol: cleanSymbol,
