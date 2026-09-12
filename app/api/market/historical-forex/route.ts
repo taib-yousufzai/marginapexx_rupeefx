@@ -86,6 +86,9 @@ async function fetchRealHistoricalBars(symbol: string, interval: string, period1
     const result = json?.chart?.result?.[0];
     if (!result) return [];
 
+    const meta = result.meta;
+    const regularPrice = meta?.regularMarketPrice;
+
     const timestamps = result.timestamp || [];
     const quote = result.indicators?.quote?.[0] || {};
     const opens = quote.open || [];
@@ -99,9 +102,17 @@ async function fetchRealHistoricalBars(symbol: string, interval: string, period1
       if (timestamps[i] && closes[i] !== null && closes[i] !== undefined) {
         const timeIso = new Date(timestamps[i] * 1000).toISOString();
         const o = Number((opens[i] ?? closes[i]).toFixed(2));
-        const h = Number((highs[i] ?? closes[i]).toFixed(2));
-        const l = Number((lows[i] ?? closes[i]).toFixed(2));
-        const c = Number((closes[i]).toFixed(2));
+        let h = Number((highs[i] ?? closes[i]).toFixed(2));
+        let l = Number((lows[i] ?? closes[i]).toFixed(2));
+        let c = Number((closes[i]).toFixed(2));
+
+        // Sync final bar's close price with meta.regularMarketPrice (live CMP)
+        if (i === timestamps.length - 1 && typeof regularPrice === 'number' && regularPrice > 0) {
+          c = Number(regularPrice.toFixed(2));
+          h = Math.max(h, c);
+          l = Math.min(l, c);
+        }
+
         const v = volumes[i] ?? 0;
         bars.push([timeIso, o, h, l, c, v]);
       }
