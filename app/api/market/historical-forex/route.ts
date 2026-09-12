@@ -24,25 +24,38 @@ function generateFallbackCandles(symbol: string, interval: string, fromSec: numb
     hash |= 0;
   }
 
+  let seed = Math.abs(hash) + 1;
+  function pseudoRandom() {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  }
+
   const totalSteps = Math.floor((toSec - startSec) / stepSec);
   let stepIndex = 0;
+  let currentWalkPrice = basePrice * (1 + (pseudoRandom() - 0.5) * 0.01);
 
   for (let t = startSec; t <= toSec; t += stepSec) {
     stepIndex++;
     const isLastBar = stepIndex >= totalSteps || t + stepSec > toSec;
     const timeIso = new Date(t * 1000).toISOString();
     
-    // Stable, bounded price noise around basePrice (max +-0.25%)
-    const noiseOpen = Math.sin((t / stepSec) * 0.2 + hash) * 0.0025;
-    const noiseClose = Math.cos((t / stepSec) * 0.25 + hash) * 0.0025;
-    
-    const open = Number((basePrice * (1 + noiseOpen)).toFixed(2));
-    let close = isLastBar ? basePrice : Number((basePrice * (1 + noiseClose)).toFixed(2));
+    const r1 = pseudoRandom();
+    const r2 = pseudoRandom();
+    const r3 = pseudoRandom();
 
-    const high = Number((Math.max(open, close) + basePrice * 0.0012).toFixed(2));
-    const low = Number((Math.min(open, close) - basePrice * 0.0012).toFixed(2));
-    const volume = Math.floor(Math.abs(Math.sin(t)) * 4000) + 1000;
+    // Realistic small candle walk step (-0.2% to +0.2%)
+    const stepPct = (r1 - 0.495) * 0.004;
+    const open = Number(currentWalkPrice.toFixed(2));
+    let close = isLastBar ? basePrice : Number((open * (1 + stepPct)).toFixed(2));
+
+    const maxOC = Math.max(open, close);
+    const minOC = Math.min(open, close);
+
+    const high = Number((maxOC + basePrice * (r2 * 0.0015)).toFixed(2));
+    const low = Number((Math.max(0.01, minOC - basePrice * (r3 * 0.0015))).toFixed(2));
+    const volume = Math.floor(r1 * 8000) + 1200;
     
+    currentWalkPrice = close;
     candles.push([timeIso, open, high, low, close, volume]);
   }
   
