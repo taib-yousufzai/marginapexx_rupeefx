@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchMT5HistoricalBars, isMT5Configured } from '../../../../lib/datafeed/MT5StockService';
-import { getUSStockBasePrice } from '../../../../lib/datafeed/USStockService';
+import { fetchUSStockQuote, getUSStockBasePrice } from '../../../../lib/datafeed/USStockService';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

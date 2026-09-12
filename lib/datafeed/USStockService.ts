@@ -23,8 +23,8 @@ const CACHE_TTL_MS = 2000;
 import { fetchMT5StockQuote, isMT5Configured } from './MT5StockService';
 
 export const US_BASE_PRICES: Record<string, number> = {
-  'NFLX': 600,
-  'AAPL': 220,
+  'NFLX': 77.40,
+  'AAPL': 332.27,
   'TSLA': 210,
   'NVDA': 120,
   'MSFT': 420,
