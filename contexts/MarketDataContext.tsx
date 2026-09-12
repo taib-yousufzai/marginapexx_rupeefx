@@ -261,17 +261,15 @@ class MarketWSManager {
     if (this.usStockInterval) return;
 
     const pollUSQuotes = async () => {
-      const usSymbols: string[] = [];
-      const US_STOCKS = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC', 'SPY', 'QQQ', 'DIA'];
+      const US_STOCKS = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC', 'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F'];
+      const usSymbols: string[] = [...US_STOCKS];
       
       for (const sym of Array.from(this.symbolRefCount.keys())) {
-        const clean = sym.replace(/^(US:|FOREX:)/i, '').trim().toUpperCase();
+        const clean = sym.replace(/^(US:|FOREX:|NSE:|BSE:|NFO:)/i, '').trim().toUpperCase();
         if (sym.toUpperCase().startsWith('US:') || US_STOCKS.includes(clean)) {
           usSymbols.push(clean);
         }
       }
-
-      if (usSymbols.length === 0) return;
 
       const unique = Array.from(new Set(usSymbols));
       try {
@@ -302,6 +300,7 @@ class MarketWSManager {
 
           this.notifyListeners('update', { symbol: sym, quote: quoteObj });
           this.notifyListeners('update', { symbol: `US:${sym}`, quote: quoteObj });
+          this.notifyListeners('update', { symbol: `NSE:${sym}`, quote: quoteObj });
         }
       } catch (e) {
         // fail silently

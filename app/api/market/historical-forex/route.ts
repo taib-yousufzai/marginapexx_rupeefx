@@ -1,31 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchMT5HistoricalBars, isMT5Configured } from '../../../../lib/datafeed/MT5StockService';
+import { getUSStockBasePrice } from '../../../../lib/datafeed/USStockService';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function getBasePrice(symbol: string): number {
-  const clean = symbol.replace(/^(US:|FOREX:)/i, '').trim().toUpperCase();
-  const prices: Record<string, number> = {
-    'NFLX': 600,
-    'AAPL': 220,
-    'TSLA': 210,
-    'NVDA': 120,
-    'MSFT': 420,
-    'AMZN': 180,
-    'GOOGL': 165,
-    'META': 500,
-    'AMD': 150,
-    'INTC': 30,
-    'SPY': 550,
-    'QQQ': 480,
-    'DIA': 400,
-  };
-  return prices[clean] ?? 100;
-}
-
 function generateFallbackCandles(symbol: string, interval: string, fromSec: number, toSec: number): any[][] {
-  const basePrice = getBasePrice(symbol);
+  const basePrice = getUSStockBasePrice(symbol);
   const stepSec = interval === '1m' ? 60 : (interval === '1d' || interval === 'd') ? 86400 : 300;
   
   const candles: any[][] = [];

@@ -4,6 +4,8 @@
  * when real exchange data is unavailable.
  */
 
+import { getUSStockBasePrice, US_BASE_PRICES } from './datafeed/USStockService';
+
 export interface FallbackQuote {
   timestamp: string;
   last_price: number;
@@ -29,7 +31,7 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
     };
   }
 
-  const clean = symbolKey.toUpperCase().replace(/^(NFO|NSE|BSE|MCX|CRYPTO|FOREX):/, '').trim();
+  const clean = symbolKey.toUpperCase().replace(/^(NFO|NSE|BSE|MCX|CRYPTO|FOREX|US):/, '').trim();
   const isCall = clean.endsWith('CE');
   const isPut = clean.endsWith('PE');
   const isFut = clean.endsWith('FUT');
@@ -51,7 +53,9 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
 
   let basePrice = 15.2;
 
-  if (strike > 0) {
+  if (US_BASE_PRICES[clean] || symbolKey.toUpperCase().startsWith('US:')) {
+    basePrice = getUSStockBasePrice(clean);
+  } else if (strike > 0) {
     if (isCall) {
       // Call options: premium factor varies between 1.5% and 3.5% of strike
       const factor = 0.015 + ((posHash % 20) * 0.001);

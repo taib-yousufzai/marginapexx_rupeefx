@@ -21,7 +21,7 @@ import {
 } from '@/lib/filterEngine';
 
 import { parseOptionSymbol } from '@/lib/positionStore';
-import { fetchUSStockQuotes } from '@/lib/datafeed/USStockService';
+import { fetchUSStockQuotes, getUSStockBasePrice } from '@/lib/datafeed/USStockService';
 import { getCurrentFuturesSymbol } from '@/lib/contractExpiry';
 
 const US_STOCK_ITEMS = [
@@ -281,76 +281,47 @@ async function fetchLivePrices(
   const foundKiteIds = new Set<string>();
 
   try {
-    // 1. Check Redis cache first
+    // 1. Fetch from Ticker Daemon in-memory quotes API
     try {
-      if (!isRedisMock()) {
-        const redis = getRedisClient();
-        const cached = await redis.hmget('market:quotes', ...kiteIds);
-        kiteIds.forEach((kid, idx) => {
-          const raw = cached[idx];
-          if (raw) {
-            try {
-              const q = JSON.parse(raw as string);
-              const lp = q.last_price || q.lastPrice || q.ltp || 0;
-              if (lp > 0) {
-                quoteMap[kid] = {
-                  price: lp,
-                  high: q.ohlc?.high ?? q.high ?? lp,
-                  low: q.ohlc?.low ?? q.low ?? lp,
-                };
-                foundKiteIds.add(kid);
-              }
-            } catch {}
-          }
-        });
-      }
-    } catch {}
-
-    // 2. Fetch from Ticker Daemon in-memory quotes API for remaining
-    const missingForTicker = kiteIds.filter(id => !foundKiteIds.has(id));
-    if (missingForTicker.length > 0) {
-      try {
-        const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : null);
-        const params = new URLSearchParams({ symbols: missingForTicker.join(',') });
-        if (tickerUrl) {
-          const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
-          if (resTicker.ok) {
-            const json = await resTicker.json();
-            if (json.success && json.data) {
-              for (const [key, val] of Object.entries(json.data)) {
-                const v = val as any;
-                quoteMap[key] = {
-                  price: v.last_price ?? 0,
-                  high: v.ohlc?.high ?? v.high ?? 0,
-                  low: v.ohlc?.low ?? v.low ?? 0,
-                };
-                foundKiteIds.add(key);
-              }
-            }
+      const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : null);
+      const params = new URLSearchParams({ symbols: kiteIds.join(',') });
+      if (!tickerUrl) throw new Error('No tickerUrl');
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(50) });
+      if (resTicker.ok) {
+        const json = await resTicker.json();
+        if (json.success && json.data) {
+          for (const [key, val] of Object.entries(json.data)) {
+            const v = val as any;
+            quoteMap[key] = {
+              price: v.last_price ?? 0,
+              high: v.ohlc?.high ?? v.high ?? 0,
+              low: v.ohlc?.low ?? v.low ?? 0,
+            };
+            foundKiteIds.add(key);
           }
         }
-      } catch (tickerErr) {
-        console.warn('[fetchLivePrices] Failed to query Ticker Daemon, falling back to REST:', tickerErr);
       }
+    } catch (tickerErr) {
+      console.warn('[fetchLivePrices] Failed to query Ticker Daemon, falling back to REST:', tickerErr);
     }
 
-    // 3. Identify remaining missing instruments
+    // 2. Identify missing instruments
     const missingKiteIds = kiteIds.filter(id => !foundKiteIds.has(id));
 
-    // 4. Fallback on-demand fetch from Kite REST API for missing instruments
-    const apiKey = process.env.KITE_API_KEY;
-    let accessToken = request?.cookies?.get('kite_access_token')?.value;
-    if (!accessToken) {
-      const session = await getSharedKiteSession();
-      accessToken = session?.accessToken;
-    }
-
-    if (apiKey && accessToken && missingKiteIds.length > 0) {
-      const batchSize = 100;
-      const batches: string[][] = [];
-      for (let i = 0; i < missingKiteIds.length; i += batchSize) {
-        batches.push(missingKiteIds.slice(i, i + batchSize));
+    // 3. Fallback on-demand fetch from Kite REST API for missing instruments
+      const apiKey = process.env.KITE_API_KEY;
+      let accessToken = request?.cookies?.get?.('kite_access_token')?.value;
+      if (!accessToken) {
+        const session = await getSharedKiteSession();
+        accessToken = session?.accessToken;
       }
+
+      if (apiKey && accessToken) {
+        const batchSize = 100;
+        const batches: string[][] = [];
+        for (let i = 0; i < missingKiteIds.length; i += batchSize) {
+          batches.push(missingKiteIds.slice(i, i + batchSize));
+        }
 
       const results = await Promise.all(
         batches.map(async (batch) => {
@@ -364,7 +335,7 @@ async function fetchLivePrices(
                 'Authorization': `token ${apiKey}:${accessToken}`,
               },
               cache: 'no-store',
-              signal: AbortSignal.timeout(4000),
+              signal: AbortSignal.timeout(2000),
             });
 
             if (res.ok) {
@@ -446,44 +417,6 @@ async function fetchLivePrices(
               quoteMap[id] = { price: lastP, high: highP, low: lowP };
               quoteMap[cleanSym] = { price: lastP, high: highP, low: lowP };
               quoteMap[binanceSym] = { price: lastP, high: highP, low: lowP };
-            }
-          } catch {
-            // ignore fallback error
-          }
-        }
-
-        const comexSymMap: Record<string, string> = {
-          'SILVER': 'SI=F',
-          'GOLD': 'GC=F',
-          'CRUDEOIL': 'CL=F',
-          'COPPER': 'HG=F',
-          'NATURALGAS': 'NG=F',
-        };
-        const yahooTarget = comexSymMap[cleanSym.toUpperCase()] || (['SI=F', 'GC=F', 'CL=F', 'HG=F', 'NG=F', 'PL=F', 'PA=F'].includes(cleanSym) || cleanSym.endsWith('=F') || cleanSym.endsWith('=X') ? cleanSym : null);
-        if (yahooTarget) {
-          try {
-            const yRes = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTarget)}?interval=1d&range=1d`, {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                'Accept': 'application/json',
-              },
-              signal: AbortSignal.timeout(2500),
-            });
-            if (yRes.ok) {
-              const yJson = await yRes.json();
-              const meta = yJson?.chart?.result?.[0]?.meta;
-              const rawLastP = meta?.regularMarketPrice || 0;
-              const rawHighP = meta?.regularMarketDayHigh || rawLastP;
-              const rawLowP = meta?.regularMarketDayLow || rawLastP;
-
-              // Convert USD price to INR
-              const lastP = Number((rawLastP * usdInrRate).toFixed(2));
-              const highP = Number((rawHighP * usdInrRate).toFixed(2));
-              const lowP = Number((rawLowP * usdInrRate).toFixed(2));
-
-              quoteMap[id] = { price: lastP, high: highP, low: lowP };
-              quoteMap[cleanSym] = { price: lastP, high: highP, low: lowP };
-              quoteMap[yahooTarget] = { price: lastP, high: highP, low: lowP };
             }
           } catch {
             // ignore fallback error
@@ -629,57 +562,51 @@ export async function GET(request: NextRequest) {
         eqPromise = eqQry as any;
       }
 
-      // 2. Base Query for futures (dedicated query so options don't crowd out front-month futures)
-      let buildFuturesQuery = () => {
-        let qry = getSupabase()
+      // 2. Dedicated Futures Query (is('option_type', null)) to guarantee futures (e.g. MCX SILVER/GOLD/CRUDE futures, NSE index/stock futures) are never crowded out by 300+ option strikes
+      let futPromise = Promise.resolve<{ data: any[] | null; error: any }>({ data: [], error: null });
+      if (tab === 'All' || tab.includes('FUT') || tab === 'MCX' || tab === 'COMEX') {
+        let futQry = getSupabase()
           .from('instruments')
           .select('tradingsymbol, name, exchange, instrument_type, segment, strike_price, option_type, expiry, underlying_symbol')
           .neq('exchange', 'NCO')
-          .is('option_type', null);
+          .is('option_type', null)
+          .not('instrument_type', 'in', '("EQ","INDEX")');
 
-        let orParts = [];
         if (/^\d+(\.\d+)?$/.test(q)) {
-          orParts.push(`tradingsymbol.ilike.%${qNoSpace}%`);
-          orParts.push(`name.ilike.%${q}%`);
+          futQry = futQry.or(`tradingsymbol.ilike.%${qNoSpace}%,name.ilike.%${q}%`);
         } else if (qNoSpace.length <= 2) {
-          orParts.push(`tradingsymbol.ilike.${qNoSpace}%`);
-          orParts.push(`name.ilike.${q}%`);
-          orParts.push(`name.ilike.% ${q}%`);
-          orParts.push(`underlying_symbol.ilike.${qNoSpace}%`);
+          futQry = futQry.or(`tradingsymbol.ilike.${qNoSpace}%,name.ilike.${q}%,name.ilike.% ${q}%,underlying_symbol.ilike.${qNoSpace}%`);
         } else {
-          orParts.push(`tradingsymbol.ilike.${qNoSpace}%`);
-          orParts.push(`name.ilike.${q}%`);
-          orParts.push(`name.ilike.% ${q}%`);
-          orParts.push(`underlying_symbol.ilike.%${qNoSpace}%`);
-          orParts.push(`tradingsymbol.ilike.%${qNoSpace}%`);
+          futQry = futQry.or(`tradingsymbol.ilike.${qNoSpace}%,name.ilike.${q}%,name.ilike.% ${q}%,underlying_symbol.ilike.%${qNoSpace}%,tradingsymbol.ilike.%${qNoSpace}%`);
         }
 
-        qry = qry.or(orParts.join(','));
-        qry = qry.or(`expiry.gte.${today},expiry.is.null`);
-        qry = qry.order('expiry', { ascending: true }).limit(60);
+        futQry = futQry.or(`expiry.gte.${today},expiry.is.null`).order('expiry', { ascending: true }).limit(100);
+        futPromise = applyTabFilter(futQry) as any;
+      }
 
-        return applyTabFilter(qry);
-      };
-
-      // 3. Base Query for options
-      let buildOptionsQuery = () => {
+      // 3. Base Query for non-equity & derivatives
+      let buildBaseFallbackQuery = () => {
         let qry = getSupabase()
           .from('instruments')
           .select('tradingsymbol, name, exchange, instrument_type, segment, strike_price, option_type, expiry, underlying_symbol')
-          .neq('exchange', 'NCO')
-          .not('option_type', 'is', null);
-
+          .neq('exchange', 'NCO'); // NCO has sub-interval strike rows that pollute results
+          
         let orParts = [];
+
         if (/^\d+(\.\d+)?$/.test(q)) {
+          // Pure numeric query — search exact strike_price, but also allow partial text matches
           orParts.push(`strike_price.eq.${q}`);
           orParts.push(`tradingsymbol.ilike.%${qNoSpace}%`);
           orParts.push(`name.ilike.%${q}%`);
         } else if (qNoSpace.length <= 2) {
+          // Short text query (1-2 chars e.g. "A", "AA", "RE")
+          // Strict prefix and word-start search like Zerodha/TradingView to prioritize direct equity/symbols
           orParts.push(`tradingsymbol.ilike.${qNoSpace}%`);
           orParts.push(`name.ilike.${q}%`);
           orParts.push(`name.ilike.% ${q}%`);
           orParts.push(`underlying_symbol.ilike.${qNoSpace}%`);
         } else {
+          // Text query — search by prefix, word start, and contains
           orParts.push(`tradingsymbol.ilike.${qNoSpace}%`);
           orParts.push(`name.ilike.${q}%`);
           orParts.push(`name.ilike.% ${q}%`);
@@ -688,8 +615,13 @@ export async function GET(request: NextRequest) {
         }
 
         qry = qry.or(orParts.join(','));
+        // CRITICAL FIX: Only fetch live options to not exhaust the limit on dead contracts
         qry = qry.or(`expiry.gte.${today},expiry.is.null`);
-        qry = qry.order('expiry', { ascending: true }).order('strike_price', { ascending: true }).limit(300);
+
+        qry = qry
+          .order('expiry', { ascending: true })
+          .order('strike_price', { ascending: true })
+          .limit(300); // must exceed largest single-expiry row count (GOLD has 348)
 
         return applyTabFilter(qry);
       };
@@ -700,26 +632,22 @@ export async function GET(request: NextRequest) {
           new Promise<T>(resolve => setTimeout(() => resolve(fallback), ms))
         ]);
 
-      const [eqRes, futRes, optRes] = await Promise.all([
+      const [eqRes, futRes, othRes] = await Promise.all([
         timeoutPromise(eqPromise, 4000, { data: [], error: null }),
-        timeoutPromise(buildFuturesQuery(), 4000, { data: [], error: null }),
-        timeoutPromise(buildOptionsQuery(), 4000, { data: [], error: null }),
+        timeoutPromise(futPromise, 4000, { data: [], error: null }),
+        timeoutPromise(buildBaseFallbackQuery(), 4000, { data: [], error: null })
       ]);
 
-      error = eqRes.error || futRes.error || optRes.error;
+      error = eqRes.error || futRes.error || othRes.error;
       const rawEq = (eqRes.data ?? []).filter((r: any) => {
         const sym = r.tradingsymbol || '';
         if (/^[0-9]/.test(sym)) return false;
         if (/-N[0-9]|-NC|-Z[0-9]|-SG|-BE|-GB|-GS|-TB|-Y[0-9]/.test(sym)) return false;
         return true;
       });
+      const rawFut = futRes.data ?? [];
 
-      const isCommoditySearch = MCX_UNDERLYINGS.has(q.toUpperCase().trim());
-      if (isCommoditySearch) {
-        data = [...(futRes.data ?? []), ...rawEq, ...(optRes.data ?? [])];
-      } else {
-        data = [...rawEq, ...(futRes.data ?? []), ...(optRes.data ?? [])];
-      }
+      data = [...rawEq, ...rawFut, ...(othRes.data ?? [])];
     }
 
     if (error) {
@@ -1002,10 +930,9 @@ export async function GET(request: NextRequest) {
       ).toLowerCase();
 
       const isEqOrSpot = r.instrument_type === 'EQ' || r.instrument_type === 'INDEX' || (!r.option_type && !r.expiry);
-      const isCommodityFut = r.exchange === 'MCX' && (!r.option_type || r.instrument_type?.startsWith('FUT'));
 
-      // Rank 1: Exact match on TradingSymbol (e.g. RELIANCE, NIFTY 50) or exact name on Stock/Spot Index or Commodity Futures
-      if (sym === qLower || (isEqOrSpot && (name === qLower || dispName === qLower)) || (isCommodityFut && (name === qLower || sym.startsWith(qLower)))) return 1;
+      // Rank 1: Exact match on TradingSymbol (e.g. RELIANCE, NIFTY 50) or exact name on Stock/Spot Index
+      if (sym === qLower || (isEqOrSpot && (name === qLower || dispName === qLower))) return 1;
       
       // Rank 2: Ticker / TradingSymbol prefix match on Stock / Spot Index (e.g. RELIANCE, RELAXO, AARTIIND)
       if (sym.startsWith(qLower)) return isEqOrSpot ? 2 : 3;
@@ -1031,16 +958,7 @@ export async function GET(request: NextRequest) {
       // Sort by score
       if (scoreA !== scoreB) return scoreA - scoreB;
       
-      // Tie-breaker 1: Prefer MCX Commodity Futures when searching commodities
-      const isCommodity = MCX_UNDERLYINGS.has(q.toUpperCase().trim());
-      if (isCommodity) {
-        const aIsCommodityFut = a.exchange === 'MCX' && (!a.option_type || a.instrument_type?.startsWith('FUT'));
-        const bIsCommodityFut = b.exchange === 'MCX' && (!b.option_type || b.instrument_type?.startsWith('FUT'));
-        if (aIsCommodityFut && !bIsCommodityFut) return -1;
-        if (!aIsCommodityFut && bIsCommodityFut) return 1;
-      }
-      
-      // Tie-breaker 2: Prefer Futures over Options
+      // Tie-breaker 1: Prefer Futures over Options
       const aIsOpt = a.option_type === 'CE' || a.option_type === 'PE';
       const bIsOpt = b.option_type === 'CE' || b.option_type === 'PE';
       if (!aIsOpt && bIsOpt) return -1;
@@ -1081,68 +999,9 @@ export async function GET(request: NextRequest) {
     // We only need the top 50 matches for the UI to stay performant
     validRows = validRows.slice(0, 50);
 
-    // Prepare matching COMEX items if tab is All or COMEX
-    let matchingComex: any[] = [];
-    if (tab === 'All' || tab === 'COMEX') {
-      const comexSearchItems = [
-        { name: 'GOLD', symbol: 'GC=F', comexSymbol: 'GC=F', segment: 'COMEX - Futures' },
-        { name: 'SILVER', symbol: 'SI=F', comexSymbol: 'SI=F', segment: 'COMEX - Futures' },
-        { name: 'CRUDEOIL', symbol: 'CL=F', comexSymbol: 'CL=F', segment: 'COMEX - Futures' },
-        { name: 'COPPER', symbol: 'HG=F', comexSymbol: 'HG=F', segment: 'COMEX - Futures' },
-        { name: 'NATURALGAS', symbol: 'NG=F', comexSymbol: 'NG=F', segment: 'COMEX - Futures' },
-      ];
-      const comexSearchTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
-      matchingComex = comexSearchItems.filter(item => {
-        const itemText = `${item.name} ${item.symbol} ${item.segment} comex`.toLowerCase();
-        return comexSearchTerms.every(term => itemText.includes(term));
-      });
-    }
-
-    // Prepare matching FOREX items if tab is All or FOREX
-    let matchingForex: any[] = [];
-    if (tab === 'All' || tab === 'FOREX') {
-      const forexSearchItems = [
-        { name: 'EUR/USD', symbol: 'EURUSD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'EURUSD=X', segment: 'Forex', category: 'FOREX', contractDate: 'Continuous' },
-        { name: 'GBP/USD', symbol: 'GBPUSD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'GBPUSD=X', segment: 'Forex', category: 'FOREX', contractDate: 'Continuous' },
-        { name: 'USD/JPY', symbol: 'USDJPY', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'USDJPY=X', segment: 'Forex', category: 'FOREX', contractDate: 'Continuous' },
-        { name: 'USD/CHF', symbol: 'USDCHF', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'USDCHF=X', segment: 'Forex', category: 'FOREX', contractDate: 'Continuous' },
-        { name: 'USD/CAD', symbol: 'USDCAD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'USDCAD=X', segment: 'Forex', category: 'FOREX', contractDate: 'Continuous' },
-        { name: 'AUD/USD', symbol: 'AUDUSD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'AUDUSD=X', segment: 'Forex', category: 'FOREX', contractDate: 'Continuous' },
-        { name: 'NZD/USD', symbol: 'NZDUSD', kiteSymbol: '', binanceSymbol: '', comexSymbol: 'NZDUSD=X', segment: 'Forex', category: 'FOREX', contractDate: 'Continuous' },
-        { name: 'USD/INR', symbol: 'CDS:USDINR26SEPFUT', kiteSymbol: 'CDS:USDINR26SEPFUT', comexSymbol: '', segment: 'CDS - Futures', category: 'FOREX', contractDate: 'Sep 2026' },
-        { name: 'EUR/INR', symbol: 'CDS:EURINR26SEPFUT', kiteSymbol: 'CDS:EURINR26SEPFUT', comexSymbol: '', segment: 'CDS - Futures', category: 'FOREX', contractDate: 'Sep 2026' },
-        { name: 'GBP/INR', symbol: 'CDS:GBPINR26SEPFUT', kiteSymbol: 'CDS:GBPINR26SEPFUT', comexSymbol: '', segment: 'CDS - Futures', category: 'FOREX', contractDate: 'Sep 2026' },
-        { name: 'JPY/INR', symbol: 'CDS:JPYINR26SEPFUT', kiteSymbol: 'CDS:JPYINR26SEPFUT', comexSymbol: '', segment: 'CDS - Futures', category: 'FOREX', contractDate: 'Sep 2026' },
-      ];
-      const searchTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
-      const qClean = q.replace(/[\s\/]+/g, '').toLowerCase();
-      matchingForex = forexSearchItems.filter(item => {
-        const itemText = `${item.name} ${item.symbol} ${item.segment} forex`.toLowerCase();
-        const cleanText = itemText.replace(/[\s\/]+/g, '');
-        return searchTerms.every(term => itemText.includes(term) || cleanText.includes(term.replace(/[\s\/]+/g, '')) || cleanText.includes(qClean));
-      });
-    }
-
-    // Fetch live prices for all results + extra items
-    const kiteIds = [
-      ...validRows.map((inst: any) => `${inst.exchange}:${inst.tradingsymbol}`),
-      ...matchingComex.map(i => i.comexSymbol),
-      ...matchingForex.map(i => i.kiteSymbol || i.comexSymbol || i.symbol)
-    ].filter(Boolean);
-
+    // Fetch live prices for all results
+    const kiteIds = validRows.map((inst: any) => `${inst.exchange}:${inst.tradingsymbol}`);
     const quoteMap = await fetchLivePrices(kiteIds, request);
-
-    const COMEX_COMMODITY_MAP: Record<string, { symbol: string; name: string }> = {
-      GOLD: { symbol: 'GC=F', name: 'Gold' },
-      SILVER: { symbol: 'SI=F', name: 'Silver' },
-      SILVERM: { symbol: 'SI=F', name: 'Silver Mini' },
-      SILVERMIC: { symbol: 'SI=F', name: 'Silver Micro' },
-      CRUDEOIL: { symbol: 'CL=F', name: 'Crude Oil' },
-      CRUDEOILM: { symbol: 'CL=F', name: 'Crude Oil Mini' },
-      COPPER: { symbol: 'HG=F', name: 'Copper' },
-      NATURALGAS: { symbol: 'NG=F', name: 'Natural Gas' },
-      NATGASMINI: { symbol: 'NG=F', name: 'Natural Gas Mini' },
-    };
 
     // Map to watchlist-compatible shape
     let results = validRows.map((inst: any) => {
@@ -1194,25 +1053,16 @@ export async function GET(request: NextRequest) {
         formatUIExpiry(inst.expiry) || null,
       );
 
-      const baseCommodity = (inst.underlying_symbol || inst.name || inst.tradingsymbol || '').toUpperCase().replace(/\d+.*$/, '');
-      const comexInfo = (inst.exchange === 'MCX' || inst.segment?.includes('MCX'))
-        ? (COMEX_COMMODITY_MAP[baseCommodity] || COMEX_COMMODITY_MAP[(inst.name || '').toUpperCase()])
-        : undefined;
-      const isComexRow = inst.exchange === 'COMEX' || inst.segment === 'COMEX';
-      const yahooSym = isComexRow ? (COMEX_COMMODITY_MAP[(inst.tradingsymbol || '').toUpperCase()]?.symbol || inst.tradingsymbol) : undefined;
-
       const isForexPair = ['GBPUSD', 'EURUSD', 'USDJPY'].includes(inst.tradingsymbol);
       const isCryptoPair = inst.segment === 'CRYPTO';
       const binanceSym = isForexPair ? `${inst.tradingsymbol}T` : (isCryptoPair ? `${inst.tradingsymbol}USDT` : undefined);
-      const liveQuote = quoteMap[kiteId] || quoteMap[inst.tradingsymbol] || (yahooSym ? quoteMap[yahooSym] : undefined) || (binanceSym ? quoteMap[binanceSym] : undefined);
+      const liveQuote = quoteMap[kiteId] || quoteMap[inst.tradingsymbol] || (binanceSym ? quoteMap[binanceSym] : undefined);
 
       return {
         name: displayName,
         symbol: inst.tradingsymbol,
-        kiteSymbol: isForexPair || isCryptoPair || isComexRow ? '' : kiteId,
+        kiteSymbol: isForexPair || isCryptoPair ? '' : kiteId,
         binanceSymbol: binanceSym,
-        comexSymbol: comexInfo?.symbol || (isComexRow ? (yahooSym || inst.tradingsymbol) : undefined),
-        comexName: comexInfo?.name || (isComexRow ? inst.name : undefined),
         price: liveQuote?.price ?? 0,
         change: '0%',
         segment: segmentLabel,
@@ -1266,26 +1116,36 @@ export async function GET(request: NextRequest) {
     }
 
     // Append matching COMEX items if tab is All or COMEX
-    if (matchingComex.length > 0) {
-      const mappedComex = matchingComex.map(item => {
-        const qInfo = quoteMap[item.comexSymbol] || quoteMap[item.symbol];
-        return {
+    if (tab === 'All' || tab === 'COMEX') {
+      const comexSearchItems = [
+        { name: 'GOLD', symbol: 'GC=F', comexSymbol: 'GC=F', segment: 'COMEX - Futures' },
+        { name: 'SILVER', symbol: 'SI=F', comexSymbol: 'SI=F', segment: 'COMEX - Futures' },
+        { name: 'CRUDEOIL', symbol: 'CL=F', comexSymbol: 'CL=F', segment: 'COMEX - Futures' },
+        { name: 'COPPER', symbol: 'HG=F', comexSymbol: 'HG=F', segment: 'COMEX - Futures' },
+        { name: 'NATURALGAS', symbol: 'NG=F', comexSymbol: 'NG=F', segment: 'COMEX - Futures' },
+      ];
+      const comexSearchTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const matchingComex = comexSearchItems
+        .filter(item => {
+          const itemText = `${item.name} ${item.symbol} ${item.segment} comex`.toLowerCase();
+          return comexSearchTerms.every(term => itemText.includes(term));
+        })
+        .map(item => ({
           name: item.name,
           symbol: item.symbol,
           kiteSymbol: '', // Pure COMEX has no kiteSymbol
           comexSymbol: item.comexSymbol,
-          price: qInfo?.price ?? 0,
+          price: 0,
           change: '0%',
           segment: item.segment,
           contractDate: 'Continuous',
           open: 0,
-          high: qInfo?.high ?? 0,
-          low: qInfo?.low ?? 0,
+          high: 0,
+          low: 0,
           close: 0,
-        };
-      });
+        }));
 
-      results.push(...mappedComex);
+      results.push(...matchingComex);
     }
 
     // Append matching FOREX items if tab is All or FOREX
@@ -1311,28 +1171,24 @@ export async function GET(request: NextRequest) {
           const itemText = `${item.name} ${item.symbol} ${item.segment} forex`.toLowerCase();
           const cleanText = itemText.replace(/[\s\/]+/g, '');
           return searchTerms.every(term => itemText.includes(term) || cleanText.includes(term.replace(/[\s\/]+/g, '')) || cleanText.includes(qClean));
-        });
-
-      const mappedForex = matchingForex.map(item => {
-        const qInfo = quoteMap[item.kiteSymbol] || quoteMap[item.comexSymbol] || quoteMap[item.symbol];
-        return {
+        })
+        .map(item => ({
           name: item.name,
           symbol: item.symbol,
           kiteSymbol: item.kiteSymbol || '',
-          binanceSymbol: item.binanceSymbol || '',
-          comexSymbol: item.comexSymbol || '',
-          price: qInfo?.price ?? 0,
+          binanceSymbol: (item as any).binanceSymbol || '',
+          comexSymbol: (item as any).comexSymbol || '',
+          price: 0,
           change: '0%',
           segment: item.segment,
           contractDate: item.segment.includes('CDS') ? curMonthYear : 'Continuous',
           open: 0,
-          high: qInfo?.high ?? 0,
-          low: qInfo?.low ?? 0,
+          high: 0,
+          low: 0,
           close: 0,
-        };
-      });
+        }));
 
-      results.push(...mappedForex);
+      results.push(...matchingForex);
     }
 
     // Append matching US Stock items if tab is All, STOCKS, US-EQ, US Equity, or US Stocks
@@ -1353,18 +1209,23 @@ export async function GET(request: NextRequest) {
 
         const usResults = matchingUsStocks.map(item => {
           const qInfo = usQuotes[item.symbol];
+          const baseP = getUSStockBasePrice(item.symbol);
+          const price = qInfo?.price ?? baseP;
+          const high = qInfo?.high ?? Number((baseP * 1.01).toFixed(2));
+          const low = qInfo?.low ?? Number((baseP * 0.99).toFixed(2));
+          const close = qInfo?.prevClose ?? baseP;
           return {
             name: `${item.name} (${item.symbol})`,
             symbol: item.symbol,
             kiteSymbol: `US:${item.symbol}`,
-            price: qInfo?.price ?? 0,
+            price,
             change: qInfo?.changePercent ? `${qInfo.changePercent > 0 ? '+' : ''}${qInfo.changePercent.toFixed(2)}%` : '0%',
             segment: item.segment,
             contractDate: 'Continuous',
-            open: 0,
-            high: qInfo?.high ?? 0,
-            low: qInfo?.low ?? 0,
-            close: qInfo?.prevClose ?? 0,
+            open: close,
+            high,
+            low,
+            close,
           };
         });
 
