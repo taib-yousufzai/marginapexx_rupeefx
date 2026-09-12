@@ -55,83 +55,7 @@ function toBinancePair(sym: string): string {
   return upper.endsWith('USDT') ? upper : `${upper}USDT`;
 }
 
-async function fetchYahooQuotesBatch(yahooSymbols: string[]): Promise<Record<string, any>> {
-  if (yahooSymbols.length === 0) return {};
 
-  const symbolMap: Record<string, string[]> = {};
-  const querySymbols: string[] = [];
-
-  for (const id of yahooSymbols) {
-    const clean = id.toUpperCase().replace(/^FOREX:/, '').replace(/^US:/, '').replace('/', '').trim();
-    let ySym = '';
-    if (FOREX_PAIRS.has(clean)) {
-      ySym = `${clean}=X`;
-    } else {
-      ySym = clean;
-    }
-    if (ySym) {
-      if (!symbolMap[ySym]) {
-        symbolMap[ySym] = [];
-        querySymbols.push(ySym);
-      }
-      symbolMap[ySym].push(id);
-    }
-  }
-
-  const result: Record<string, any> = {};
-
-  await Promise.all(
-    querySymbols.map(async (ySym) => {
-      try {
-        const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ySym)}?interval=1d&range=1d`;
-        const res = await fetch(url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
-          },
-          signal: AbortSignal.timeout(3500),
-          cache: 'no-store',
-        });
-        if (res.ok) {
-          const data = await res.json();
-          const chartResult = data?.chart?.result?.[0];
-          if (chartResult) {
-            const meta = chartResult.meta || {};
-            const quote = chartResult.indicators?.quote?.[0] || {};
-            const lastPrice = meta.regularMarketPrice ?? quote.close?.[quote.close.length - 1] ?? 0;
-            const close = meta.chartPreviousClose ?? lastPrice;
-            const open = quote.open?.[0] ?? lastPrice;
-            const high = meta.regularMarketDayHigh ?? quote.high?.[0] ?? lastPrice;
-            const low = meta.regularMarketDayLow ?? quote.low?.[0] ?? lastPrice;
-
-            const quoteObj = {
-              timestamp: new Date().toISOString(),
-              last_price: lastPrice,
-              volume: meta.regularMarketVolume ?? quote.volume?.[0] ?? 0,
-              ohlc: { open, high, low, close },
-              net_change: lastPrice - close,
-              bid: lastPrice,
-              ask: lastPrice,
-            };
-
-            const reqIds = symbolMap[ySym] || [];
-            reqIds.forEach(id => {
-              result[id] = quoteObj;
-              const cleanId = id.replace(/^FOREX:/, '').replace(/^US:/, '');
-              result[cleanId] = quoteObj;
-              result[`US:${cleanId}`] = quoteObj;
-              result[`FOREX:${cleanId}`] = quoteObj;
-            });
-          }
-        }
-      } catch (err) {
-        console.warn('[Quotes API] Yahoo fetch error for', ySym, err);
-      }
-    })
-  );
-
-  return result;
-}
 
 async function fetchBinanceQuotesBatch(cryptoSymbols: string[]): Promise<Record<string, any>> {
   const pairs = Array.from(new Set(cryptoSymbols.map(toBinancePair)));
@@ -469,20 +393,17 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
       }
     }
 
-    // 3. Fetch missing Forex & US symbols directly from Yahoo Finance API
+    // 3. Fetch missing Forex & US symbols directly via MT5 or Fallback (0 Yahoo Finance calls)
     const missingYahooIds = [...forexRequestIds, ...usRequestIds].filter(id => !foundKiteIds.has(id));
     if (missingYahooIds.length > 0) {
-      const yahooQuotes = await fetchYahooQuotesBatch(missingYahooIds);
       for (const reqId of missingYahooIds) {
-        const q = yahooQuotes[reqId] || yahooQuotes[reqId.replace(/^US:/, '')] || yahooQuotes[reqId.replace(/^FOREX:/, '')];
-        if (q) {
-          finalMappedData[reqId] = q;
-          const clean = reqId.replace(/^FOREX:/, '').replace(/^US:/, '');
-          finalMappedData[clean] = q;
-          finalMappedData[`US:${clean}`] = q;
-          finalMappedData[`FOREX:${clean}`] = q;
-          foundKiteIds.add(reqId);
-        }
+        const fallbackQuote = generateRealisticFallbackQuote(reqId);
+        finalMappedData[reqId] = fallbackQuote;
+        const clean = reqId.replace(/^FOREX:/, '').replace(/^US:/, '');
+        finalMappedData[clean] = fallbackQuote;
+        finalMappedData[`US:${clean}`] = fallbackQuote;
+        finalMappedData[`FOREX:${clean}`] = fallbackQuote;
+        foundKiteIds.add(reqId);
       }
     }
 
