@@ -18,44 +18,30 @@ function generateFallbackCandles(symbol: string, interval: string, fromSec: numb
     startSec = toSec - maxBars * stepSec;
   }
 
-  let hash = 0;
-  for (let i = 0; i < symbol.length; i++) {
-    hash = ((hash << 5) - hash) + symbol.charCodeAt(i);
-    hash |= 0;
-  }
-
-  let seed = Math.abs(hash) + 1;
-  function pseudoRandom() {
-    seed = (seed * 9301 + 49297) % 233280;
-    return seed / 233280;
-  }
-
-  const totalSteps = Math.floor((toSec - startSec) / stepSec);
+  const totalSteps = Math.max(1, Math.floor((toSec - startSec) / stepSec));
   let stepIndex = 0;
-  let currentWalkPrice = basePrice * (1 + (pseudoRandom() - 0.5) * 0.01);
 
   for (let t = startSec; t <= toSec; t += stepSec) {
     stepIndex++;
-    const isLastBar = stepIndex >= totalSteps || t + stepSec > toSec;
-    const timeIso = new Date(t * 1000).toISOString();
+    const progress = stepIndex / totalSteps;
+    // Smooth wave centered on basePrice
+    const wave = Math.sin(progress * Math.PI * 4) * (basePrice * 0.015);
+    const micro = Math.cos(stepIndex * 0.7) * (basePrice * 0.003);
     
-    const r1 = pseudoRandom();
-    const r2 = pseudoRandom();
-    const r3 = pseudoRandom();
-
-    // Realistic small candle walk step (-0.2% to +0.2%)
-    const stepPct = (r1 - 0.495) * 0.004;
-    const open = Number(currentWalkPrice.toFixed(2));
-    let close = isLastBar ? basePrice : Number((open * (1 + stepPct)).toFixed(2));
+    // At last bar (progress -> 1), damp drops to 0 so close price equals basePrice exactly
+    const damp = Math.pow(1 - progress, 1.5);
+    const close = stepIndex >= totalSteps ? basePrice : Number((basePrice + (wave + micro) * damp).toFixed(2));
+    const prevClose = stepIndex === 1 ? basePrice : candles[stepIndex - 2]?.[4] ?? basePrice;
+    const open = prevClose;
 
     const maxOC = Math.max(open, close);
     const minOC = Math.min(open, close);
 
-    const high = Number((maxOC + basePrice * (r2 * 0.0015)).toFixed(2));
-    const low = Number((Math.max(0.01, minOC - basePrice * (r3 * 0.0015))).toFixed(2));
-    const volume = Math.floor(r1 * 8000) + 1200;
+    const high = Number((maxOC + basePrice * 0.001).toFixed(2));
+    const low = Number((Math.max(0.01, minOC - basePrice * 0.001)).toFixed(2));
+    const volume = 2500 + Math.floor(Math.abs(Math.sin(stepIndex)) * 3000);
     
-    currentWalkPrice = close;
+    const timeIso = new Date(t * 1000).toISOString();
     candles.push([timeIso, open, high, low, close, volume]);
   }
   
