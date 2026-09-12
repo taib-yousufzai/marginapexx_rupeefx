@@ -102,21 +102,23 @@ async function fetchRealHistoricalBars(symbol: string, interval: string, period1
       if (timestamps[i] && closes[i] !== null && closes[i] !== undefined) {
         const timeIso = new Date(timestamps[i] * 1000).toISOString();
         const o = Number((opens[i] ?? closes[i]).toFixed(2));
-        let h = Number((highs[i] ?? closes[i]).toFixed(2));
-        let l = Number((lows[i] ?? closes[i]).toFixed(2));
-        let c = Number((closes[i]).toFixed(2));
-
-        // Sync final bar's close price with meta.regularMarketPrice (live CMP)
-        if (i === timestamps.length - 1 && typeof regularPrice === 'number' && regularPrice > 0) {
-          c = Number(regularPrice.toFixed(2));
-          h = Math.max(h, c);
-          l = Math.min(l, c);
-        }
-
+        const h = Number((highs[i] ?? closes[i]).toFixed(2));
+        const l = Number((lows[i] ?? closes[i]).toFixed(2));
+        const c = Number((closes[i]).toFixed(2));
         const v = volumes[i] ?? 0;
         bars.push([timeIso, o, h, l, c, v]);
       }
     }
+
+    // Sync final valid bar's close price with meta.regularMarketPrice (live CMP)
+    if (bars.length > 0 && typeof regularPrice === 'number' && regularPrice > 0) {
+      const lastIdx = bars.length - 1;
+      const regP = Number(regularPrice.toFixed(2));
+      bars[lastIdx][4] = regP;
+      bars[lastIdx][2] = Math.max(bars[lastIdx][2], regP);
+      bars[lastIdx][3] = Math.min(bars[lastIdx][3], regP);
+    }
+
     return bars;
   } catch (err) {
     console.warn(`[historical-forex] Failed to fetch real bars for ${symbol}:`, err);
@@ -142,16 +144,26 @@ export async function GET(req: NextRequest) {
     const toParam = searchParams.get('to') || searchParams.get('endTime');
 
     if (toParam) {
-      const toMs = isNaN(Number(toParam)) ? new Date(toParam).getTime() : Number(toParam);
-      if (!isNaN(toMs) && toMs > 0) {
-        period2 = Math.min(Math.floor(toMs / 1000), nowSec);
+      const num = Number(toParam);
+      if (!isNaN(num) && num > 0) {
+        period2 = num > 1e11 ? Math.floor(num / 1000) : Math.floor(num);
+      } else {
+        const toMs = new Date(toParam).getTime();
+        if (!isNaN(toMs) && toMs > 0) {
+          period2 = Math.floor(toMs / 1000);
+        }
       }
     }
 
     if (fromParam) {
-      const fromMs = isNaN(Number(fromParam)) ? new Date(fromParam).getTime() : Number(fromParam);
-      if (!isNaN(fromMs) && fromMs > 0) {
-        period1 = Math.floor(fromMs / 1000);
+      const num = Number(fromParam);
+      if (!isNaN(num) && num > 0) {
+        period1 = num > 1e11 ? Math.floor(num / 1000) : Math.floor(num);
+      } else {
+        const fromMs = new Date(fromParam).getTime();
+        if (!isNaN(fromMs) && fromMs > 0) {
+          period1 = Math.floor(fromMs / 1000);
+        }
       }
     }
 
