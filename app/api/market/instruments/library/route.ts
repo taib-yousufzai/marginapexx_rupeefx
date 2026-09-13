@@ -723,6 +723,11 @@ async function buildLibrary(request: Request, today: string) {
       }
 
       const tickerMap: Record<string, string> = {
+        'XAUUSD': 'GOLD',
+        'XAGUSD': 'SILVER',
+        'XTIUSD': 'CRUDEOIL',
+        'XCUUSD': 'COPPER',
+        'XNGUSD': 'NATURALGAS',
         'GC=F': 'GOLD',
         'SI=F': 'SILVER',
         'CL=F': 'CRUDEOIL',
@@ -730,6 +735,11 @@ async function buildLibrary(request: Request, today: string) {
       };
 
       const symbolMap: Record<string, string> = {
+        'XAUUSD': 'GOLD_FUT',
+        'XAGUSD': 'SILVER_FUT',
+        'XTIUSD': 'CRUDEOIL_FUT',
+        'XCUUSD': 'COPPER_FUT',
+        'XNGUSD': 'NATURALGAS_FUT',
         'GC=F': 'GOLD_FUT',
         'SI=F': 'SILVER_FUT',
         'CL=F': 'CRUDEOIL_FUT',

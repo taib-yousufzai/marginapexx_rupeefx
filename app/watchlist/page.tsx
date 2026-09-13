@@ -913,20 +913,20 @@ function WatchlistContent() {
   const comexSymbols = Array.from(new Set([
     ...watchlistItems.map(i => i.comexSymbol || (i.symbol.endsWith('=F') ? i.symbol : (
       (i.segment || '').toUpperCase().includes('COMEX') ? (
-        (i.name || i.symbol || '').toUpperCase().includes('SILVER') ? 'SI=F' :
-        (i.name || i.symbol || '').toUpperCase().includes('GOLD') ? 'GC=F' :
-        (i.name || i.symbol || '').toUpperCase().includes('CRUDE') ? 'CL=F' :
-        (i.name || i.symbol || '').toUpperCase().includes('COPPER') ? 'HG=F' :
-        (i.name || i.symbol || '').toUpperCase().includes('NAT') ? 'NG=F' : ''
+        (i.name || i.symbol || '').toUpperCase().includes('SILVER') ? 'XAGUSD' :
+        (i.name || i.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
+        (i.name || i.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
+        (i.name || i.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
+        (i.name || i.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
       ) : ''
     ))).filter((s): s is string => !!s),
     ...(selectedItem?.comexSymbol ? [selectedItem.comexSymbol] : []),
     ...(selectedItem && (selectedItem.segment || '').toUpperCase().includes('COMEX') ? [
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('SILVER') ? 'SI=F' :
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('GOLD') ? 'GC=F' :
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('CRUDE') ? 'CL=F' :
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('COPPER') ? 'HG=F' :
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('NAT') ? 'NG=F' : ''
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('SILVER') ? 'XAGUSD' :
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
+      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
     ].filter(Boolean) : [])
   ]));
   const { quotes: comexQuotes } = useComexQuotes(comexSymbols, 1000);
@@ -941,11 +941,11 @@ function WatchlistContent() {
   );
 
   const comexSymbolKey = selectedItem?.comexSymbol || (selectedItem?.symbol?.endsWith('=F') ? selectedItem.symbol : (
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('SILVER') ? 'SI=F' :
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('GOLD') ? 'GC=F' :
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('CRUDE') ? 'CL=F' :
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('COPPER') ? 'HG=F' :
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('NAT') ? 'NG=F' : ''
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('SILVER') ? 'XAGUSD' :
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
+    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
   ));
 
   const currentKiteQuote = selectedItem ? (
@@ -2940,10 +2940,10 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           name: 'COMEX',
           icon: 'fa-gem',
           instruments: [
-            { name: 'GOLD', comexName: 'Gold', symbol: 'GOLD_FUT', kiteSymbol: 'MCX:GOLD26OCTFUT', comexSymbol: 'GC=F', price: 72450, change: '+0.28%', segment: 'MCX - Futures', contractDate: 'Oct 2026', open: 72150, high: 72450, low: 72100, close: 72450 },
-            { name: 'SILVER', comexName: 'Silver', symbol: 'SILVER_FUT', kiteSymbol: 'MCX:SILVER26SEPFUT', comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: 'Sep 2026', open: 0, high: 0, low: 0, close: 0 },
-            { name: 'CRUDEOIL', comexName: 'Crude Oil', symbol: 'CRUDEOIL_FUT', kiteSymbol: 'MCX:CRUDEOIL26JULFUT', comexSymbol: 'CL=F', price: 6120, change: '0%', segment: 'MCX - Futures', contractDate: 'Jul 2026', open: 0, high: 0, low: 0, close: 0 },
-            { name: 'COPPER', comexName: 'Copper', symbol: 'COPPER_FUT', kiteSymbol: 'MCX:COPPER26JULFUT', comexSymbol: 'HG=F', price: 780, change: '0%', segment: 'MCX - Futures', contractDate: 'Jul 2026', open: 0, high: 0, low: 0, close: 0 }
+            { name: 'GOLD', comexName: 'Gold', symbol: 'XAUUSD', kiteSymbol: '', comexSymbol: 'XAUUSD', price: 4349.42, change: '+0.75%', segment: 'COMEX - Futures', contractDate: '', open: 4349.42, high: 4360, low: 4330, close: 4349.42, category: 'COMEX' },
+            { name: 'SILVER', comexName: 'Silver', symbol: 'XAGUSD', kiteSymbol: '', comexSymbol: 'XAGUSD', price: 64.21, change: '+1.26%', segment: 'COMEX - Futures', contractDate: '', open: 64.21, high: 64.50, low: 63.90, close: 64.21, category: 'COMEX' },
+            { name: 'CRUDE OIL', comexName: 'Crude Oil', symbol: 'XTIUSD', kiteSymbol: '', comexSymbol: 'XTIUSD', price: 69.50, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 69.50, high: 70.00, low: 69.00, close: 69.50, category: 'COMEX' },
+            { name: 'COPPER', comexName: 'Copper', symbol: 'XCUUSD', kiteSymbol: '', comexSymbol: 'XCUUSD', price: 4.15, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 4.15, high: 4.20, low: 4.10, close: 4.15, category: 'COMEX' }
           ]
         },
         {

@@ -273,6 +273,11 @@ export function fmtDuration(seconds: number): string {
 // ─── Symbol & Instrument Formatting ──────────────────────────────────────────
 
 const COMEX_SYMBOL_MAP: Record<string, string> = {
+  'XAUUSD': 'GOLD',
+  'XAGUSD': 'SILVER',
+  'XTIUSD': 'CRUDE OIL',
+  'XCUUSD': 'COPPER',
+  'XNGUSD': 'NATURAL GAS',
   'GC=F': 'GOLD',
   'GC': 'GOLD',
   'SI=F': 'SILVER',

@@ -160,7 +160,7 @@ export default function InstrumentRow({ item, quote, binanceQuote, comexQuote, o
               })();
 
               const rawName = item.name || '';
-              const isComex = item.segment?.includes('COMEX') || item.exchange === 'COMEX' || item.symbol?.endsWith('=F') || item.symbol === 'SI=F' || item.symbol === 'GC=F';
+              const isComex = item.segment?.includes('COMEX') || item.exchange === 'COMEX' || item.symbol?.endsWith('=F') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (item.symbol || '').includes(c) || (item.comexSymbol || '').includes(c));
               const isGenericCommodityName = !isComex && ['SILVER', 'GOLD', 'CRUDEOIL', 'COPPER', 'NATURALGAS', 'NATGAS'].includes(rawName.toUpperCase().trim());
               const baseName = isComex ? fmtSymbolName(item.symbol, item.name) : (isGenericCommodityName ? (item.symbol ? item.symbol.replace(/^(MCX|NSE|BSE|CDS|NFO|BFO):/, '') : rawName) : (rawName || item.symbol));
 

@@ -482,7 +482,7 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
                       <div className="sri-left" style={{ flex: 1, minWidth: 0 }}>
                         {(() => {
                           const rawName = r.name || '';
-                          const isComex = r.segment?.includes('COMEX') || r.exchange === 'COMEX' || r.symbol?.endsWith('=F') || r.symbol === 'SI=F' || r.symbol === 'GC=F';
+                          const isComex = r.segment?.includes('COMEX') || r.exchange === 'COMEX' || r.symbol?.endsWith('=F') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (r.symbol || '').includes(c) || (r.comexSymbol || '').includes(c));
                           const isGenericCommodityName = !isComex && ['SILVER', 'GOLD', 'CRUDEOIL', 'COPPER', 'NATURALGAS', 'NATGAS'].includes(rawName.toUpperCase().trim());
                           const searchDisplayName = isComex ? fmtSymbolName(r.symbol, r.name) : (isGenericCommodityName ? (r.symbol ? r.symbol.replace(/^(MCX|NSE|BSE|CDS|NFO|BFO):/, '') : rawName) : (rawName || r.symbol));
                           return <div className="sri-name">{searchDisplayName}</div>;
@@ -502,7 +502,7 @@ export default function WatchlistSearch({ activeTab, addedSymbols, onAdd, onRemo
                         )}
                       </div>
                       <div className="sri-right" style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
-                        <div className="search-result-price" style={{ marginRight: 0 }}>₹{(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        <div className="search-result-price" style={{ marginRight: 0 }}>{(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                         <button
                           className={`add-smart-btn${side === 'SELL' ? ' sell-mode' : ''}`}
                           onClick={(e) => { e.stopPropagation(); handleToggleClick(r); }}

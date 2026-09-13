@@ -179,11 +179,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   }, [computedKiteSymbol, item?.kiteSymbol, item?.symbol, item?.name, isCrypto, bSymbol]);
 
   const comexSymbolKey = item?.comexSymbol || (item?.symbol?.endsWith('=F') ? item.symbol : (
-    (item?.name || item?.symbol || '').toUpperCase().includes('SILVER') ? 'SI=F' :
-    (item?.name || item?.symbol || '').toUpperCase().includes('GOLD') ? 'GC=F' :
-    (item?.name || item?.symbol || '').toUpperCase().includes('CRUDE') ? 'CL=F' :
-    (item?.name || item?.symbol || '').toUpperCase().includes('COPPER') ? 'HG=F' :
-    (item?.name || item?.symbol || '').toUpperCase().includes('NAT') ? 'NG=F' : ''
+    (item?.name || item?.symbol || '').toUpperCase().includes('SILVER') ? 'XAGUSD' :
+    (item?.name || item?.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
+    (item?.name || item?.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
+    (item?.name || item?.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
+    (item?.name || item?.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
   ));
 
   const comexSymbols = useMemo(() => {
