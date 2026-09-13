@@ -263,7 +263,7 @@ export async function GET(req: NextRequest) {
         });
 
         if (filtered.length === 0) {
-          filtered = publicComexBars.slice(-300);
+          filtered = publicComexBars;
         }
 
         const firstBarSec = Math.floor(new Date(filtered[0][0]).getTime() / 1000);
@@ -280,16 +280,6 @@ export async function GET(req: NextRequest) {
         } else {
           candles = filtered;
         }
-
-        const lastFilteredSec = Math.floor(new Date(candles[candles.length - 1][0]).getTime() / 1000);
-        if (period2 > lastFilteredSec + 300) {
-          const lastClosePrice = candles[candles.length - 1][4];
-          const stepSec = rawInterval === '1m' ? 60 : 300;
-          for (let t = lastFilteredSec + stepSec; t <= period2; t += stepSec) {
-            const timeIso = new Date(t * 1000).toISOString();
-            candles.push([timeIso, lastClosePrice, lastClosePrice, lastClosePrice, lastClosePrice, 1000]);
-          }
-        }
       }
     }
 
@@ -303,7 +293,7 @@ export async function GET(req: NextRequest) {
         });
 
         if (filteredNasdaq.length === 0) {
-          filteredNasdaq = nasdaqBars.slice(-300);
+          filteredNasdaq = nasdaqBars;
         }
 
         const firstBarSec = Math.floor(new Date(filteredNasdaq[0][0]).getTime() / 1000);
@@ -319,16 +309,6 @@ export async function GET(req: NextRequest) {
           candles = [...historicBars, ...filteredNasdaq];
         } else {
           candles = filteredNasdaq;
-        }
-
-        const lastFilteredSec = Math.floor(new Date(candles[candles.length - 1][0]).getTime() / 1000);
-        if (period2 > lastFilteredSec + 300) {
-          const lastClosePrice = candles[candles.length - 1][4];
-          const stepSec = rawInterval === '1m' ? 60 : 300;
-          for (let t = lastFilteredSec + stepSec; t <= period2; t += stepSec) {
-            const timeIso = new Date(t * 1000).toISOString();
-            candles.push([timeIso, lastClosePrice, lastClosePrice, lastClosePrice, lastClosePrice, 1000]);
-          }
         }
       }
     }
