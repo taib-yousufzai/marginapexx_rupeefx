@@ -198,6 +198,17 @@ async function fetchRealPublicComexBars(symbol: string, interval: string): Promi
       }
     }
 
+    // Sync last bar close price with live regularMarketPrice to prevent single-candle spikes
+    const meta = result?.meta;
+    if (meta && typeof meta.regularMarketPrice === 'number' && meta.regularMarketPrice > 0 && bars.length > 0) {
+      const lastIdx = bars.length - 1;
+      const cmp = Number(meta.regularMarketPrice.toFixed(2));
+      const prevClose = bars[lastIdx][1];
+      bars[lastIdx][4] = cmp;
+      bars[lastIdx][2] = Math.max(bars[lastIdx][2], cmp, prevClose);
+      bars[lastIdx][3] = Math.min(bars[lastIdx][3], cmp, prevClose);
+    }
+
     return bars;
   } catch (err) {
     console.warn(`[historical-forex] Failed to fetch public COMEX bars for ${symbol}:`, err);
