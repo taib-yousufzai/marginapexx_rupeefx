@@ -16,25 +16,23 @@ function generateFallbackCandles(symbol: string, interval: string, fromSec: numb
     startSec = toSec - maxBars * stepSec;
   }
 
-  // Work BACKWARDS from basePrice at toSec down to startSec
+  // Work BACKWARDS smoothly from basePrice at toSec down to startSec
   let currentClose = basePrice;
-  let momentum = 0;
+  const maxDev = basePrice * 0.004; // Max 0.4% deviation from basePrice
 
   for (let t = toSec; t >= startSec; t -= stepSec) {
-    if (Math.random() < 0.25) {
-      momentum = (Math.random() - 0.5) * (basePrice * 0.0008);
-    }
-    const noise = (Math.random() - 0.5) * (basePrice * 0.0012);
-    const delta = momentum + noise;
+    const pullToBase = (basePrice - currentClose) * 0.05;
+    const noise = (Math.random() - 0.5) * (basePrice * 0.0006);
+    let open = Number((currentClose + pullToBase + noise).toFixed(2));
 
-    let open = Number((currentClose - delta).toFixed(2));
-    if (open <= 0) open = 0.01;
+    if (open > basePrice + maxDev) open = Number((basePrice + maxDev).toFixed(2));
+    if (open < basePrice - maxDev) open = Number((basePrice - maxDev).toFixed(2));
 
     const maxOC = Math.max(open, currentClose);
     const minOC = Math.min(open, currentClose);
 
-    const upperWick = Math.random() * (basePrice * 0.0008);
-    const lowerWick = Math.random() * (basePrice * 0.0008);
+    const upperWick = Math.random() * (basePrice * 0.0004);
+    const lowerWick = Math.random() * (basePrice * 0.0004);
 
     const high = Number((maxOC + upperWick).toFixed(2));
     const low = Number((Math.max(0.01, minOC - lowerWick)).toFixed(2));
