@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
 import { api } from '@/lib/api';
+import { isInstrumentInWatchlist } from '@/lib/watchlistUtils';
 
 interface Instrument {
   name: string;
@@ -251,9 +252,10 @@ interface TradingSegmentsDrawerProps {
   onClose: () => void;
   onSelect?: (item: any) => void;
   addedSymbols?: Set<string>;
+  watchlistItems?: any[];
 }
 
-export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, addedSymbols }: TradingSegmentsDrawerProps) {
+export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, addedSymbols, watchlistItems }: TradingSegmentsDrawerProps) {
   const [mounted, setMounted] = React.useState(false);
   const [expandedSegment, setExpandedSegment] = useState<string | null>(null);
   const [expandedSubcategories, setExpandedSubcategories] = useState<Record<string, boolean>>({});
@@ -474,7 +476,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, added
               {expandedSegment === seg.name && (
                 <div className="lib-seg-children">
                   {seg.instruments?.map((inst, idx) => {
-                    const isAdded = addedSymbols?.has(inst.symbol);
+                    const isAdded = (addedSymbols?.has(inst.symbol) || addedSymbols?.has(inst.name)) || (watchlistItems && isInstrumentInWatchlist(inst, watchlistItems));
                     return (
                       <div key={`${inst.kiteSymbol || inst.symbol}-${idx}`} className="lib-inst-item" onClick={() => onSelect?.(inst)}>
                         <span className="lib-inst-name">{inst.name}</span>
@@ -506,7 +508,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, added
                           <span className="lib-subcat-count">{sub.instruments?.length || 0}</span>
                         </div>
                         {isSubOpen && sub.instruments?.map((inst, idx) => {
-                          const isAdded = addedSymbols?.has(inst.symbol);
+                          const isAdded = (addedSymbols?.has(inst.symbol) || addedSymbols?.has(inst.name)) || (watchlistItems && isInstrumentInWatchlist(inst, watchlistItems));
                           return (
                             <div key={`${inst.kiteSymbol || inst.symbol}-${idx}`} className="lib-inst-item" onClick={() => onSelect?.(inst)}>
                               <span className="lib-inst-name">{inst.name}</span>

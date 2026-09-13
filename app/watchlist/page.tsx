@@ -18,6 +18,7 @@ import { isForexSymbol } from '@/lib/datafeed/symbolResolver';
 import { getCurrentFuturesSymbol } from '@/lib/contractExpiry';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
+import { isInstrumentInWatchlist } from '@/lib/watchlistUtils';
 import { generateRealisticFallbackQuote } from '@/lib/quoteFallback';
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
@@ -68,12 +69,22 @@ declare global {
 
 const WATCHLIST_KEY = 'marginApex_watchlist';
 
+
+
 function loadWatchlistFromStorage(userId?: string): WatchlistItem[] {
   if (typeof window === 'undefined') return [];
   try {
     const key = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
     const raw = localStorage.getItem(key);
-    return raw ? (JSON.parse(raw) as WatchlistItem[]) : [];
+    if (!raw) return [];
+    const items = JSON.parse(raw) as WatchlistItem[];
+    const unique: WatchlistItem[] = [];
+    for (const item of items) {
+      if (!isInstrumentInWatchlist(item, unique)) {
+        unique.push(item);
+      }
+    }
+    return unique;
   } catch { return []; }
 }
 
@@ -1495,8 +1506,8 @@ function WatchlistContent() {
         // so the item appears in both 'All' AND its specific category tab
         const resolvedCategory = activeTab === 'All' ? getTabForItem(item) : activeTab;
         const newItem = { ...item, category: resolvedCategory };
-        // Duplicate check: same symbol already exists anywhere
-        const isDuplicate = prev.some(i => i.symbol === newItem.symbol);
+        // Duplicate check: same instrument already exists anywhere
+        const isDuplicate = isInstrumentInWatchlist(newItem, prev);
         if (isDuplicate) return prev;
         const next = [...prev, newItem];
         saveWatchlistToStorage(next, userId);
@@ -1510,8 +1521,8 @@ function WatchlistContent() {
     window.__removeFromWatchlistCallback = (symbol: string) => {
       setWatchlistItems(prev => {
         const next = prev.filter(i => {
-          if (activeTab === 'All') return i.symbol !== symbol;
-          return !(i.symbol === symbol && getTabForItem(i) === activeTab);
+          if (activeTab === 'All') return !isInstrumentInWatchlist({ symbol, name: symbol }, [i]);
+          return !(isInstrumentInWatchlist({ symbol, name: symbol }, [i]) && getTabForItem(i) === activeTab);
         });
         saveWatchlistToStorage(next, userId);
         // Keep inline script symbol set in sync
@@ -2650,7 +2661,7 @@ function WatchlistContent() {
                         {isOpen && (
                           <div className="children-container" style={{ display: 'block' }}>
                             {filteredSeg.instruments?.map((inst) => {
-                              const isAdded = addedSymbolsSet.has(inst.symbol);
+                              const isAdded = isInstrumentInWatchlist(inst, watchlistItems);
                               return (
                                 <div key={inst.symbol} className="script-item">
                                   <span>{inst.name}</span>
@@ -2662,7 +2673,7 @@ function WatchlistContent() {
                                     onClick={() => {
                                       if (isAdded) {
                                         setWatchlistItems(prev => {
-                                          const next = prev.filter(i => i.symbol !== inst.symbol);
+                                          const next = prev.filter(i => !isInstrumentInWatchlist(inst, [i]));
                                           saveWatchlistToStorage(next, userId);
                                           if (typeof (window as any).__syncWatchlistSymbols === 'function') {
                                             (window as any).__syncWatchlistSymbols(next.map((i: WatchlistItem) => i.symbol));
@@ -2700,7 +2711,7 @@ function WatchlistContent() {
                                   {subOpen && (
                                     <div className="children-container" style={{ display: 'block' }}>
                                       {sub.instruments.map((inst: any) => {
-                                        const isAdded = addedSymbolsSet.has(inst.symbol);
+                                        const isAdded = isInstrumentInWatchlist(inst, watchlistItems);
                                         return (
                                           <div key={inst.symbol} className="script-item">
                                             <span>{inst.name}</span>
@@ -2712,7 +2723,7 @@ function WatchlistContent() {
                                               onClick={() => {
                                                 if (isAdded) {
                                                   setWatchlistItems(prev => {
-                                                    const next = prev.filter(i => i.symbol !== inst.symbol);
+                                                    const next = prev.filter(i => !isInstrumentInWatchlist(inst, [i]));
                                                     saveWatchlistToStorage(next, userId);
                                                     if (typeof (window as any).__syncWatchlistSymbols === 'function') {
                                                       (window as any).__syncWatchlistSymbols(next.map((i: WatchlistItem) => i.symbol));
