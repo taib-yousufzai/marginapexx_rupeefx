@@ -82,7 +82,7 @@ export async function fetchUSStockQuote(symbol: string): Promise<USStockQuote | 
     }
   } catch (err) { }
 
-  // 2. Fetch REAL Official NASDAQ Live Market Quote (0 Broker Logins / Credentials Needed, 0 Yahoo Finance)
+  // 2. Fetch REAL Official NASDAQ Live Market Quote (0 Broker Logins / Credentials Needed)
   try {
     const res = await fetch(`https://api.nasdaq.com/api/quote/${encodeURIComponent(cleanSymbol)}/info?assetclass=stocks`, {
       headers: {

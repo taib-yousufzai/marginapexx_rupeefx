@@ -49,7 +49,7 @@ export type Segment =
  *
  * - `kite`    — Zerodha Kite websocket (most equity/F&O/MCX instruments)
  * - `binance` — Binance REST/WS (crypto)
- * - `comex`   — Yahoo Finance proxy for COMEX USD prices
+ * - `comex`   — Direct COMEX USD prices
  * - `dual`    — MCX commodity that also has a COMEX USD counterpart;
  *               the user can toggle between ₹MCX and $COMEX views.
  */
@@ -86,7 +86,7 @@ export interface TradingInstrument {
   binanceSymbol?: string;
 
   /**
-   * Yahoo Finance / COMEX proxy symbol — only present for COMEX instruments.
+   * COMEX symbol — only present for COMEX instruments.
    * e.g. 'GC=F' (Gold), 'CL=F' (Crude Oil)
    */
   comexSymbol?: string;

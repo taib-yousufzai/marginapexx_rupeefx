@@ -22,7 +22,7 @@ export function isForexSymbol(symbolName: string): boolean {
 
   if (upper.startsWith('US:') || isUsSymbol(symbolName)) return false;
   
-  // Indian currency futures, exchange prefixes, and Indian indices/stocks are NOT Yahoo Forex
+  // Indian currency futures, exchange prefixes, and Indian indices/stocks are NOT Global Forex
   if (
     upper.includes('INR') || 
     upper.endsWith('FUT') || 

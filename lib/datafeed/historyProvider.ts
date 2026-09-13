@@ -10,7 +10,7 @@ type BinanceKline = any[];
 /**
  * Fetches historical bars for a given symbol and resolution.
  *
- * Routes to Binance API for CRYPTO, Yahoo Finance for FOREX and US instruments, and Kite API for all Indian symbols.
+ * Routes to Binance API for CRYPTO, MT5 / NASDAQ API for FOREX, COMEX and US instruments, and Kite API for all Indian symbols.
  */
 export async function fetchBars(
   symbolInfo: LibrarySymbolInfo,
@@ -25,7 +25,7 @@ export async function fetchBars(
     const canonicalSymbol = getCanonicalSymbol(symbolInfo);
     const upperSym = canonicalSymbol.toUpperCase();
     const isUs = isUsSymbol(canonicalSymbol, segment) || symbolInfo?.exchange === 'US';
-    const isGlobalYahooForex =
+    const isGlobalForex =
       !isUs &&
       (isForexSymbol(canonicalSymbol) ||
         (segment.toUpperCase() === 'FOREX' &&
@@ -36,12 +36,12 @@ export async function fetchBars(
         
     const isCrypto =
       !isUs &&
-      !isGlobalYahooForex &&
+      !isGlobalForex &&
       (segment.toUpperCase() === 'CRYPTO' || canonicalSymbol.endsWith('USDT'));
 
     if (isCrypto) {
       return fetchBinanceBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);
-    } else if (isGlobalYahooForex || isUs) {
+    } else if (isGlobalForex || isUs) {
       return fetchMT5ForexBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);
     } else {
       return fetchKiteBars(canonicalSymbol, resolution, periodParams, loadId, getBarsCallNum, loadStartTime);

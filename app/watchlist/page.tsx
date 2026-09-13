@@ -33,7 +33,7 @@ export interface WatchlistItem {
   symbol: string;
   kiteSymbol: string;
   binanceSymbol?: string;  // e.g. 'BTCUSDT' — crypto (Binance)
-  comexSymbol?: string;  // e.g. 'GC=F'    — COMEX USD price (Yahoo Finance proxy, paired with kiteSymbol for MCX)
+  comexSymbol?: string;  // e.g. 'XAUUSD'  — COMEX USD price, paired with kiteSymbol for MCX
   comexName?: string;
   exchange?: string;
   price: number;
@@ -110,7 +110,7 @@ const DEFAULT_FOREX_ITEMS: WatchlistItem[] = [
   { name: 'JPY/INR', symbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
 ];
 
-// ── Default COMEX Items (MCX ₹ via Kite + COMEX $ via Yahoo proxy) ──────────────
+// ── Default COMEX Items (MCX ₹ via Kite + COMEX $ via Direct feed) ──────────────
 // Rows with both kiteSymbol + comexSymbol show a ₹⇄$ toggle pill
 
 const DEFAULT_COMEX_ITEMS: WatchlistItem[] = [

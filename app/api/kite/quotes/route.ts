@@ -6,7 +6,7 @@
  * 1. Bypasses DB lookup entirely.
  * 2. Fetches from local Redis Hash cache first.
  * 3. Handles Crypto symbols directly via Binance REST API when not cached.
- * 4. Handles Forex and US Equity symbols via Yahoo Finance API.
+ * 4. Handles Forex and US Equity symbols via MT5 / Official market endpoints.
  * 5. Falls back to Kite REST API in batches for missing/uncached Indian instruments.
  */
 
@@ -394,11 +394,11 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
       }
     }
 
-    // 3. Fetch missing Forex, US & COMEX symbols directly via MT5 or Fallback (0 Yahoo Finance calls)
-    const missingYahooIds = [...forexRequestIds, ...usRequestIds].filter(id => !foundKiteIds.has(id));
-    if (missingYahooIds.length > 0) {
+    // 3. Fetch missing Forex, US & COMEX symbols directly via MT5 or Fallback
+    const missingUsForexIds = [...forexRequestIds, ...usRequestIds].filter(id => !foundKiteIds.has(id));
+    if (missingUsForexIds.length > 0) {
       const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');
-      for (const reqId of missingYahooIds) {
+      for (const reqId of missingUsForexIds) {
         let mt5Quote: any = null;
         try {
           mt5Quote = await fetchMT5StockQuote(reqId);

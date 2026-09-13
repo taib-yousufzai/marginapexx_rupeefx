@@ -124,112 +124,6 @@ async function fetchRealNasdaqHistoricalBars(symbol: string): Promise<any[][]> {
   }
 }
 
-const YAHOO_SYMBOL_MAP: Record<string, string> = {
-  'XAUUSD': 'GC=F',
-  'GOLD': 'GC=F',
-  'GC=F': 'GC=F',
-  'XAGUSD': 'SI=F',
-  'SILVER': 'SI=F',
-  'SI=F': 'SI=F',
-  'XTIUSD': 'CL=F',
-  'WTI': 'CL=F',
-  'CRUDE': 'CL=F',
-  'CRUDEOIL': 'CL=F',
-  'CL=F': 'CL=F',
-  'XCUUSD': 'HG=F',
-  'COPPER': 'HG=F',
-  'HG=F': 'HG=F',
-  'XNGUSD': 'NG=F',
-  'NATGAS': 'NG=F',
-  'NATURALGAS': 'NG=F',
-  'NG=F': 'NG=F',
-};
-
-function toYahooTicker(symbol: string): string {
-  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').trim().toUpperCase();
-  if (YAHOO_SYMBOL_MAP[clean]) return YAHOO_SYMBOL_MAP[clean];
-  if (['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'].includes(clean)) {
-    return `${clean}=X`;
-  }
-  return clean;
-}
-
-async function fetchRealPublicComexBars(symbol: string, interval: string): Promise<any[][]> {
-  try {
-    const yahooTicker = toYahooTicker(symbol);
-    const range = '5d';
-    const validInterval = interval === '1m' ? '1m' : interval === '1d' || interval === 'd' ? '1d' : '5m';
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooTicker)}?interval=${validInterval}&range=${range}`;
-
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json',
-      },
-      cache: 'no-store',
-      signal: AbortSignal.timeout(4000),
-    });
-
-    if (!res.ok) return [];
-
-    const json = await res.json();
-    const result = json?.chart?.result?.[0];
-    if (!result) return [];
-
-    const timestamps: number[] = result?.timestamp || [];
-    const quote = result?.indicators?.quote?.[0] || {};
-    const opens = quote.open || [];
-    const highs = quote.high || [];
-    const lows = quote.low || [];
-    const closes = quote.close || [];
-    const volumes = quote.volume || [];
-
-    const bars: any[][] = [];
-
-    for (let i = 0; i < timestamps.length; i++) {
-      if (opens[i] != null && closes[i] != null && highs[i] != null && lows[i] != null) {
-        const timeIso = new Date(timestamps[i] * 1000).toISOString();
-        const open = Number(opens[i].toFixed(2));
-        const high = Number(highs[i].toFixed(2));
-        const low = Number(lows[i].toFixed(2));
-        const close = Number(closes[i].toFixed(2));
-        const volume = volumes[i] || 1000;
-        bars.push([timeIso, open, high, low, close, volume]);
-      }
-    }
-
-    const cleanSym = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').trim().toUpperCase();
-    if (['XAUUSD', 'GOLD', 'GC=F'].includes(cleanSym) && bars.length > 0) {
-      const targetSpot = 4349.42;
-      const lastClose = bars[bars.length - 1][4];
-      if (lastClose > 0) {
-        const ratio = targetSpot / lastClose;
-        for (let b of bars) {
-          b[1] = Number((b[1] * ratio).toFixed(2));
-          b[2] = Number((b[2] * ratio).toFixed(2));
-          b[3] = Number((b[3] * ratio).toFixed(2));
-          b[4] = Number((b[4] * ratio).toFixed(2));
-        }
-      }
-    } else {
-      const meta = result?.meta;
-      if (meta && typeof meta.regularMarketPrice === 'number' && meta.regularMarketPrice > 0 && bars.length > 0) {
-        const lastIdx = bars.length - 1;
-        const cmp = Number(meta.regularMarketPrice.toFixed(2));
-        const prevClose = bars[lastIdx][1];
-        bars[lastIdx][4] = cmp;
-        bars[lastIdx][2] = Math.max(bars[lastIdx][2], cmp, prevClose);
-        bars[lastIdx][3] = Math.min(bars[lastIdx][3], cmp, prevClose);
-      }
-    }
-
-    return bars;
-  } catch (err) {
-    console.warn(`[historical-forex] Failed to fetch public COMEX bars for ${symbol}:`, err);
-    return [];
-  }
-}
-
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -278,37 +172,7 @@ export async function GET(req: NextRequest) {
       candles = await fetchMT5HistoricalBars(rawSymbol, rawInterval, period1, period2);
     }
 
-    // 2. Real Public COMEX & Forex Market Chart Candles (0 Broker Accounts / Logins Needed)
-    if (!candles || candles.length === 0) {
-      const publicComexBars = await fetchRealPublicComexBars(rawSymbol, rawInterval);
-      if (publicComexBars && publicComexBars.length > 0) {
-        let filtered = publicComexBars.filter(b => {
-          const sec = Math.floor(new Date(b[0]).getTime() / 1000);
-          return sec >= period1 && sec <= period2;
-        });
-
-        if (filtered.length === 0) {
-          filtered = publicComexBars;
-        }
-
-        const firstBarSec = Math.floor(new Date(filtered[0][0]).getTime() / 1000);
-        if (firstBarSec > period1 + 600) {
-          const firstOpenPrice = filtered[0][1];
-          const historicBars = generateFallbackCandles(
-            rawSymbol,
-            rawInterval,
-            period1,
-            firstBarSec - 300,
-            firstOpenPrice
-          );
-          candles = [...historicBars, ...filtered];
-        } else {
-          candles = filtered;
-        }
-      }
-    }
-
-    // 3. Real Official NASDAQ Live Chart Candles (for US Stocks, 0 Broker Accounts Needed)
+    // 2. Real Official NASDAQ Live Chart Candles (for US Stocks, 0 Broker Accounts Needed)
     if (!candles || candles.length === 0) {
       const nasdaqBars = await fetchRealNasdaqHistoricalBars(rawSymbol);
       if (nasdaqBars && nasdaqBars.length > 0) {
@@ -338,7 +202,7 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 4. Fallback Candles for historical pagination or offline data
+    // 3. Fallback Candles for historical pagination or offline data
     if (!candles || candles.length === 0) {
       candles = generateFallbackCandles(rawSymbol, rawInterval, period1, period2);
     }
