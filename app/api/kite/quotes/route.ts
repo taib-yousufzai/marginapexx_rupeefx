@@ -25,7 +25,8 @@ const FOREX_PAIRS = new Set([
 
 const US_SYMBOLS = new Set([
   'AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC',
-  'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F', 'CL=F', 'GC=F', 'SI=F'
+  'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F', 'CL=F', 'GC=F', 'SI=F', 'NG=F', 'HG=F',
+  'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD', 'GOLD', 'SILVER', 'CRUDE', 'WTI'
 ]);
 
 function isCryptoSymbol(sym: string): boolean {
@@ -393,16 +394,37 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
       }
     }
 
-    // 3. Fetch missing Forex & US symbols directly via MT5 or Fallback (0 Yahoo Finance calls)
+    // 3. Fetch missing Forex, US & COMEX symbols directly via MT5 or Fallback (0 Yahoo Finance calls)
     const missingYahooIds = [...forexRequestIds, ...usRequestIds].filter(id => !foundKiteIds.has(id));
     if (missingYahooIds.length > 0) {
+      const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');
       for (const reqId of missingYahooIds) {
-        const fallbackQuote = generateRealisticFallbackQuote(reqId);
-        finalMappedData[reqId] = fallbackQuote;
-        const clean = reqId.replace(/^FOREX:/, '').replace(/^US:/, '');
-        finalMappedData[clean] = fallbackQuote;
-        finalMappedData[`US:${clean}`] = fallbackQuote;
-        finalMappedData[`FOREX:${clean}`] = fallbackQuote;
+        let mt5Quote: any = null;
+        try {
+          mt5Quote = await fetchMT5StockQuote(reqId);
+        } catch (e) { }
+
+        const quotePayload = mt5Quote ? {
+          timestamp: new Date().toISOString(),
+          last_price: mt5Quote.price,
+          volume: 5000,
+          ohlc: {
+            open: mt5Quote.prevClose,
+            high: mt5Quote.high,
+            low: mt5Quote.low,
+            close: mt5Quote.price,
+          },
+          net_change: mt5Quote.price - mt5Quote.prevClose,
+          bid: mt5Quote.price,
+          ask: mt5Quote.price,
+        } : generateRealisticFallbackQuote(reqId);
+
+        finalMappedData[reqId] = quotePayload;
+        const clean = reqId.replace(/^(FOREX:|US:|COMEX:|MCX:)/i, '');
+        finalMappedData[clean] = quotePayload;
+        finalMappedData[`US:${clean}`] = quotePayload;
+        finalMappedData[`FOREX:${clean}`] = quotePayload;
+        finalMappedData[`COMEX:${clean}`] = quotePayload;
         foundKiteIds.add(reqId);
       }
     }

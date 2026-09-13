@@ -56,13 +56,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const { placeOrder, loading: placingOrder } = useOrderEntry();
 
-  const [isClosing, setIsClosing] = useState(false);
+  const isClosing = false;
   const handleCloseAnimation = () => {
-    setIsClosing(true);
-    setTimeout(() => {
-      setIsClosing(false);
-      onClose();
-    }, 380); // match CSS transition time exactly to prevent blank white page sliding down
+    onClose();
   };
 
   const [orderUnit, setOrderUnit] = useState<'qty' | 'lot'>('qty');
@@ -688,10 +684,20 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           resolvedStopLoss = resolvedTriggerPrice;
           resolvedClientPrice = currentLtp;
         } else if (orderType === 'GTT') {
+          // GTT in modify/exit flow: differentiate between entry-GTT and exit-GTT
           resolvedOrderType = 'GTT';
-          resolvedStopLoss = parseFloat(slPrice) || undefined;
-          resolvedTarget = parseFloat(tpPrice) || undefined;
-          resolvedClientPrice = currentLtp;
+          if (currentExitMode || (initialOrder?.is_exit === true)) {
+            // Exit-mode GTT: no limit price needed, only SL and target
+            resolvedStopLoss = parseFloat(slPrice) || undefined;
+            resolvedTarget = parseFloat(tpPrice) || undefined;
+            resolvedClientPrice = currentLtp;
+          } else {
+            // Entry-mode GTT modify: limit price is the trigger condition
+            resolvedClientPrice = limitPrice && !isNaN(parseFloat(limitPrice)) && parseFloat(limitPrice) > 0 ? parseFloat(limitPrice) : undefined;
+            resolvedTriggerPrice = limitPrice && !isNaN(parseFloat(limitPrice)) && parseFloat(limitPrice) > 0 ? parseFloat(limitPrice) : undefined;
+            resolvedStopLoss = parseFloat(slPrice) || undefined;
+            resolvedTarget = parseFloat(tpPrice) || undefined;
+          }
         } else if (orderType === 'LIMIT') {
           resolvedOrderType = 'LIMIT';
           resolvedClientPrice = parseFloat(limitPrice) || currentLtp;
@@ -1013,13 +1019,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
 
       if (currentExitMode && !isModify) {
-        // Exit mode: show the full-screen overlay and await the order
-        const loadingDetail = (orderType === 'TARGET' || orderType === 'SL' || orderType === 'GTT')
-          ? 'Modifying Position...'
-          : 'Exiting Position...';
-        window.dispatchEvent(new CustomEvent('exit-overlay-start', { detail: loadingDetail }));
-
-
+        // Exit mode: fire-and-forget for 0ms visual latency (removed blocking await)
+        handedOffToOrderFlow = true;
         try {
           const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote || (fallbackQuoteObj ? {
             bid: fallbackQuoteObj.bid,
@@ -1037,7 +1038,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
           const orderAttemptId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `att_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
-          const res = await placeOrder({
+          const orderPayload = {
             symbol: item.symbol,
             kite_instrument: computedKiteSymbol || item.symbol,
             segment: item.segment,
@@ -1054,43 +1055,60 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             linked_position_id: currentLinkedPosId || undefined,
             orderAttemptId,
             ...diagnosticFields,
-          });
-          window.dispatchEvent(new Event('order_placed'));
-          window.dispatchEvent(new Event('position-closed'));
-          if (res.success) {
-            showToast(`${placeSide} order sent for ${item.symbol}`);
-            if (onSuccess) {
-              try {
-                onSuccess();
-              } catch (e) {
-                console.error('onSuccess refresh failed', e);
-              }
-            }
-            handleCloseAnimation();
-            setTimeout(() => {
+          };
+
+          const optimisticPayload = {
+            symbol: item.symbol,
+            kite_instrument: computedKiteSymbol || item.symbol,
+            segment: item.segment,
+            side: placeSide,
+            qty: finalQty,
+            qty_open: finalQty,
+            client_price: resolvedClientPrice,
+            product_type: orderPayload.product_type,
+            is_exit: true,
+            linked_position_id: currentLinkedPosId || undefined,
+          };
+
+          window.dispatchEvent(new CustomEvent('order_placed_with_data', { detail: optimisticPayload }));
+          showToast(`${placeSide} order sent for ${item.symbol}`);
+          handleCloseAnimation();
+
+          placeOrder(orderPayload).then(res => {
+            if (res.success) {
               window.dispatchEvent(new Event('order_placed'));
               window.dispatchEvent(new Event('position-closed'));
-            }, 1500);
-          } else {
-            const errMsg = res.error || 'Order failed. Please try again.';
-            setOrderErrorMsg(errMsg);
-            setOrderState('error');
+              if (onSuccess) {
+                try {
+                  onSuccess();
+                } catch (e) {
+                  console.error('onSuccess refresh failed', e);
+                }
+              }
+              setTimeout(() => {
+                window.dispatchEvent(new Event('order_placed'));
+                window.dispatchEvent(new Event('position-closed'));
+              }, 1500);
+            } else {
+              const errMsg = res.error || 'Order failed. Please try again.';
+              window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
+              window.dispatchEvent(new Event('order_failed'));
+            }
+          }).catch(err => {
+            const errMsg = err.message || 'Order failed. Please try again.';
             window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
             window.dispatchEvent(new Event('order_failed'));
-          }
+          });
         } catch (err: any) {
           const errMsg = err.message || 'Order failed. Please try again.';
           setOrderErrorMsg(errMsg);
           setOrderState('error');
           window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
           window.dispatchEvent(new Event('order_failed'));
-        } finally {
-          window.dispatchEvent(new Event('exit-overlay-end'));
         }
       } else {
-        // Buy/Sell flow: show the global loader overlay.
+        // Buy/Sell flow: fire-and-forget — no loader overlay shown.
         handedOffToOrderFlow = true;
-        window.dispatchEvent(new CustomEvent('global-loader-start', { detail: 'Processing Order...' }));
 
         // Modify flow: update the pending order in place via PUT /api/orders/[id]
         if (isModify && modifyingOrderId && !modifyingOrderId.startsWith('pos-')) {
@@ -1151,7 +1169,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
           const orderAttemptId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `att_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
-          const res = await placeOrder({
+          const orderPayload = {
             symbol: item.symbol,
             kite_instrument: computedKiteSymbol || item.symbol,
             segment: item.segment,
@@ -1168,53 +1186,61 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             linked_position_id: currentLinkedPosId || undefined,
             orderAttemptId,
             ...diagnosticFields,
-          });
+          };
 
-          if (res.success) {
-            const optimisticPayload = {
-              symbol: item.symbol,
-              kite_instrument: computedKiteSymbol || item.symbol,
-              segment: item.segment,
-              side: placeSide,
-              qty: finalQty,
-              client_price: resolvedClientPrice,
-              product_type: productType,
-            };
-            window.dispatchEvent(new Event('order_placed'));
-            window.dispatchEvent(new CustomEvent('order_placed_with_data', { detail: optimisticPayload }));
-            showToast(`${placeSide} order sent for ${item.symbol}`);
-            if (onSuccess) {
-              try {
-                onSuccess();
-              } catch (e) {
-                console.error('onSuccess refresh failed', e);
+          const isExit = (placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos);
+          const optimisticPayload = {
+            symbol: item.symbol,
+            kite_instrument: computedKiteSymbol || item.symbol,
+            segment: item.segment,
+            side: placeSide,
+            qty: finalQty,
+            qty_open: finalQty,
+            client_price: resolvedClientPrice,
+            product_type: productType,
+            is_exit: isExit,
+            linked_position_id: currentLinkedPosId || undefined,
+          };
+          window.dispatchEvent(new CustomEvent('order_placed_with_data', { detail: optimisticPayload }));
+          showToast(`${placeSide} order sent for ${item.symbol}`);
+          handleCloseAnimation();
+
+          // Background execution for 0ms visual latency
+          placeOrder(orderPayload).then(res => {
+            if (res.success) {
+              window.dispatchEvent(new Event('order_placed'));
+              if (onSuccess) {
+                try {
+                  onSuccess();
+                } catch (e) {
+                  console.error('onSuccess refresh failed', e);
+                }
               }
+            } else {
+              const errMsg = res.error || 'Order failed. Please try again.';
+              window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
+              window.dispatchEvent(new Event('order_failed'));
             }
-            handleCloseAnimation();
-          } else {
-            const errMsg = res.error || 'Order failed. Please try again.';
-            setOrderErrorMsg(errMsg);
-            setOrderState('error');
+          }).catch(err => {
+            const errMsg = err.message || 'Order failed. Please try again.';
             window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
             window.dispatchEvent(new Event('order_failed'));
-          }
+          }).finally(() => {
+            window.dispatchEvent(new Event('global-loader-end'));
+          });
         } catch (err: any) {
           const errMsg = err.message || 'Order failed. Please try again.';
           setOrderErrorMsg(errMsg);
           setOrderState('error');
           window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
           window.dispatchEvent(new Event('order_failed'));
-        } finally {
           window.dispatchEvent(new Event('global-loader-end'));
         }
       }
     } catch (e) {
       console.error('[TradeSheet handlePlace] Unexpected exception:', e);
     } finally {
-      // Always release the execution lock â€” exactly once, whether success or failure.
       isExecutingRef.current = false;
-      // Error display is now owned by the central ClientShell modal, so always
-      // reset to idle here â€” the lock is released and the sheet can accept new taps.
       setOrderState('idle');
     }
   };
@@ -1257,7 +1283,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           background: var(--bg-body, #F5F7FB);
           z-index: 100001;
           transform: translateY(100%);
-          transition: transform 0.38s cubic-bezier(0.25, 0.9, 0.35, 1.05);
           display: flex; flex-direction: column;
           overflow: hidden;
           pointer-events: none;
@@ -1667,13 +1692,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                   <div className="ts2-label">Order Type</div>
                   <div className="ts2-pills">
                     {(() => {
-                      // GTT modification: show lifecycle-stage-aware options based on is_exit flag
-                      // Pre-entry GTT (is_exit === false): Market, Limit, SLM — requirement 2.7
-                      // Post-entry GTT (is_exit === true): Market, Limit, SL, Target, GTT — requirement 2.8
+                      // GTT modification: show lifecycle-stage-aware options based on effectiveExitMode
                       const isModifyingGttOrder = isModify && initialOrder?.order_type === 'GTT';
                       if (isModifyingGttOrder) {
-                        return initialOrder.is_exit === true
-                          ? ['MARKET', 'LIMIT', 'SL', 'TARGET', 'GTT']
+                        return effectiveExitMode
+                          ? ['MARKET', 'TARGET', 'SL', 'GTT']
                           : ['MARKET', 'LIMIT', 'SLM', 'GTT'];
                       }
                       // Explicitly show exit-mode options for SL modifications
@@ -1682,7 +1705,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                       }
                       // When modifying a pending entry order (not an exit), show the same
                       // entry-mode options as a fresh order (MARKET, LIMIT, SLM, GTT).
-                      if (isModify && initialOrder && !initialOrder.is_exit) {
+                      if (isModify && initialOrder && !effectiveExitMode) {
                         return ['MARKET', 'LIMIT', 'SLM', 'GTT'];
                       }
                       return effectiveExitMode ? ['MARKET', 'TARGET', 'SL', 'GTT'] : ['MARKET', 'LIMIT', 'SLM', 'GTT'];

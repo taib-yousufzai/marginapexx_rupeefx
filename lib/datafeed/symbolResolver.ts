@@ -3,15 +3,16 @@ type ResolutionString = any;
 
 const KNOWN_US_SYMBOLS = new Set([
   'AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC',
-  'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F', 'CL=F', 'GC=F', 'SI=F'
+  'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F', 'CL=F', 'GC=F', 'SI=F', 'NG=F', 'HG=F',
+  'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD', 'GOLD', 'SILVER', 'CRUDE', 'WTI'
 ]);
 
 export function isUsSymbol(symbolName: string, segment?: string): boolean {
   if (!symbolName) return false;
   const upper = symbolName.toUpperCase().trim();
-  if (upper.startsWith('US:')) return true;
-  if (segment && (segment.toUpperCase().includes('US') || segment.toUpperCase() === 'US EQUITIES' || segment.toUpperCase() === 'US FUTURES')) return true;
-  const clean = upper.replace(/^US:/, '').trim();
+  if (upper.startsWith('US:') || upper.startsWith('COMEX:')) return true;
+  if (segment && (segment.toUpperCase().includes('US') || segment.toUpperCase().includes('COMEX') || segment.toUpperCase() === 'US EQUITIES' || segment.toUpperCase() === 'US FUTURES')) return true;
+  const clean = upper.replace(/^(US:|COMEX:)/, '').trim();
   return KNOWN_US_SYMBOLS.has(clean) || clean.endsWith('=F');
 }
 
@@ -140,10 +141,12 @@ export function buildSymbolInfo(symbolName: string, segment: string): LibrarySym
     ticker = `MCX:${ticker.slice(4)}`;
   }
   
+  const isComex = upperSym.startsWith('COMEX:') || segment?.toUpperCase() === 'COMEX' || ['GC=F', 'SI=F', 'CL=F', 'NG=F', 'HG=F', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD'].some(c => upperSym.includes(c));
+
   let session = '0915-1530';
   let timezone = 'Asia/Kolkata';
 
-  if (isCrypto) {
+  if (isCrypto || isComex) {
     session = '24x7';
     timezone = 'Asia/Kolkata';
   } else if (isGlobalForex) {

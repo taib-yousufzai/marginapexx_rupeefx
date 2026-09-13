@@ -5,47 +5,48 @@ import { fetchUSStockQuote, getUSStockBasePrice } from '../../../../lib/datafeed
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function generateFallbackCandles(symbol: string, interval: string, fromSec: number, toSec: number): any[][] {
-  const basePrice = getUSStockBasePrice(symbol);
+function generateFallbackCandles(symbol: string, interval: string, fromSec: number, toSec: number, anchorClosePrice?: number): any[][] {
+  const basePrice = anchorClosePrice && anchorClosePrice > 0 ? anchorClosePrice : getUSStockBasePrice(symbol);
   const stepSec = interval === '1m' ? 60 : (interval === '1d' || interval === 'd') ? 86400 : 300;
   
-  const candles: any[][] = [];
-  
-  // Cap at 500 bars max
-  const maxBars = 500;
+  const rawCandles: any[][] = [];
+  const maxBars = 300;
   let startSec = fromSec;
   if ((toSec - fromSec) / stepSec > maxBars) {
     startSec = toSec - maxBars * stepSec;
   }
 
-  const totalSteps = Math.max(1, Math.floor((toSec - startSec) / stepSec));
-  let stepIndex = 0;
+  // Work BACKWARDS from basePrice at toSec down to startSec
+  let currentClose = basePrice;
+  let momentum = 0;
 
-  for (let t = startSec; t <= toSec; t += stepSec) {
-    stepIndex++;
-    const progress = stepIndex / totalSteps;
-    // Smooth wave centered on basePrice
-    const wave = Math.sin(progress * Math.PI * 4) * (basePrice * 0.015);
-    const micro = Math.cos(stepIndex * 0.7) * (basePrice * 0.003);
-    
-    // At last bar (progress -> 1), damp drops to 0 so close price equals basePrice exactly
-    const damp = Math.pow(1 - progress, 1.5);
-    const close = stepIndex >= totalSteps ? basePrice : Number((basePrice + (wave + micro) * damp).toFixed(2));
-    const prevClose = stepIndex === 1 ? basePrice : candles[stepIndex - 2]?.[4] ?? basePrice;
-    const open = prevClose;
+  for (let t = toSec; t >= startSec; t -= stepSec) {
+    if (Math.random() < 0.25) {
+      momentum = (Math.random() - 0.5) * (basePrice * 0.0008);
+    }
+    const noise = (Math.random() - 0.5) * (basePrice * 0.0012);
+    const delta = momentum + noise;
 
-    const maxOC = Math.max(open, close);
-    const minOC = Math.min(open, close);
+    let open = Number((currentClose - delta).toFixed(2));
+    if (open <= 0) open = 0.01;
 
-    const high = Number((maxOC + basePrice * 0.001).toFixed(2));
-    const low = Number((Math.max(0.01, minOC - basePrice * 0.001)).toFixed(2));
-    const volume = 2500 + Math.floor(Math.abs(Math.sin(stepIndex)) * 3000);
-    
+    const maxOC = Math.max(open, currentClose);
+    const minOC = Math.min(open, currentClose);
+
+    const upperWick = Math.random() * (basePrice * 0.0008);
+    const lowerWick = Math.random() * (basePrice * 0.0008);
+
+    const high = Number((maxOC + upperWick).toFixed(2));
+    const low = Number((Math.max(0.01, minOC - lowerWick)).toFixed(2));
+    const volume = Math.floor(1500 + Math.random() * 3500);
+
     const timeIso = new Date(t * 1000).toISOString();
-    candles.push([timeIso, open, high, low, close, volume]);
+    rawCandles.push([timeIso, open, high, low, currentClose, volume]);
+    
+    currentClose = open;
   }
-  
-  return candles;
+
+  return rawCandles.reverse();
 }
 
 async function fetchRealNasdaqHistoricalBars(symbol: string): Promise<any[][]> {
@@ -171,12 +172,37 @@ export async function GET(req: NextRequest) {
       candles = await fetchMT5HistoricalBars(rawSymbol, rawInterval, period1, period2);
     }
 
-    // 2. Real Official NASDAQ Live Chart Candles (0 Broker Accounts / Logins Needed, 0 Yahoo Finance)
+    // 2. Real Official NASDAQ Live Chart Candles (0 Broker Accounts Needed)
     if (!candles || candles.length === 0) {
-      candles = await fetchRealNasdaqHistoricalBars(rawSymbol);
+      const nasdaqBars = await fetchRealNasdaqHistoricalBars(rawSymbol);
+      if (nasdaqBars && nasdaqBars.length > 0) {
+        const firstBarSec = Math.floor(new Date(nasdaqBars[0][0]).getTime() / 1000);
+        const lastBarSec = Math.floor(new Date(nasdaqBars[nasdaqBars.length - 1][0]).getTime() / 1000);
+        if (lastBarSec >= period1 && firstBarSec <= period2) {
+          const filteredNasdaq = nasdaqBars.filter(b => {
+            const sec = Math.floor(new Date(b[0]).getTime() / 1000);
+            return sec >= period1 && sec <= period2;
+          });
+
+          // Prepopulate earlier historical bars if NASDAQ data starts after period1
+          if (firstBarSec > period1 + 600) {
+            const firstOpenPrice = nasdaqBars[0][1];
+            const historicBars = generateFallbackCandles(
+              rawSymbol,
+              rawInterval,
+              period1,
+              firstBarSec - 300,
+              firstOpenPrice
+            );
+            candles = [...historicBars, ...filteredNasdaq];
+          } else {
+            candles = filteredNasdaq;
+          }
+        }
+      }
     }
 
-    // 3. Fallback Candles if offline
+    // 3. Fallback Candles for historical pagination or offline data
     if (!candles || candles.length === 0) {
       candles = generateFallbackCandles(rawSymbol, rawInterval, period1, period2);
     }

@@ -35,11 +35,30 @@ export function isMT5Configured(): boolean {
   return Boolean(webApiUrl && webApiUrl.trim().length > 0);
 }
 
+const COMEX_TO_MT5_MAP: Record<string, string> = {
+  'GC=F': 'XAUUSD',
+  'GOLD': 'XAUUSD',
+  'SI=F': 'XAGUSD',
+  'SILVER': 'XAGUSD',
+  'CL=F': 'XTIUSD',
+  'CRUDE': 'XTIUSD',
+  'WTI': 'XTIUSD',
+  'CRUDEOIL': 'XTIUSD',
+  'NG=F': 'XNGUSD',
+  'NATGAS': 'XNGUSD',
+  'NATURALGAS': 'XNGUSD',
+  'HG=F': 'XCUUSD',
+  'COPPER': 'XCUUSD',
+};
+
 /**
- * Formats a clean US symbol to MT5 broker symbol format (e.g. AAPL -> AAPL.US)
+ * Formats a clean symbol (US, Forex, or COMEX) to MT5 broker symbol format (e.g. AAPL -> AAPL.US, GC=F -> XAUUSD)
  */
 export function formatMT5Symbol(symbol: string): string {
-  const cleanSymbol = symbol.replace(/^US:/i, '').trim().toUpperCase();
+  let cleanSymbol = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').trim().toUpperCase();
+  if (COMEX_TO_MT5_MAP[cleanSymbol]) {
+    cleanSymbol = COMEX_TO_MT5_MAP[cleanSymbol];
+  }
   const suffix = process.env.MT5_SYMBOL_SUFFIX || '';
   if (suffix && !cleanSymbol.endsWith(suffix)) {
     return `${cleanSymbol}${suffix}`;
@@ -48,12 +67,12 @@ export function formatMT5Symbol(symbol: string): string {
 }
 
 /**
- * Fetches a single US Stock Quote from the MT5 Web API / Gateway.
+ * Fetches a single US/Forex/COMEX Stock/Commodity Quote from the MT5 Web API / Gateway.
  */
 export async function fetchMT5StockQuote(symbol: string): Promise<USStockQuote | null> {
   if (!isMT5Configured()) return null;
 
-  const cleanSymbol = symbol.replace(/^US:/i, '').trim().toUpperCase();
+  const cleanSymbol = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').trim().toUpperCase();
   const mt5Symbol = formatMT5Symbol(cleanSymbol);
 
   const cached = mt5QuoteCache.get(cleanSymbol);

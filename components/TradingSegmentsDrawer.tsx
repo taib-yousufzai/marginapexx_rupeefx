@@ -189,10 +189,10 @@ const BASE_TRADING_SEGMENTS: Segment[] = [
     icon: 'fa-gem',
     count: 4,
     instruments: [
-      { name: 'GOLD', symbol: 'GC=F', comexSymbol: 'GC=F', segment: 'COMEX - Futures' },
-      { name: 'SILVER', symbol: 'SI=F', comexSymbol: 'SI=F', segment: 'COMEX - Futures' },
-      { name: 'CRUDE OIL', symbol: 'CL=F', comexSymbol: 'CL=F', segment: 'COMEX - Futures' },
-      { name: 'COPPER', symbol: 'HG=F', comexSymbol: 'HG=F', segment: 'COMEX - Futures' }
+      { name: 'GOLD', symbol: 'XAUUSD', comexSymbol: 'XAUUSD', segment: 'COMEX - Futures' },
+      { name: 'SILVER', symbol: 'XAGUSD', comexSymbol: 'XAGUSD', segment: 'COMEX - Futures' },
+      { name: 'CRUDE OIL', symbol: 'XTIUSD', comexSymbol: 'XTIUSD', segment: 'COMEX - Futures' },
+      { name: 'COPPER', symbol: 'XCUUSD', comexSymbol: 'XCUUSD', segment: 'COMEX - Futures' }
     ]
   },
   {

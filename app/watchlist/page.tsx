@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useRef, Suspense, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, Suspense, useMemo } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
@@ -66,15 +66,13 @@ declare global {
   }
 }
 
-const WATCHLIST_KEY = 'niveshX_watchlist';
-const LEGACY_WATCHLIST_KEY = 'marginApex_watchlist';
+const WATCHLIST_KEY = 'marginApex_watchlist';
 
 function loadWatchlistFromStorage(userId?: string): WatchlistItem[] {
   if (typeof window === 'undefined') return [];
   try {
     const key = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
-    const legacyKey = userId ? `${LEGACY_WATCHLIST_KEY}_${userId}` : LEGACY_WATCHLIST_KEY;
-    const raw = localStorage.getItem(key) || localStorage.getItem(legacyKey);
+    const raw = localStorage.getItem(key);
     return raw ? (JSON.parse(raw) as WatchlistItem[]) : [];
   } catch { return []; }
 }
@@ -112,24 +110,26 @@ const DEFAULT_FOREX_ITEMS: WatchlistItem[] = [
   { name: 'JPY/INR', symbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
 ];
 
-// ── Default COMEX Items (Pure COMEX via Yahoo proxy) ──────────────
+// ── Default COMEX Items (MCX ₹ via Kite + COMEX $ via Yahoo proxy) ──────────────
+// Rows with both kiteSymbol + comexSymbol show a ₹⇄$ toggle pill
 
 const DEFAULT_COMEX_ITEMS: WatchlistItem[] = [
-  { name: 'GOLD', symbol: 'GC=F', kiteSymbol: '', comexSymbol: 'GC=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'SILVER', symbol: 'SI=F', kiteSymbol: '', comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'CRUDE OIL', symbol: 'CL=F', kiteSymbol: '', comexSymbol: 'CL=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'COPPER', symbol: 'HG=F', kiteSymbol: '', comexSymbol: 'HG=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'GOLD', symbol: 'XAUUSD', kiteSymbol: '', comexSymbol: 'XAUUSD', price: 4349.00, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 4349.00, high: 4350, low: 4340, close: 4349.00, category: 'COMEX' },
+  { name: 'SILVER', symbol: 'XAGUSD', kiteSymbol: '', comexSymbol: 'XAGUSD', price: 30.50, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 30.50, high: 30.80, low: 30.10, close: 30.50, category: 'COMEX' },
+  { name: 'CRUDE OIL', symbol: 'XTIUSD', kiteSymbol: '', comexSymbol: 'XTIUSD', price: 69.50, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 69.50, high: 70.00, low: 69.00, close: 69.50, category: 'COMEX' },
+  { name: 'COPPER', symbol: 'XCUUSD', kiteSymbol: '', comexSymbol: 'XCUUSD', price: 4.15, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 4.15, high: 4.20, low: 4.10, close: 4.15, category: 'COMEX' },
 ];
 
 const DEFAULT_US_ITEMS: WatchlistItem[] = [
-  { name: 'Apple Inc.', symbol: 'US:AAPL', kiteSymbol: 'US:AAPL', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'Tesla Inc.', symbol: 'US:TSLA', kiteSymbol: 'US:TSLA', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'Nvidia Corp.', symbol: 'US:NVDA', kiteSymbol: 'US:NVDA', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'Microsoft Corp.', symbol: 'US:MSFT', kiteSymbol: 'US:MSFT', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'Amazon.com Inc.', symbol: 'US:AMZN', kiteSymbol: 'US:AMZN', price: 0, change: '0%', segment: 'US - Equity', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'US-EQ' },
-  { name: 'S&P 500 E-mini Futures', symbol: 'ES=F', kiteSymbol: '', comexSymbol: 'ES=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'Nasdaq 100 E-mini Futures', symbol: 'NQ=F', kiteSymbol: '', comexSymbol: 'NQ=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
-  { name: 'Dow Jones E-mini Futures', symbol: 'YM=F', kiteSymbol: '', comexSymbol: 'YM=F', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+  { name: 'Apple Inc.', symbol: 'US:AAPL', kiteSymbol: 'US:AAPL', price: 220, change: '0%', segment: 'US - Equity', contractDate: '', open: 220, high: 222.20, low: 217.80, close: 220, category: 'US-EQ' },
+  { name: 'Tesla Inc.', symbol: 'US:TSLA', kiteSymbol: 'US:TSLA', price: 210, change: '0%', segment: 'US - Equity', contractDate: '', open: 210, high: 212.10, low: 207.90, close: 210, category: 'US-EQ' },
+  { name: 'Nvidia Corp.', symbol: 'US:NVDA', kiteSymbol: 'US:NVDA', price: 120, change: '0%', segment: 'US - Equity', contractDate: '', open: 120, high: 121.20, low: 118.80, close: 120, category: 'US-EQ' },
+  { name: 'Microsoft Corp.', symbol: 'US:MSFT', kiteSymbol: 'US:MSFT', price: 420, change: '0%', segment: 'US - Equity', contractDate: '', open: 420, high: 424.20, low: 415.80, close: 420, category: 'US-EQ' },
+  { name: 'Amazon.com Inc.', symbol: 'US:AMZN', kiteSymbol: 'US:AMZN', price: 180, change: '0%', segment: 'US - Equity', contractDate: '', open: 180, high: 181.80, low: 178.20, close: 180, category: 'US-EQ' },
+  { name: 'Netflix Inc.', symbol: 'US:NFLX', kiteSymbol: 'US:NFLX', price: 600, change: '0%', segment: 'US - Equity', contractDate: '', open: 600, high: 606.00, low: 594.00, close: 600, category: 'US-EQ' },
+  { name: 'S&P 500 E-mini Futures', symbol: 'ES=F', kiteSymbol: '', comexSymbol: 'ES=F', price: 5500, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 5500, high: 5555, low: 5445, close: 5500, category: 'COMEX' },
+  { name: 'Nasdaq 100 E-mini Futures', symbol: 'NQ=F', kiteSymbol: '', comexSymbol: 'NQ=F', price: 19500, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 19500, high: 19695, low: 19305, close: 19500, category: 'COMEX' },
+  { name: 'Dow Jones E-mini Futures', symbol: 'YM=F', kiteSymbol: '', comexSymbol: 'YM=F', price: 41000, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 41000, high: 41410, low: 40590, close: 41000, category: 'COMEX' },
 ];
 
 export function getDefaultWatchlistItems(): WatchlistItem[] {
@@ -782,13 +782,17 @@ function WatchlistContent() {
           // Use profile.segments if set, otherwise empty array means all allowed
           setAllowedSegments(profile?.segments ?? []);
 
-          // Fetch block-scripts and trading hours in parallel
-          // segmentSettings and scriptSettings are handled by TradeConfigProvider
+          // Fetch block-scripts and trading_hours in parallel with timeouts
           const controller2 = new AbortController();
           const t2 = setTimeout(() => controller2.abort(), 5000);
 
-          const [blockedData] = await Promise.allSettled([
+          const thTimeout = new Promise<{ data: null }>((resolve) =>
+            setTimeout(() => resolve({ data: null }), 5000)
+          );
+
+          const [blockedData, thResult] = await Promise.allSettled([
             api.get<any>(`/api/admin/users/${session.user.id}/block-scripts`, { signal: controller2.signal }),
+            Promise.race([sb.from('trading_hours').select('*'), thTimeout]),
           ]);
           clearTimeout(t2);
 
@@ -797,9 +801,9 @@ function WatchlistContent() {
             setBlockedSymbols(new Set(symbols.map((s: string) => s.toUpperCase())));
           }
 
-          const { data: thData } = await sb.from('trading_hours').select('*');
-          if (thData) {
-            setTradingHours(thData);
+          if (thResult.status === 'fulfilled') {
+            const thData = (thResult.value as any)?.data;
+            if (thData) setTradingHours(thData);
           }
         } else {
           // On error, fall back to allowing all
@@ -815,6 +819,7 @@ function WatchlistContent() {
     }
     fetchAllowedSegments();
   }, []);
+
 
 
 
@@ -1365,19 +1370,18 @@ function WatchlistContent() {
         const match = DEFAULT_FOREX_ITEMS.find(d => d.name === item.name || d.symbol === item.symbol);
         if (match) { migrated = true; return { ...match }; }
       }
-      // Ensure COMEX items are pure COMEX (Yahoo proxy symbols SI=F, GC=F, etc., kiteSymbol: '')
+      // Ensure COMEX items are pure MT5 symbols (XAUUSD, XAGUSD, XTIUSD, XCUUSD)
       if (item.category === 'COMEX' || item.category === 'COI' || item.segment === 'COMEX - Futures' || item.segment === 'COMEX' || (item.symbol || '').endsWith('=F') || (item.comexSymbol || '').endsWith('=F')) {
         const itemNameUpper = (item.name || '').toUpperCase();
         const itemSymUpper = (item.symbol || '').toUpperCase();
-        let targetSymbol = item.comexSymbol || (itemSymUpper.endsWith('=F') ? item.symbol : '');
-        if (!targetSymbol) {
-          if (itemNameUpper.includes('GOLD') || itemSymUpper.includes('GOLD')) targetSymbol = 'GC=F';
-          else if (itemNameUpper.includes('SILVER') || itemSymUpper.includes('SILVER')) targetSymbol = 'SI=F';
-          else if (itemNameUpper.includes('CRUDE') || itemSymUpper.includes('CRUDE')) targetSymbol = 'CL=F';
-          else if (itemNameUpper.includes('COPPER') || itemSymUpper.includes('COPPER')) targetSymbol = 'HG=F';
-        }
+        let targetSymbol = '';
+        if (itemNameUpper.includes('GOLD') || itemSymUpper.includes('GOLD') || itemSymUpper.includes('GC')) targetSymbol = 'XAUUSD';
+        else if (itemNameUpper.includes('SILVER') || itemSymUpper.includes('SILVER') || itemSymUpper.includes('SI')) targetSymbol = 'XAGUSD';
+        else if (itemNameUpper.includes('CRUDE') || itemSymUpper.includes('CRUDE') || itemSymUpper.includes('CL')) targetSymbol = 'XTIUSD';
+        else if (itemNameUpper.includes('COPPER') || itemSymUpper.includes('COPPER') || itemSymUpper.includes('HG')) targetSymbol = 'XCUUSD';
+        
         if (targetSymbol) {
-          const match = DEFAULT_COMEX_ITEMS.find(d => d.comexSymbol === targetSymbol || d.symbol === targetSymbol);
+          const match = DEFAULT_COMEX_ITEMS.find(d => d.symbol === targetSymbol || d.comexSymbol === targetSymbol);
           if (match) {
             migrated = true;
             return { ...match };
@@ -1403,62 +1407,15 @@ function WatchlistContent() {
         copy.category = 'MCX-FUT';
         return copy;
       }
-      // Upgrade expired commodity and forex futures contracts
-      if (item.kiteSymbol && (
-        item.kiteSymbol.includes('26MAYFUT') ||
-        item.kiteSymbol.includes('26JULFUT') ||
-        item.kiteSymbol.includes('26AUGFUT') ||
-        item.kiteSymbol.includes('26SEPFUT') ||
-        item.kiteSymbol === 'MCX:GOLD26SEPFUT' ||
-        item.kiteSymbol === 'MCX:SILVER26SEPFUT' ||
-        item.symbol === 'SILVER_FUT' ||
-        item.symbol === 'GOLD_FUT' ||
-        item.symbol === 'CRUDEOIL_FUT' ||
-        item.symbol === 'USDINR_FUT'
-      )) {
-        const itemUpper = (item.kiteSymbol || item.symbol || '').toUpperCase();
-        if (itemUpper.includes('SILVER')) {
-          const activeKite = getCurrentFuturesSymbol('MCX', 'SILVER');
-          migrated = true;
-          return {
-            ...item,
-            symbol: activeKite,
-            kiteSymbol: activeKite,
-            contractDate: 'Dec 2026',
-          };
-        }
-        if (itemUpper.includes('GOLD')) {
-          const activeKite = getCurrentFuturesSymbol('MCX', 'GOLD');
-          migrated = true;
-          return {
-            ...item,
-            symbol: activeKite,
-            kiteSymbol: activeKite,
-            contractDate: 'Oct 2026',
-          };
-        }
-        if (itemUpper.includes('CRUDEOIL')) {
-          const activeKite = getCurrentFuturesSymbol('MCX', 'CRUDEOIL');
-          migrated = true;
-          return {
-            ...item,
-            symbol: activeKite,
-            kiteSymbol: activeKite,
-            contractDate: 'Sep 2026',
-          };
-        }
-        if (itemUpper.includes('USDINR')) {
-          const activeKite = getCurrentFuturesSymbol('CDS', 'USDINR');
-          migrated = true;
-          return {
-            ...item,
-            symbol: activeKite,
-            kiteSymbol: activeKite,
-            contractDate: 'Sep 2026',
-          };
-        }
+      // Upgrade expired May 2026 contracts to active June 2026 contracts
+      if (item.kiteSymbol && (item.kiteSymbol.includes('26MAYFUT') || item.kiteSymbol.includes('26MAY'))) {
         const allDefaults = [...DEFAULT_FOREX_ITEMS, ...DEFAULT_COMEX_ITEMS, ...getDefaultWatchlistItems()];
         const match = allDefaults.find(d => d.name === item.name || d.symbol === item.symbol);
+        if (match) { migrated = true; return { ...match }; }
+      }
+      // Upgrade expired July 2026 Silver contract to September 2026
+      if (item.kiteSymbol && item.kiteSymbol === 'MCX:SILVER26JULFUT') {
+        const match = DEFAULT_COMEX_ITEMS.find(d => d.symbol === 'SILVER_FUT');
         if (match) { migrated = true; return { ...match }; }
       }
       // Fix spot index items with erroneous hardcoded contract dates
@@ -1498,11 +1455,12 @@ function WatchlistContent() {
     if (legItem.comexSymbol) {
       return comexQuotes?.[legItem.comexSymbol]?.lastPrice ?? legItem.price;
     }
-    const q = (legItem.kiteSymbol ? marketQuotes?.[legItem.kiteSymbol] : null) ||
-      (legItem.symbol ? marketQuotes?.[legItem.symbol] : null) ||
-      (legItem.symbol ? marketQuotes?.[legItem.symbol.replace(/\s+/g, '')] : null) ||
-      (legItem.name ? marketQuotes?.[legItem.name] : null);
-    return (q && typeof q !== 'string' ? q.lastPrice : undefined) ?? legItem.price;
+    return (
+      (legItem.kiteSymbol && marketQuotes?.[legItem.kiteSymbol]) ||
+      (legItem.symbol && marketQuotes?.[legItem.symbol]) ||
+      (legItem.symbol && marketQuotes?.[legItem.symbol.replace(/\s+/g, '')]) ||
+      (legItem.name && marketQuotes?.[legItem.name])
+    )?.lastPrice ?? legItem.price;
   };
 
   useEffect(() => {
@@ -1686,7 +1644,7 @@ function WatchlistContent() {
     });
   };
 
-  const closeChartSheet = useCallback(() => {
+  const closeChartSheet = () => {
     isOpeningTradeSheetRef.current = false;
     setDetailOpeningSide(null);
     setChartItem(null);
@@ -1699,7 +1657,7 @@ function WatchlistContent() {
         el.classList.remove('active');
       }
     });
-  }, []);
+  };
 
   const closeTradeSheet = () => {
     setIsTradeSheetOpen(false);
@@ -2126,7 +2084,7 @@ function WatchlistContent() {
                 
                 const ltp = currentLtp;
                 const chgPct = currentChangePercent;
-                const fmt = (v: number | undefined) => formatPrice(v);
+                const fmt = (v: number) => formatPrice(v);
                 return (
                   <div style={{ padding: '0' }}>
                     <div style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
@@ -2172,10 +2130,8 @@ function WatchlistContent() {
                         onClick={() => {
                           const item = selectedItem;
                           setSelectedItem(null);
-                          setTimeout(() => {
-                            setChartItem(item);
-                            setIsBenchmarkChart(false);
-                          }, 60);
+                          setChartItem(item);
+                          setIsBenchmarkChart(false);
                         }}
                       >
                         <svg
@@ -2940,9 +2896,9 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           name: 'MCX-FUT',
           icon: 'fa-coins',
           instruments: [
-            { name: 'GOLD FUT', symbol: 'GOLD_FUT', kiteSymbol: 'MCX:GOLD26OCTFUT', price: 152966, change: '+0.28%', segment: 'MCX - Futures', contractDate: 'Oct 2026', open: 152150, high: 153200, low: 151800, close: 152500 },
-            { name: 'SILVER FUT', symbol: 'SILVER_FUT', kiteSymbol: 'MCX:SILVER26DECFUT', price: 239182, change: '+0.64%', segment: 'MCX - Futures', contractDate: 'Dec 2026', open: 237176, high: 239989, low: 236226, close: 237658 },
-            { name: 'CRUDEOIL FUT', symbol: 'CRUDEOIL_FUT', kiteSymbol: 'MCX:CRUDEOIL26SEPFUT', price: 6120.50, change: '+1.2%', segment: 'MCX - Futures', contractDate: 'Sep 2026', open: 6045, high: 6140, low: 6040, close: 6120.50 }
+            { name: 'GOLD FUT', symbol: 'GOLD_FUT', kiteSymbol: 'MCX:GOLD26OCTFUT', price: 72450, change: '+0.28%', segment: 'MCX - Futures', contractDate: 'Oct 2026', open: 72150, high: 72450, low: 72100, close: 72450 },
+            { name: 'SILVER FUT', symbol: 'SILVER_FUT', kiteSymbol: 'MCX:SILVER26SEPFUT', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: 'Sep 2026', open: 0, high: 0, low: 0, close: 0 },
+            { name: 'CRUDEOIL FUT', symbol: 'CRUDEOIL_FUT', kiteSymbol: 'MCX:CRUDEOIL26JULFUT', price: 6120.50, change: '+1.2%', segment: 'MCX - Futures', contractDate: 'Jul 2026', open: 6045, high: 6140, low: 6040, close: 6120.50 }
           ]
         },
         {
@@ -2952,13 +2908,13 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
             {
               name: 'GOLD',
               instruments: [
-                { name: 'GOLD 153000 CE', symbol: 'GOLD26OCT153000CE', kiteSymbol: 'MCX:GOLD26OCT153000CE', price: 1420, change: '+0.9%', segment: 'MCX - Options', contractDate: '2026-10-05', open: 1400, high: 1450, low: 1390, close: 1410 }
+                { name: 'GOLD 72000 CE', symbol: 'GOLD26JUL72000CE', kiteSymbol: 'MCX:GOLD26JUL72000CE', price: 820, change: '+0.9%', segment: 'MCX - Options', contractDate: '2026-07-31', open: 812, high: 828, low: 810, close: 820 }
               ]
             },
             {
               name: 'CRUDEOIL',
               instruments: [
-                { name: 'CRUDEOIL 6000 CE', symbol: 'CRUDEOIL26SEP6000CE', kiteSymbol: 'MCX:CRUDEOIL26SEP6000CE', price: 145, change: '+1.5%', segment: 'MCX - Options', contractDate: '2026-09-21', open: 140, high: 152, low: 138, close: 145 }
+                { name: 'CRUDEOIL 6000 CE', symbol: 'CRUDEOIL26JUL6000CE', kiteSymbol: 'MCX:CRUDEOIL26JUL6000CE', price: 145, change: '+1.5%', segment: 'MCX - Options', contractDate: '2026-07-31', open: 140, high: 152, low: 138, close: 145 }
               ]
             }
           ]
@@ -2976,18 +2932,18 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           name: 'FOREX',
           icon: 'fa-globe',
           instruments: [
-            { name: 'USD/INR', symbol: 'USDINR_FUT', kiteSymbol: 'CDS:USDINR26SEPFUT', price: 95.96, change: '0%', segment: 'CDS - Futures', contractDate: 'Sep 2026', open: 95.72, high: 96.03, low: 95.59, close: 95.61 },
-            { name: 'EUR/INR', symbol: 'EURINR_FUT', kiteSymbol: 'CDS:EURINR26SEPFUT', price: 0, change: '0%', segment: 'CDS - Futures', contractDate: 'Sep 2026', open: 0, high: 0, low: 0, close: 0 }
+            { name: 'USD/INR', symbol: 'USDINR_FUT', kiteSymbol: 'CDS:USDINR26JULFUT', price: 95.96, change: '0%', segment: 'CDS - Futures', contractDate: 'Jul 2026', open: 95.72, high: 96.03, low: 95.59, close: 95.61 },
+            { name: 'EUR/INR', symbol: 'EURINR_FUT', kiteSymbol: 'CDS:EURINR26JULFUT', price: 0, change: '0%', segment: 'CDS - Futures', contractDate: 'Jul 2026', open: 0, high: 0, low: 0, close: 0 }
           ]
         },
         {
           name: 'COMEX',
           icon: 'fa-gem',
           instruments: [
-            { name: 'GOLD', comexName: 'Gold', symbol: 'GOLD_FUT', kiteSymbol: 'MCX:GOLD26OCTFUT', comexSymbol: 'GC=F', price: 152966, change: '+0.28%', segment: 'MCX - Futures', contractDate: 'Oct 2026', open: 152150, high: 153200, low: 151800, close: 152500 },
-            { name: 'SILVER', comexName: 'Silver', symbol: 'SILVER_FUT', kiteSymbol: 'MCX:SILVER26DECFUT', comexSymbol: 'SI=F', price: 239182, change: '+0.64%', segment: 'MCX - Futures', contractDate: 'Dec 2026', open: 237176, high: 239989, low: 236226, close: 237658 },
-            { name: 'CRUDEOIL', comexName: 'Crude Oil', symbol: 'CRUDEOIL_FUT', kiteSymbol: 'MCX:CRUDEOIL26SEPFUT', comexSymbol: 'CL=F', price: 6120, change: '0%', segment: 'MCX - Futures', contractDate: 'Sep 2026', open: 0, high: 0, low: 0, close: 0 },
-            { name: 'COPPER', comexName: 'Copper', symbol: 'COPPER_FUT', kiteSymbol: 'MCX:COPPER26SEPFUT', comexSymbol: 'HG=F', price: 780, change: '0%', segment: 'MCX - Futures', contractDate: 'Sep 2026', open: 0, high: 0, low: 0, close: 0 }
+            { name: 'GOLD', comexName: 'Gold', symbol: 'GOLD_FUT', kiteSymbol: 'MCX:GOLD26OCTFUT', comexSymbol: 'GC=F', price: 72450, change: '+0.28%', segment: 'MCX - Futures', contractDate: 'Oct 2026', open: 72150, high: 72450, low: 72100, close: 72450 },
+            { name: 'SILVER', comexName: 'Silver', symbol: 'SILVER_FUT', kiteSymbol: 'MCX:SILVER26SEPFUT', comexSymbol: 'SI=F', price: 0, change: '0%', segment: 'MCX - Futures', contractDate: 'Sep 2026', open: 0, high: 0, low: 0, close: 0 },
+            { name: 'CRUDEOIL', comexName: 'Crude Oil', symbol: 'CRUDEOIL_FUT', kiteSymbol: 'MCX:CRUDEOIL26JULFUT', comexSymbol: 'CL=F', price: 6120, change: '0%', segment: 'MCX - Futures', contractDate: 'Jul 2026', open: 0, high: 0, low: 0, close: 0 },
+            { name: 'COPPER', comexName: 'Copper', symbol: 'COPPER_FUT', kiteSymbol: 'MCX:COPPER26JULFUT', comexSymbol: 'HG=F', price: 780, change: '0%', segment: 'MCX - Futures', contractDate: 'Jul 2026', open: 0, high: 0, low: 0, close: 0 }
           ]
         },
         {

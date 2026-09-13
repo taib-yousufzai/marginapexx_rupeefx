@@ -39,10 +39,26 @@ export const US_BASE_PRICES: Record<string, number> = {
   'ES=F': 5500,
   'NQ=F': 19500,
   'YM=F': 41000,
+  'XAUUSD': 4349.00,
+  'GC=F': 4349.00,
+  'GOLD': 4349.00,
+  'XAGUSD': 30.50,
+  'SI=F': 30.50,
+  'SILVER': 30.50,
+  'CL=F': 69.50,
+  'XTIUSD': 69.50,
+  'CRUDE': 69.50,
+  'WTI': 69.50,
+  'HG=F': 4.15,
+  'COPPER': 4.15,
+  'XCUUSD': 4.15,
+  'NG=F': 2.30,
+  'XNGUSD': 2.30,
+  'NATGAS': 2.30,
 };
 
 export function getUSStockBasePrice(symbol: string): number {
-  const clean = symbol.replace(/^(US:|FOREX:)/i, '').trim().toUpperCase();
+  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').trim().toUpperCase();
   if (US_BASE_PRICES[clean]) return US_BASE_PRICES[clean];
   const baseClean = clean.replace(/=F$/i, '');
   if (US_BASE_PRICES[baseClean]) return US_BASE_PRICES[baseClean];
