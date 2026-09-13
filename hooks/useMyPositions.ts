@@ -24,8 +24,7 @@ interface UseMyPositionsResult {
   startConversion: (posId: string, newType: string) => void;
   endConversion: (posId: string) => void;
   addOptimisticPosition: (pos: Partial<MyPosition>) => void;
-  /** Unix ms of the most recent successful fetchPositions completion. 0 = never fetched. */
-  lastFetchedAt: number;
+  lastFetchedAt?: number;
 }
 
 export function useMyPositions(refreshInterval?: number): UseMyPositionsResult {

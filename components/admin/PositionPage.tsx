@@ -32,6 +32,11 @@ export default function PositionPage({ selectedUser, onOpenUserPanel, isDemoMode
   const [showClearHistoryModal, setShowClearHistoryModal] = useState(false);
   const [clearInputText, setClearInputText] = useState('');
   const [clearHistoryLoading, setClearHistoryLoading] = useState(false);
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set());
+  const [dropdownSearch, setDropdownSearch] = useState('');
+  const [userRoleMap, setUserRoleMap] = useState<Record<string, string>>({});
+  const [openRoleDropdown, setOpenRoleDropdown] = useState<string | null>(null);
 
   const uid = selectedUser.id;
 
@@ -105,6 +110,11 @@ export default function PositionPage({ selectedUser, onOpenUserPanel, isDemoMode
             setWeeklyPnl(u.weeklyPnl);
           }
         }
+        setAllUsers(data);
+        // Build userId → role map for Select Multiple filter
+        const roleMap: Record<string, string> = {};
+        (data as Array<{ id: string; role: string }>).forEach(u => { roleMap[u.id] = u.role; });
+        setUserRoleMap(roleMap);
       }
     });
   }, [uid, isDemoMode]);
@@ -215,12 +225,28 @@ export default function PositionPage({ selectedUser, onOpenUserPanel, isDemoMode
   const openPnl = enrichedPositions.reduce((s, p) => s + (p.status === 'open' || p.status === 'active' ? p.pnl : 0), 0);
   const totalSettlement = enrichedPositions.reduce((s, p) => s + (p.settlementAmount ?? 0), 0);
 
-  const filtered = enrichedPositions.filter(p =>
-    p.symbol.toLowerCase().includes(search.toLowerCase()) ||
-    (p.client_id || '').toLowerCase().includes(search.toLowerCase()) ||
-    (p.user_name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (p.user_id || '').toLowerCase().includes(search.toLowerCase())
-  );
+  const selectedBrokers = allUsers.filter(u => u.role === 'broker' && selectedUserIds.has(u.id)).map(u => u.id);
+
+  const filtered = enrichedPositions.filter(p => {
+    const matchesSearch =
+      p.symbol.toLowerCase().includes(search.toLowerCase()) ||
+      (p.client_id || '').toLowerCase().includes(search.toLowerCase()) ||
+      (p.user_name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (p.user_id || '').toLowerCase().includes(search.toLowerCase());
+
+    if (!matchesSearch) return false;
+
+    if (selectedUserIds.size === 0) return true;
+    
+    // Direct match
+    if (selectedUserIds.has(p.user_id)) return true;
+
+    // Check if the position's user is under a selected broker
+    const posUser = allUsers.find(u => u.id === p.user_id);
+    if (posUser && posUser.parent_id && selectedBrokers.includes(posUser.parent_id)) return true;
+
+    return false;
+  });
   
   const totalTrades = filtered.length;
   const winningTrades = filtered.filter(p => (p.pnl || 0) > 0).length;
@@ -690,11 +716,213 @@ export default function PositionPage({ selectedUser, onOpenUserPanel, isDemoMode
         ))}
       </div>
 
-      {tab !== 'closed' && (
-        <div className="adm-pos-select-wrap">
-          <button className="adm-pos-select-btn">Select Multiple</button>
-        </div>
-      )}
+      <>
+          {/* Backdrop to close any open role dropdown */}
+          {openRoleDropdown && (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setOpenRoleDropdown(null)} />
+          )}
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', margin: '0 0 4px 0' }}>
+            {[
+              { key: 'admin',  label: 'Admin',  roles: ['admin', 'super_admin'], color: '#f0883e', icon: 'fa-shield-alt' },
+              { key: 'broker', label: 'Broker', roles: ['broker'],               color: '#a371f7', icon: 'fa-briefcase'  },
+              { key: 'user',   label: 'Users',  roles: ['user'],                  color: '#3fb950', icon: 'fa-users'      },
+            ].map(({ key, label, roles, color, icon }) => {
+              let roleUsers = allUsers.filter(u => roles.includes(u.role));
+              
+              if (key === 'user') {
+                const selectedBrokers = allUsers.filter(u => u.role === 'broker' && selectedUserIds.has(u.id)).map(u => u.id);
+                if (selectedBrokers.length > 0) {
+                  roleUsers = roleUsers.filter(u => selectedBrokers.includes(u.parent_id));
+                }
+              }
+
+              const selectedRoleUserIds = roleUsers.filter(u => selectedUserIds.has(u.id)).map(u => u.id);
+              const isActive = selectedRoleUserIds.length > 0;
+              const isOpen   = openRoleDropdown === key;
+              
+              const filteredDropdownUsers = roleUsers.filter(u => {
+                const q = dropdownSearch.toLowerCase();
+                return (u.full_name || '').toLowerCase().includes(q) || 
+                       (u.client_id || '').toLowerCase().includes(q) || 
+                       (u.email || '').toLowerCase().includes(q);
+              });
+
+              return (
+                <div key={key} style={{ position: 'relative' }}>
+                  {/* Trigger button */}
+                  <button
+                    onClick={() => {
+                      if (!isOpen) setDropdownSearch('');
+                      setOpenRoleDropdown(isOpen ? null : key);
+                    }}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: '6px',
+                      padding: '6px 12px', borderRadius: '8px', cursor: 'pointer',
+                      fontSize: '0.78rem', fontWeight: 600,
+                      background: isActive ? `${color}22` : 'rgba(255,255,255,0.05)',
+                      border: `1px solid ${isActive ? color : 'rgba(255,255,255,0.1)'}`,
+                      color: isActive ? color : '#8b949e',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <i className={`fas ${icon}`} style={{ fontSize: '11px' }} />
+                    {label}
+                    {isActive && (
+                      <span style={{
+                        background: color,
+                        color: '#fff',
+                        borderRadius: '10px', fontSize: '10px',
+                        padding: '1px 6px', fontWeight: 700,
+                        transition: 'all 0.15s',
+                      }}>
+                        {selectedRoleUserIds.length}
+                      </span>
+                    )}
+                    <i
+                      className={`fas fa-chevron-${isOpen ? 'up' : 'down'}`}
+                      style={{ fontSize: '9px', opacity: 0.6 }}
+                    />
+                  </button>
+
+                  {/* Dropdown */}
+                  {isOpen && (
+                    <div style={{
+                      position: 'absolute', top: 'calc(100% + 6px)', left: 0,
+                      background: '#161b22', border: '1px solid #30363d',
+                      borderRadius: '10px', boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
+                      zIndex: 1000, minWidth: '220px', overflow: 'hidden',
+                    }}>
+                      {/* Dropdown header */}
+                      <div style={{
+                        padding: '10px 14px 8px',
+                        borderBottom: '1px solid #21262d',
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      }}>
+                        <span style={{ fontSize: '0.7rem', fontWeight: 700, color: '#8b949e', letterSpacing: '0.6px', textTransform: 'uppercase' }}>
+                          <i className={`fas ${icon}`} style={{ marginRight: '6px', color }} />
+                          {label}
+                        </span>
+                        {isActive && (
+                          <button
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setSelectedUserIds(prev => { 
+                                const n = new Set(prev); 
+                                roleUsers.forEach(u => n.delete(u.id)); 
+                                return n; 
+                              }); 
+                            }}
+                            style={{ background: 'none', border: 'none', color: '#f85149', fontSize: '10px', cursor: 'pointer', fontWeight: 600, padding: 0 }}
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Search bar */}
+                      <div style={{ padding: '8px 10px', borderBottom: '1px solid #21262d' }}>
+                        <input
+                           type="text"
+                           placeholder={`Search ${label}...`}
+                           value={dropdownSearch}
+                           onChange={e => setDropdownSearch(e.target.value)}
+                           style={{ width: '100%', padding: '6px 10px', borderRadius: '6px', background: '#0d1117', border: '1px solid #30363d', color: '#e6edf3', fontSize: '0.75rem', outline: 'none' }}
+                        />
+                      </div>
+                      
+                      {/* Select All */}
+                      <div
+                         onClick={() => {
+                            setSelectedUserIds(prev => {
+                               const n = new Set(prev);
+                               const allSelected = selectedRoleUserIds.length === roleUsers.length;
+                               if (allSelected) {
+                                  roleUsers.forEach(u => n.delete(u.id));
+                               } else {
+                                  roleUsers.forEach(u => n.add(u.id));
+                               }
+                               return n;
+                            });
+                         }}
+                         style={{ padding: '8px 14px', cursor: 'pointer', borderBottom: '1px solid #21262d', display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.02)' }}
+                      >
+                          <div style={{
+                            width: '14px', height: '14px', borderRadius: '3px', flexShrink: 0,
+                            border: `1.5px solid ${selectedRoleUserIds.length === roleUsers.length && roleUsers.length > 0 ? color : '#30363d'}`,
+                            background: selectedRoleUserIds.length === roleUsers.length && roleUsers.length > 0 ? color : 'transparent',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center'
+                          }}>
+                            {selectedRoleUserIds.length === roleUsers.length && roleUsers.length > 0 && <i className="fas fa-check" style={{ fontSize: '8px', color: '#fff' }} />}
+                          </div>
+                          <span style={{ fontSize: '0.75rem', color: '#e6edf3', fontWeight: 600 }}>Select All</span>
+                      </div>
+
+                      {/* List of users */}
+                      <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                         {filteredDropdownUsers.length === 0 ? (
+                            <div style={{ padding: '12px', textAlign: 'center', color: '#8b949e', fontSize: '0.75rem' }}>No users found.</div>
+                         ) : filteredDropdownUsers.map(u => {
+                            const isChecked = selectedUserIds.has(u.id);
+                            return (
+                               <div
+                                  key={u.id}
+                                  onClick={() => {
+                                     setSelectedUserIds(prev => {
+                                        const n = new Set(prev);
+                                        if (n.has(u.id)) n.delete(u.id); else n.add(u.id);
+                                        return n;
+                                     });
+                                  }}
+                                  style={{
+                                    display: 'flex', alignItems: 'center', gap: '8px',
+                                    padding: '8px 14px', cursor: 'pointer',
+                                    background: isChecked ? `${color}12` : 'transparent',
+                                    borderBottom: '1px solid rgba(255,255,255,0.03)'
+                                  }}
+                               >
+                                 {/* Checkbox */}
+                                 <div style={{
+                                    width: '14px', height: '14px', borderRadius: '3px', flexShrink: 0,
+                                    border: `1.5px solid ${isChecked ? color : '#30363d'}`,
+                                    background: isChecked ? color : 'transparent',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                  }}>
+                                    {isChecked && <i className="fas fa-check" style={{ fontSize: '8px', color: '#fff' }} />}
+                                  </div>
+                                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                    <span style={{ fontSize: '0.75rem', color: '#e6edf3', fontWeight: 500 }}>{u.full_name || u.email}</span>
+                                    <span style={{ fontSize: '0.65rem', color: '#8b949e' }}>{u.client_id || u.email}</span>
+                                  </div>
+                               </div>
+                            )
+                         })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {/* Clear all filters */}
+            {selectedUserIds.size > 0 && (
+              <button
+                onClick={() => setSelectedUserIds(new Set())}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '5px',
+                  padding: '6px 10px', borderRadius: '8px', cursor: 'pointer',
+                  fontSize: '0.75rem', fontWeight: 600,
+                  background: 'rgba(248,81,73,0.1)',
+                  border: '1px solid rgba(248,81,73,0.3)',
+                  color: '#f85149',
+                }}
+              >
+                <i className="fas fa-times" style={{ fontSize: '10px' }} />
+                Clear filters
+              </button>
+            )}
+          </div>
+        </>
 
       <div className="adm-ord-search-wrap" style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
         <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>

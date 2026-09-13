@@ -1271,20 +1271,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // that position become orphaned.  Cancel them here, fully awaited (not
     // fire-and-forget) so the response is only sent after cleanup completes.
     if (isImmediate && resolvedIsExit) {
-      try {
-        const { PositionService } = await import('@/lib/trading/PositionService');
-        await PositionService.cancelPendingOrdersForClosedPosition(
-          admin,
-          user.id,
-          resolvedLinkedPositionId ?? undefined,
-          symbol
-        );
-      } catch (cancelErr) {
-        // Non-fatal: log the failure but do not block the order response.
-        // The order has already executed; orphan cleanup failure should not
-        // roll back a successful trade.
-        console.warn('[POST /api/orders] Non-fatal: failed to cancel orphaned exit orders after market exit:', cancelErr);
-      }
+      // Run cleanup asynchronously without blocking the response
+      (async () => {
+        try {
+          const { PositionService } = await import('@/lib/trading/PositionService');
+          await PositionService.cancelPendingOrdersForClosedPosition(
+            admin,
+            user.id,
+            resolvedLinkedPositionId ?? undefined,
+            symbol
+          );
+        } catch (cancelErr) {
+          console.warn('[POST /api/orders] Non-fatal: failed to cancel orphaned exit orders after market exit:', cancelErr);
+        }
+      })();
     }
 
     const response: PlaceOrderResponse = {

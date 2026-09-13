@@ -298,13 +298,15 @@ export async function POST(
     return NextResponse.json({ error: rpcErr.message || 'Failed to close position. Please try again.' }, { status: 400 });
   }
 
-  // Cancel any open/pending exit or linked orders for this position/symbol
-  try {
-    const { PositionService } = await import('@/lib/trading/PositionService');
-    await PositionService.cancelPendingOrdersForClosedPosition(admin, user.id, positionId, pos.symbol);
-  } catch (cancelErr) {
-    console.warn('[POST /api/positions/[id]/close] Non-fatal error cleaning up pending orders:', cancelErr);
-  }
+  // Cancel any open/pending exit or linked orders for this position/symbol asynchronously
+  (async () => {
+    try {
+      const { PositionService } = await import('@/lib/trading/PositionService');
+      await PositionService.cancelPendingOrdersForClosedPosition(admin, user.id, positionId, pos.symbol);
+    } catch (cancelErr) {
+      console.warn('[POST /api/positions/[id]/close] Non-fatal error cleaning up pending orders:', cancelErr);
+    }
+  })();
 
   const response: ClosePositionResponse = {
     pnl:        Number(pnl),

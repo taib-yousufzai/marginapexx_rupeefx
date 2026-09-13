@@ -34,8 +34,6 @@ export interface PositionsContextType {
   startConversion: (posId: string, newType: string) => void;
   endConversion: (posId: string) => void;
   addOptimisticPosition: (pos: Partial<MyPosition>) => void;
-  /** Unix ms of the most recent successful fetchPositions completion. 0 = never fetched. */
-  lastFetchedAt: number;
 }
 
 const PositionsContext = createContext<PositionsContextType | null>(null);
@@ -119,7 +117,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
   // Tracks IDs of positions that were added optimistically (not yet confirmed by DB)
   const optimisticPositionIds = useRef<Set<string>>(new Set());
-  const lastFetchedAtRef = useRef<number>(0);
 
   // Static properties map to cache computations that never change per position lifecycle
   const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({}); 
@@ -147,6 +144,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     const tempId = `__optimistic__${Date.now()}`;
     const now = new Date().toISOString();
     const optimisticPos: MyPosition = {
+      id: tempId,
       user_id: '',
       symbol: partialPos.symbol || '',
       settlement: partialPos.settlement || '',
@@ -262,39 +260,9 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
             window.dispatchEvent(new Event('position-closed'));
           }, 0);
         }
-
-        // Smart optimistic merge: keep any placeholder whose symbol+side isn't yet
-        // in the server snapshot, OR whose server qty hasn't exceeded the pre-order
-        // snapshot (meaning the DB write hasn't landed yet for add-more orders).
-        const optimisticsToKeep = prev.filter(p => {
-          if (!optimisticPositionIds.current.has(p.id)) return false;
-          const preOrderQty: number = (p as any)._preOrderQty ?? 0;
-          const serverPos = newPositions.find(
-            r => r.symbol === p.symbol && r.side === p.side &&
-                 (r.status === 'open' || r.status === 'active')
-          );
-          // New-position case: no real DB row yet → keep optimistic
-          if (!serverPos) return true;
-          // Add-more case: server qty hasn't increased past pre-order snapshot yet → keep
-          // e.g. preOrderQty=2, server returns qty:2 → DB hasn't written → keep
-          //      preOrderQty=2, server returns qty:3 → DB wrote → evict
-          // New-position (preOrderQty=0): evict as soon as server has any open position
-          return serverPos.qty_open <= preOrderQty;
-        });
-
-        if (optimisticsToKeep.length === 0) {
-          optimisticPositionIds.current.clear();
-        } else {
-          // Only evict the placeholders we're not keeping
-          for (const p of prev) {
-            if (optimisticPositionIds.current.has(p.id) && !optimisticsToKeep.includes(p)) {
-              optimisticPositionIds.current.delete(p.id);
-            }
-          }
-        }
-
-        lastFetchedAtRef.current = Date.now();
-        return [...newPositions, ...optimisticsToKeep];
+        // Clear any optimistic placeholders now that real data has arrived
+        optimisticPositionIds.current.clear();
+        return newPositions;
       });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -336,7 +304,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       isSubscribed = status === 'SUBSCRIBED';
     });
 
-    const handleOrderPlacedWithData = (_e: Event) => {
+    const handleOrderPlacedWithData = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail) {
+        if (detail.is_exit && detail.linked_position_id) {
+          removePositionLocally(detail.linked_position_id);
+        } else if (!detail.is_exit) {
+          addOptimisticPosition(detail);
+        }
+      }
       // Immediate fetch — scalp mode needs instant position update
       fetchPositions();
       // Follow-up fetch in 800ms to catch any async DB propagation
@@ -553,7 +529,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       startConversion,
       endConversion,
       addOptimisticPosition,
-      lastFetchedAt: lastFetchedAtRef.current,
     }}>
       {children}
     </PositionsContext.Provider>

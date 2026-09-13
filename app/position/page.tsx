@@ -124,6 +124,7 @@ export default function PositionPage() {
     }
 
     window.addEventListener('order_placed', handleUpdate);
+    window.addEventListener('order_placed_with_data', handleUpdate);
     window.addEventListener('order_executed', handleUpdate);
     window.addEventListener('position_updated', handleUpdate);
     window.addEventListener('position-closed', handleUpdate);
@@ -134,6 +135,7 @@ export default function PositionPage() {
     return () => {
       clearInterval(iv);
       window.removeEventListener('order_placed', handleUpdate);
+      window.removeEventListener('order_placed_with_data', handleUpdate);
       window.removeEventListener('order_executed', handleUpdate);
       window.removeEventListener('position_updated', handleUpdate);
       window.removeEventListener('position-closed', handleUpdate);

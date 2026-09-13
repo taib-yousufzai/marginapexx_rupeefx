@@ -388,15 +388,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Cancel open pending orders for all successfully closed positions/symbols
     const successfulPosIds = results.filter(r => r.success).map(r => r.positionId);
     if (successfulPosIds.length > 0) {
-      try {
-        const { PositionService } = await import('@/lib/trading/PositionService');
-        const closedPositions = positions.filter(p => successfulPosIds.includes(p.id));
-        for (const pos of closedPositions) {
-          await PositionService.cancelPendingOrdersForClosedPosition(admin, user.id, pos.id, pos.symbol);
+      (async () => {
+        try {
+          const { PositionService } = await import('@/lib/trading/PositionService');
+          const closedPositions = positions.filter(p => successfulPosIds.includes(p.id));
+          for (const pos of closedPositions) {
+            await PositionService.cancelPendingOrdersForClosedPosition(admin, user.id, pos.id, pos.symbol);
+          }
+        } catch (cancelErr) {
+          console.warn('[POST /api/positions/close] Non-fatal error cleaning up pending orders:', cancelErr);
         }
-      } catch (cancelErr) {
-        console.warn('[POST /api/positions/close] Non-fatal error cleaning up pending orders:', cancelErr);
-      }
+      })();
     }
 
     return NextResponse.json({ success: true, results }, { status: 200 });
