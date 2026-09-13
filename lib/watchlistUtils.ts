@@ -8,6 +8,20 @@ export interface WatchlistLikeItem {
 }
 
 /**
+ * Normalizes legacy Yahoo futures proxy tickers (CL=F, GC=F, SI=F, etc.) to clean COMEX spot symbols.
+ */
+export function normalizeComexTicker(sym: string): string {
+  if (!sym) return sym;
+  const upper = sym.toUpperCase().trim();
+  if (upper === 'CL=F' || upper === 'CL') return 'XTIUSD';
+  if (upper === 'GC=F' || upper === 'GC') return 'XAUUSD';
+  if (upper === 'SI=F' || upper === 'SI') return 'XAGUSD';
+  if (upper === 'HG=F' || upper === 'HG') return 'XCUUSD';
+  if (upper === 'NG=F' || upper === 'NG') return 'XNGUSD';
+  return sym;
+}
+
+/**
  * Robustly checks whether an instrument is already present in a given watchlist.
  * Handles symbol aliases, group keys for commodities (GOLD/XAUUSD, SILVER/XAGUSD),
  * kite/comex/binance cross-references, and name matches.

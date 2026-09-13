@@ -14,11 +14,13 @@ import { api, ApiError } from '@/lib/api';
 import OptionChainTable from '@/app/option-chain/OptionChainTable';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
 import { useComexQuotes } from '@/hooks/useComexQuotes';
+
 import useSWR from 'swr';
 import { parseOptionSymbol } from '@/lib/parseOptionSymbol';
 import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
 import { mapSegmentToDbSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import { formatShortName, isForexSymbol } from '@/lib/datafeed/symbolResolver';
+import { normalizeComexTicker } from '@/lib/watchlistUtils';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { useBalance } from '@/hooks/useBalance';
@@ -208,7 +210,7 @@ function getStoredWatchlistItems() {
         break;
       }
     }
-    const rawUser = localStorage.getItem(bestKey) || localStorage.getItem('marginApex_watchlist');
+    const rawUser = localStorage.getItem('marginApex_watchlist') || localStorage.getItem(bestKey);
     if (rawUser && rawUser !== 'null') {
       const parsed = JSON.parse(rawUser);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -258,18 +260,6 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments = [], toggle
     'CRYPTO': 'BTC',
     'FOREX': 'USDINR',
   };
-
-  const UNDERLYING_KEYS = [
-    'NSE:NIFTY 50',
-    'NSE:NIFTY BANK',
-    'BSE:SENSEX',
-    'BSE:BANKEX',
-    'NSE:NIFTY FIN SERVICE',
-    'NSE:NIFTY MID SELECT',
-    'MCX:GOLD',
-    'MCX:SILVER',
-    'MCX:CRUDEOIL',
-  ];
 
   const fetchLiveResults = async (q: string, tab: string, signal: AbortSignal) => {
     try {
@@ -331,76 +321,19 @@ const ChartSearchOverlay = ({ onClose, onSelect, starredInstruments = [], toggle
     };
   }, [normalizedQuery, activeSearchTab]);
 
-  const resultIds = React.useMemo(() => {
-    const ids = searchResults.map(r => r.binanceSymbol || r.kiteSymbol || r.symbol).filter(Boolean);
-    return Array.from(new Set([...ids, ...UNDERLYING_KEYS]));
-  }, [searchResults]);
-  const { quotes } = useMarketQuotes(resultIds);
-
   const comexIds = React.useMemo(() => {
-    const ids = searchResults.map(r => r.comexSymbol).filter((s): s is string => !!s);
+    const ids = (searchResults || []).map((r: any) => r.comexSymbol).filter((s: string | undefined): s is string => !!s);
     return Array.from(new Set(ids));
   }, [searchResults]);
   const { quotes: comexQuotes } = useComexQuotes(comexIds);
 
-  const displayResults = React.useMemo(() => {
-    if (!searchResults || searchResults.length === 0) return [];
-    const hasOptions = searchResults.some((r: any) => r.strike !== undefined || r.segment?.includes('Options'));
-    if (!hasOptions) return searchResults;
-
-    const firstOption = searchResults.find((r: any) => r.strike !== undefined || r.segment?.includes('Options')) as any;
-    if (!firstOption) return searchResults;
-
-    const uSym = (firstOption.underlyingSymbol || firstOption.name || '').toUpperCase();
-    let spotKey = '';
-    if (uSym.includes('NIFTY') && !uSym.includes('BANK') && !uSym.includes('FIN') && !uSym.includes('MID')) spotKey = 'NSE:NIFTY 50';
-    else if (uSym.includes('BANKNIFTY')) spotKey = 'NSE:NIFTY BANK';
-    else if (uSym.includes('FINNIFTY')) spotKey = 'NSE:NIFTY FIN SERVICE';
-    else if (uSym.includes('MID')) spotKey = 'NSE:NIFTY MID SELECT';
-    else if (uSym.includes('SENSEX')) spotKey = 'BSE:SENSEX';
-    else if (uSym.includes('BANKEX')) spotKey = 'BSE:BANKEX';
-    else if (uSym.includes('GOLD')) spotKey = 'MCX:GOLD';
-    else if (uSym.includes('SILVER')) spotKey = 'MCX:SILVER';
-    else if (uSym.includes('CRUDE')) spotKey = 'MCX:CRUDEOIL';
-
-    const spotPrice = spotKey && quotes[spotKey]?.lastPrice ? quotes[spotKey].lastPrice : 0;
-    if (spotPrice <= 0) return searchResults;
-
-    const nonOptions = searchResults.filter((r: any) => r.strike === undefined && !r.segment?.includes('Options'));
-    const options = searchResults.filter((r: any) => r.strike !== undefined || r.segment?.includes('Options'));
-
-    const strikeSet = new Set<number>();
-    options.forEach((o: any) => {
-      if (o.strike !== undefined) strikeSet.add(Number(o.strike));
-    });
-    const strikes = Array.from(strikeSet).sort((a, b) => a - b);
-    if (strikes.length === 0) return searchResults;
-
-    let closestIdx = 0, minDiff = Infinity;
-    strikes.forEach((s, idx) => {
-      const diff = Math.abs(s - spotPrice);
-      if (diff < minDiff) { minDiff = diff; closestIdx = idx; }
-    });
-
-    const range = 11;
-    const half = Math.floor(range / 2);
-    let startIdx = closestIdx - half;
-    let endIdx = closestIdx + half;
-    if (startIdx < 0) { endIdx += Math.abs(startIdx); startIdx = 0; }
-    if (endIdx >= strikes.length) { startIdx = Math.max(0, startIdx - (endIdx - strikes.length + 1)); endIdx = strikes.length - 1; }
-
-    const selStrikes = new Set(strikes.slice(startIdx, endIdx + 1));
-    const filteredOptions = options.filter((o: any) => selStrikes.has(Number(o.strike)));
-
-    return [...nonOptions, ...filteredOptions];
-  }, [searchResults, quotes, isSearching]);
+  const displayResults = searchResults;
 
   const renderResultItem = (res: any, idx: number) => {
     const isStarred = starredInstruments.some((p: any) => (p.kiteSymbol || p.symbol) === (res.kiteSymbol || res.symbol));
-    const q = (res.binanceSymbol ? quotes[res.binanceSymbol] : null) || (res.comexSymbol ? comexQuotes[res.comexSymbol] : null) || quotes[res.kiteSymbol] || quotes[res.symbol] || quotes[(res.kiteSymbol || '').split(':').pop() || ''];
-    let price = (q?.lastPrice && q.lastPrice > 0) ? q.lastPrice : (res.price || 0);
-    let high = (q?.high && q.high > 0) ? q.high : (res.high || 0);
-    let low = (q?.low && q.low > 0) ? q.low : (res.low || 0);
+    let price = res.price || 0;
+    let high = res.high || 0;
+    let low = res.low || 0;
     const isForexUsd = ['GBPUSD', 'EURUSD'].includes((res.symbol || '').toUpperCase());
     // Keep raw currency prices for Forex/Crypto/COMEX
 
@@ -580,7 +513,7 @@ let tradingChartRenderCount = 0;
 
 function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', liveQuote: propLiveQuote, onClose }: TradingChartProps) {
   tradingChartRenderCount++;
-  const [symbol, setSymbol] = useState(propSymbol);
+  const [symbol, setSymbol] = useState(() => normalizeComexTicker(propSymbol));
   const [segment, setSegment] = useState(propSegment);
   const [loadId, setLoadId] = useState(() => Math.random().toString(36).substring(2, 8));
 
@@ -645,12 +578,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   useEffect(() => {
     const newId = Math.random().toString(36).substring(2, 8);
     setLoadId(newId);
-    setSymbol(propSymbol);
+    setSymbol(normalizeComexTicker(propSymbol));
     setSegment(propSegment);
     console.log(`[CHART PERF ${newId}] +0.0ms TradingChart propSymbol change: ${propSymbol}`);
   }, [propSymbol, propSegment]);
 
-  const [themeMode, setThemeMode] = useState<'dark' | 'black' | 'light'>(() => getAppTheme());
+  const [themeMode, setThemeMode] = useState<'dark' | 'black' | 'blue' | 'light'>(() => getAppTheme());
 
   useEffect(() => {
     const updateTheme = () => {
@@ -772,13 +705,18 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   }, []);
 
   const toggleStar = (item: any) => {
+    const itemKey = item.kiteSymbol || item.symbol;
+    if (!itemKey) return;
     setStarredInstruments(prev => {
-      const isStarred = prev.some(p => p.kiteSymbol === item.kiteSymbol);
-      const next = isStarred ? prev.filter(p => p.kiteSymbol !== item.kiteSymbol) : [...prev, item];
+      const isStarred = prev.some(p => (p.kiteSymbol || p.symbol) === itemKey);
+      const next = isStarred
+        ? prev.filter(p => (p.kiteSymbol || p.symbol) !== itemKey)
+        : [...prev, item];
       try { localStorage.setItem('niveshX_starred_instruments', JSON.stringify(next)); } catch (e) { }
       return next;
     });
   };
+
 
 
 
@@ -1567,11 +1505,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const quickEntryLock = useRef(false);
 
   const handleQuickMarketOrder = async (side: 'BUY' | 'SELL') => {
-    if (quickEntryLock.current || isSubmitting) return;
+    if (quickEntryLock.current) return;
     quickEntryLock.current = true;
-    setIsSubmitting(true);
-    submitStartTimeRef.current = Date.now(); // track when submission started (used by visibilitychange handler)
-    positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
     setOrderSide(side);
 
     try {
@@ -1640,90 +1575,74 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         }
         return `NSE:${s}`;
       })();
+      showToast(`Quick ${side} order placed!`);
 
-      // 12 s is enough — the server processes in ~2-3 s; anything beyond 12 s on the client
-      // means the connection is stalled. We fail fast and refresh positions so the user
-      // can see any server-side executed order immediately.
-      const quickOrderTimeout = new Promise<{ success: false; error: string }>((resolve) =>
-        setTimeout(() => resolve({ success: false, error: 'Quick order timed out. Please check orders.' }), 12000)
-      );
-
-      const res = await Promise.race([
-        placeOrder({
-          symbol: symbol,
-          kite_instrument: kiteInst,
-          segment: segment,
-          side: side,
-          qty: finalQty,
+      // Inject optimistic position immediately for instant UI feedback
+      try {
+        const dbSeg = mapSegmentWithSymbol(segment, symbol);
+        addOptimisticPosition({
+          symbol,
+          settlement: dbSeg,
+          side,
+          qty_open: finalQty,
           lots: effectiveUseLots ? qVal : (finalQty / lotSize),
-          order_type: 'MARKET',
+          entry_price: currentPrice,
+          avg_price: currentPrice,
+          ltp: currentPrice,
           product_type: 'INTRADAY',
-          client_price: currentPrice,
-          frontend_ask: activeLiveQuote?.ask || currentPrice,
-          frontend_bid: activeLiveQuote?.bid || currentPrice,
-          frontend_ltp: currentPrice,
-          client_click_time: Date.now(),
-          is_exit: false
-        }),
-        quickOrderTimeout
-      ]);
-
-      if (res.success) {
-        showToast(`Quick ${side} Order Placed Successfully!`);
-        notifyOrderEvent();
-        // Inject an optimistic placeholder position so the user sees it INSTANTLY
-        // before the DB propagates (which can take 500ms-2s)
-        try {
-          const dbSeg = mapSegmentWithSymbol(segment, symbol);
-          addOptimisticPosition({
-            symbol,
-            settlement: dbSeg,
-            side,
-            qty_open: finalQty,
-            lots: effectiveUseLots ? qVal : (finalQty / lotSize),
-            entry_price: res.fill_price || currentPrice,
-            avg_price: res.fill_price || currentPrice,
-            ltp: currentPrice,
-            product_type: 'INTRADAY',
-            kite_instrument: kiteInst,
-            // Snapshot of the position qty BEFORE this order — used by PositionsContext
-            // smart merge to know when the DB has actually written the new qty.
-            // Without this, the merge evicts the optimistic entry the moment the first
-            // fetch returns (which still has the old qty), causing a stale flash.
-            _preOrderQty: currentInstrumentPosition?.qty_open ?? 0,
-          } as any);
-        } catch (optErr) {
-          console.warn('[TradingChart] Optimistic position injection failed:', optErr);
-        }
-        // Flash the button
-        const btn = document.getElementById(side === 'BUY' ? 'buyButton' : 'sellButton');
-        if (btn) {
-          btn.classList.remove('quick-flash');
-          void btn.offsetWidth; // force reflow
-          btn.classList.add('quick-flash');
-        }
-        // Switch to positions tab so the user sees the result immediately
-        setActiveSegment('positions');
-        // NOTE: do NOT call refreshPositions() here — notifyOrderEvent() already dispatches
-        // 'order_placed' which triggers an immediate + 800ms debounced fetch in PositionsContext.
-        // An extra early fetch would race against and wipe the optimistic placeholder before
-        // the DB write has propagated (fetchPositions replaces the full rawPositions array).
-        // Release lock immediately on success — don't wait for position watcher
-        setIsSubmitting(false);
-        positionSnapshotRef.current = null;
-        quickEntryLock.current = false;
-      } else {
-        showToast(res.error || 'Failed to place quick order', true);
-        // The order may have executed server-side despite the client timeout.
-        // Refresh positions so the panel shows any newly created position.
-        refreshPositions();
-        refreshBalance();
+          kite_instrument: kiteInst,
+          _preOrderQty: currentInstrumentPosition?.qty_open ?? 0,
+        } as any);
+      } catch (optErr) {
+        console.warn('[TradingChart] Optimistic position injection failed:', optErr);
       }
+
+      // Flash the button
+      const btn = document.getElementById(side === 'BUY' ? 'buyButton' : 'sellButton');
+      if (btn) {
+        btn.classList.remove('quick-flash');
+        void btn.offsetWidth;
+        btn.classList.add('quick-flash');
+      }
+
+      setActiveSegment('positions');
+
+      // Release lock immediately — no waiting for API
+      quickEntryLock.current = false;
+      positionSnapshotRef.current = null;
+      window.dispatchEvent(new Event('global-loader-end'));
+
+      // Fire API in background
+      placeOrder({
+        symbol: symbol,
+        kite_instrument: kiteInst,
+        segment: segment,
+        side: side,
+        qty: finalQty,
+        lots: effectiveUseLots ? qVal : (finalQty / lotSize),
+        order_type: 'MARKET',
+        product_type: 'INTRADAY',
+        client_price: currentPrice,
+        frontend_ask: activeLiveQuote?.ask || currentPrice,
+        frontend_bid: activeLiveQuote?.bid || currentPrice,
+        frontend_ltp: currentPrice,
+        client_click_time: Date.now(),
+        is_exit: false
+      }).then(res => {
+        if (res.success) {
+          notifyOrderEvent();
+        } else {
+          showToast(res.error || 'Order may have failed — check positions', true);
+          refreshPositions();
+          refreshBalance();
+        }
+      }).catch(err => {
+        showToast(err?.message || 'Quick order failed — check positions', true);
+        refreshPositions();
+      });
     } catch (err: any) {
       showToast(err?.message || 'Quick order failed', true);
-    } finally {
       quickEntryLock.current = false;
-      setIsSubmitting(false);
       positionSnapshotRef.current = null;
       window.dispatchEvent(new Event('global-loader-end'));
     }
@@ -2246,7 +2165,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               fontWeight: positionViewMode === 'cumulative' ? 700 : 600,
               border: 'none', borderRadius: 0, cursor: 'pointer',
               background: 'transparent',
-              color: positionViewMode === 'cumulative' ? ((themeMode === 'dark' || themeMode === 'black') ? '#2962FF' : 'var(--navy, #101828)') : 'var(--text-secondary, #6b7280)',
+              color: positionViewMode === 'cumulative' ? ((themeMode === 'dark' || themeMode === 'black' || themeMode === 'blue') ? '#2962FF' : 'var(--navy, #101828)') : 'var(--text-secondary, #6b7280)',
               borderBottom: positionViewMode === 'cumulative' ? ((themeMode === 'dark' || themeMode === 'black') ? '2.5px solid #2962FF' : '2.5px solid var(--navy, #101828)') : '2.5px solid transparent',
               marginBottom: '-2px',
               transition: 'all 0.15s',
@@ -2261,7 +2180,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               fontWeight: positionViewMode === 'detailed' ? 700 : 600,
               border: 'none', borderRadius: 0, cursor: 'pointer',
               background: 'transparent',
-              color: positionViewMode === 'detailed' ? ((themeMode === 'dark' || themeMode === 'black') ? '#2962FF' : 'var(--navy, #101828)') : 'var(--text-secondary, #6b7280)',
+              color: positionViewMode === 'detailed' ? ((themeMode === 'dark' || themeMode === 'black' || themeMode === 'blue') ? '#2962FF' : 'var(--navy, #101828)') : 'var(--text-secondary, #6b7280)',
               borderBottom: positionViewMode === 'detailed' ? ((themeMode === 'dark' || themeMode === 'black') ? '2.5px solid #2962FF' : '2.5px solid var(--navy, #101828)') : '2.5px solid transparent',
               marginBottom: '-2px',
               transition: 'all 0.15s',
@@ -2472,11 +2391,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     : (res.segment || 'NSE');
 
               const newLoadId = Math.random().toString(36).substring(2, 8);
+              const cleanNewSymbol = normalizeComexTicker(newSymbol);
               setLoadId(newLoadId);
-              setSymbol(newSymbol);
+              setSymbol(cleanNewSymbol);
               setSegment(newSegment);
               setIsSearchActive(false);
-              setOrderBlockTitle(newSymbol);
+              setOrderBlockTitle(cleanNewSymbol);
 
               if (typeof window !== 'undefined' && typeof (window as any).__reactSetChartItem === 'function') {
                 (window as any).__reactSetChartItem({

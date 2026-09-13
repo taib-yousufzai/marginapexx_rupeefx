@@ -126,16 +126,28 @@ export function buildSymbolInfo(symbolName: string, segment: string): LibrarySym
 
   const colonIdx = symbolName.indexOf(':');
   const rawName = colonIdx >= 0 ? symbolName.slice(colonIdx + 1) : symbolName;
-  let name = formatShortName(rawName);
+
+  const comexMap: Record<string, string> = {
+    'CL=F': 'XTIUSD',
+    'GC=F': 'XAUUSD',
+    'SI=F': 'XAGUSD',
+    'HG=F': 'XCUUSD',
+    'NG=F': 'XNGUSD',
+  };
+  const cleanRawName = comexMap[rawName.toUpperCase()] || rawName;
+  let name = formatShortName(cleanRawName);
   if (isGlobalForex) {
     if (name.endsWith('=X')) name = name.slice(0, -2);
     name = name.replace(/\//g, '');
   }
   
-  const exchange = isUs ? 'US' : isGlobalForex ? 'FOREX' : isCrypto ? 'BINANCE' : deriveExchange(symbolName);
-  let ticker = isUs
-    ? (symbolName.startsWith('US:') ? symbolName : `US:${symbolName}`)
-    : (isCrypto || isGlobalForex || symbolName.includes(':')) ? symbolName : `${exchange}:${symbolName}`;
+  const isComexSymbol = upperSym.startsWith('COMEX:') || segment?.toUpperCase() === 'COMEX' || ['GC=F', 'SI=F', 'CL=F', 'NG=F', 'HG=F', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD'].some(c => upperSym.includes(c));
+  const exchange = isComexSymbol ? 'COMEX' : isUs ? 'US' : isGlobalForex ? 'FOREX' : isCrypto ? 'BINANCE' : deriveExchange(symbolName);
+  let ticker = isComexSymbol
+    ? `COMEX:${cleanRawName}`
+    : isUs
+      ? (symbolName.startsWith('US:') ? symbolName : `US:${symbolName}`)
+      : (isCrypto || isGlobalForex || symbolName.includes(':')) ? symbolName : `${exchange}:${symbolName}`;
 
   if (exchange === 'MCX' && ticker.startsWith('NFO:')) {
     ticker = `MCX:${ticker.slice(4)}`;
