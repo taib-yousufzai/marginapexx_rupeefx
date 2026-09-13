@@ -1118,11 +1118,11 @@ export async function GET(request: NextRequest) {
     // Append matching COMEX items if tab is All or COMEX
     if (tab === 'All' || tab === 'COMEX') {
       const comexSearchItems = [
-        { name: 'GOLD', symbol: 'GC=F', comexSymbol: 'GC=F', segment: 'COMEX - Futures' },
-        { name: 'SILVER', symbol: 'SI=F', comexSymbol: 'SI=F', segment: 'COMEX - Futures' },
-        { name: 'CRUDEOIL', symbol: 'CL=F', comexSymbol: 'CL=F', segment: 'COMEX - Futures' },
-        { name: 'COPPER', symbol: 'HG=F', comexSymbol: 'HG=F', segment: 'COMEX - Futures' },
-        { name: 'NATURALGAS', symbol: 'NG=F', comexSymbol: 'NG=F', segment: 'COMEX - Futures' },
+        { name: 'GOLD', symbol: 'XAUUSD', comexSymbol: 'XAUUSD', segment: 'COMEX - Futures' },
+        { name: 'SILVER', symbol: 'XAGUSD', comexSymbol: 'XAGUSD', segment: 'COMEX - Futures' },
+        { name: 'CRUDE OIL', symbol: 'XTIUSD', comexSymbol: 'XTIUSD', segment: 'COMEX - Futures' },
+        { name: 'COPPER', symbol: 'XCUUSD', comexSymbol: 'XCUUSD', segment: 'COMEX - Futures' },
+        { name: 'NATURAL GAS', symbol: 'XNGUSD', comexSymbol: 'XNGUSD', segment: 'COMEX - Futures' },
       ];
       const comexSearchTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
       const matchingComex = comexSearchItems

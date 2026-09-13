@@ -52,9 +52,9 @@ export const US_BASE_PRICES: Record<string, number> = {
   'HG=F': 6.55,
   'COPPER': 6.55,
   'XCUUSD': 6.55,
-  'NG=F': 2.30,
-  'XNGUSD': 2.30,
-  'NATGAS': 2.30,
+  'NG=F': 2.83,
+  'XNGUSD': 2.83,
+  'NATGAS': 2.83,
 };
 
 export function getUSStockBasePrice(symbol: string): number {

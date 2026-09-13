@@ -81,7 +81,7 @@ async function fetchRealComexQuote(symbol: string) {
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
-  const symbolsParam = searchParams.get('symbols') ?? 'GC=F,SI=F,HG=F,CL=F';
+  const symbolsParam = searchParams.get('symbols') ?? 'XAUUSD,XAGUSD,XTIUSD,XCUUSD';
   const symbols = symbolsParam.split(',').map(s => s.trim()).filter(Boolean);
 
   if (symbols.length === 0) {
