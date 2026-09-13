@@ -176,6 +176,7 @@ export function buildSymbolInfo(symbolName: string, segment: string): LibrarySym
   }
 
   const isJpy = rawName.toUpperCase().includes('JPY');
+  const isFourDecimalComex = ['XCUUSD', 'XNGUSD', 'COPPER', 'NATGAS', 'NATURALGAS', 'HG=F', 'NG=F'].some(c => upperSym.includes(c));
 
   return {
     name,
@@ -186,7 +187,7 @@ export function buildSymbolInfo(symbolName: string, segment: string): LibrarySym
     listed_exchange: exchange,
     session,
     timezone,
-    pricescale: isCrypto ? 100000 : (isJpy && isGlobalForex) ? 1000 : isGlobalForex ? 100000 : exchange === 'CDS' ? 10000 : 100,
+    pricescale: isCrypto ? 100000 : (isJpy && isGlobalForex) ? 1000 : (isGlobalForex || isFourDecimalComex) ? 10000 : exchange === 'CDS' ? 10000 : 100,
     minmov: 1,
     has_intraday: true,
     has_daily: true,
