@@ -11,37 +11,43 @@ function generateFallbackCandles(symbol: string, interval: string, fromSec: numb
   
   const rawCandles: any[][] = [];
   const maxBars = 300;
-  let startSec = fromSec;
-  if ((toSec - fromSec) / stepSec > maxBars) {
-    startSec = toSec - maxBars * stepSec;
-  }
-
+  
   // Work BACKWARDS smoothly from basePrice at toSec down to startSec
   let currentClose = basePrice;
   const maxDev = basePrice * 0.004; // Max 0.4% deviation from basePrice
 
-  for (let t = toSec; t >= startSec; t -= stepSec) {
-    const pullToBase = (basePrice - currentClose) * 0.05;
-    const noise = (Math.random() - 0.5) * (basePrice * 0.0006);
-    let open = Number((currentClose + pullToBase + noise).toFixed(2));
-
-    if (open > basePrice + maxDev) open = Number((basePrice + maxDev).toFixed(2));
-    if (open < basePrice - maxDev) open = Number((basePrice - maxDev).toFixed(2));
-
-    const maxOC = Math.max(open, currentClose);
-    const minOC = Math.min(open, currentClose);
-
-    const upperWick = Math.random() * (basePrice * 0.0004);
-    const lowerWick = Math.random() * (basePrice * 0.0004);
-
-    const high = Number((maxOC + upperWick).toFixed(2));
-    const low = Number((Math.max(0.01, minOC - lowerWick)).toFixed(2));
-    const volume = Math.floor(1500 + Math.random() * 3500);
-
-    const timeIso = new Date(t * 1000).toISOString();
-    rawCandles.push([timeIso, open, high, low, currentClose, volume]);
+  let t = toSec;
+  while (rawCandles.length < maxBars && t >= fromSec - (maxBars * stepSec * 3)) {
+    const d = new Date(t * 1000);
+    const day = d.getUTCDay();
+    const hour = d.getUTCHours();
     
-    currentClose = open;
+    // Skip weekend market closure (Saturday 00:00 UTC to Sunday 22:00 UTC)
+    const isWeekendClosed = (day === 6) || (day === 0 && hour < 22);
+    if (!isWeekendClosed || interval === '1d' || interval === 'd') {
+      const pullToBase = (basePrice - currentClose) * 0.05;
+      const noise = (Math.random() - 0.5) * (basePrice * 0.0006);
+      let open = Number((currentClose + pullToBase + noise).toFixed(2));
+
+      if (open > basePrice + maxDev) open = Number((basePrice + maxDev).toFixed(2));
+      if (open < basePrice - maxDev) open = Number((basePrice - maxDev).toFixed(2));
+
+      const maxOC = Math.max(open, currentClose);
+      const minOC = Math.min(open, currentClose);
+
+      const upperWick = Math.random() * (basePrice * 0.0004);
+      const lowerWick = Math.random() * (basePrice * 0.0004);
+
+      const high = Number((maxOC + upperWick).toFixed(2));
+      const low = Number((Math.max(0.01, minOC - lowerWick)).toFixed(2));
+      const volume = Math.floor(1500 + Math.random() * 3500);
+
+      const timeIso = d.toISOString();
+      rawCandles.push([timeIso, open, high, low, currentClose, volume]);
+      
+      currentClose = open;
+    }
+    t -= stepSec;
   }
 
   return rawCandles.reverse();
