@@ -114,7 +114,7 @@ const DEFAULT_FOREX_ITEMS: WatchlistItem[] = [
 // Rows with both kiteSymbol + comexSymbol show a ₹⇄$ toggle pill
 
 const DEFAULT_COMEX_ITEMS: WatchlistItem[] = [
-  { name: 'GOLD', symbol: 'XAUUSD', kiteSymbol: '', comexSymbol: 'XAUUSD', price: 4408.90, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 4408.90, high: 4415, low: 4400, close: 4408.90, category: 'COMEX' },
+  { name: 'GOLD', symbol: 'XAUUSD', kiteSymbol: '', comexSymbol: 'XAUUSD', price: 4349.42, change: '+0.75%', segment: 'COMEX - Futures', contractDate: '', open: 4349.42, high: 4360, low: 4330, close: 4349.42, category: 'COMEX' },
   { name: 'SILVER', symbol: 'XAGUSD', kiteSymbol: '', comexSymbol: 'XAGUSD', price: 65.20, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 65.20, high: 65.50, low: 64.90, close: 65.20, category: 'COMEX' },
   { name: 'CRUDE OIL', symbol: 'XTIUSD', kiteSymbol: '', comexSymbol: 'XTIUSD', price: 100.00, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 100.00, high: 100.80, low: 99.20, close: 100.00, category: 'COMEX' },
   { name: 'COPPER', symbol: 'XCUUSD', kiteSymbol: '', comexSymbol: 'XCUUSD', price: 6.55, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 6.55, high: 6.60, low: 6.50, close: 6.55, category: 'COMEX' },

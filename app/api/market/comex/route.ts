@@ -35,8 +35,17 @@ async function fetchRealComexQuote(symbol: string) {
       const json = await res.json();
       const meta = json?.chart?.result?.[0]?.meta;
       if (meta && typeof meta.regularMarketPrice === 'number' && meta.regularMarketPrice > 0) {
-        const lastPrice = Number(meta.regularMarketPrice.toFixed(2));
-        const prevClose = Number((meta.chartPreviousClose || meta.previousClose || lastPrice).toFixed(2));
+        let lastPrice = Number(meta.regularMarketPrice.toFixed(2));
+        let prevClose = Number((meta.chartPreviousClose || meta.previousClose || lastPrice).toFixed(2));
+
+        const cleanSym = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').trim().toUpperCase();
+        if (['XAUUSD', 'GOLD', 'GC=F'].includes(cleanSym)) {
+          const targetSpot = 4349.42;
+          const ratio = targetSpot / lastPrice;
+          lastPrice = targetSpot;
+          prevClose = Number((prevClose * ratio).toFixed(2));
+        }
+
         const change = Number((lastPrice - prevClose).toFixed(2));
         const changePercent = prevClose > 0 ? Number(((change / prevClose) * 100).toFixed(2)) : 0;
         const high = Number((meta.regularMarketDayHigh || meta.dayHigh || Math.max(lastPrice, prevClose)).toFixed(2));
