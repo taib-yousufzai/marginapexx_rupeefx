@@ -257,26 +257,37 @@ export async function GET(req: NextRequest) {
     if (!candles || candles.length === 0) {
       const publicComexBars = await fetchRealPublicComexBars(rawSymbol, rawInterval);
       if (publicComexBars && publicComexBars.length > 0) {
-        const firstBarSec = Math.floor(new Date(publicComexBars[0][0]).getTime() / 1000);
-        const lastBarSec = Math.floor(new Date(publicComexBars[publicComexBars.length - 1][0]).getTime() / 1000);
-        if (lastBarSec >= period1 && firstBarSec <= period2) {
-          const filtered = publicComexBars.filter(b => {
-            const sec = Math.floor(new Date(b[0]).getTime() / 1000);
-            return sec >= period1 && sec <= period2;
-          });
+        let filtered = publicComexBars.filter(b => {
+          const sec = Math.floor(new Date(b[0]).getTime() / 1000);
+          return sec >= period1 && sec <= period2;
+        });
 
-          if (firstBarSec > period1 + 600) {
-            const firstOpenPrice = publicComexBars[0][1];
-            const historicBars = generateFallbackCandles(
-              rawSymbol,
-              rawInterval,
-              period1,
-              firstBarSec - 300,
-              firstOpenPrice
-            );
-            candles = [...historicBars, ...filtered];
-          } else {
-            candles = filtered;
+        if (filtered.length === 0) {
+          filtered = publicComexBars.slice(-300);
+        }
+
+        const firstBarSec = Math.floor(new Date(filtered[0][0]).getTime() / 1000);
+        if (firstBarSec > period1 + 600) {
+          const firstOpenPrice = filtered[0][1];
+          const historicBars = generateFallbackCandles(
+            rawSymbol,
+            rawInterval,
+            period1,
+            firstBarSec - 300,
+            firstOpenPrice
+          );
+          candles = [...historicBars, ...filtered];
+        } else {
+          candles = filtered;
+        }
+
+        const lastFilteredSec = Math.floor(new Date(candles[candles.length - 1][0]).getTime() / 1000);
+        if (period2 > lastFilteredSec + 300) {
+          const lastClosePrice = candles[candles.length - 1][4];
+          const stepSec = rawInterval === '1m' ? 60 : 300;
+          for (let t = lastFilteredSec + stepSec; t <= period2; t += stepSec) {
+            const timeIso = new Date(t * 1000).toISOString();
+            candles.push([timeIso, lastClosePrice, lastClosePrice, lastClosePrice, lastClosePrice, 1000]);
           }
         }
       }
@@ -286,26 +297,37 @@ export async function GET(req: NextRequest) {
     if (!candles || candles.length === 0) {
       const nasdaqBars = await fetchRealNasdaqHistoricalBars(rawSymbol);
       if (nasdaqBars && nasdaqBars.length > 0) {
-        const firstBarSec = Math.floor(new Date(nasdaqBars[0][0]).getTime() / 1000);
-        const lastBarSec = Math.floor(new Date(nasdaqBars[nasdaqBars.length - 1][0]).getTime() / 1000);
-        if (lastBarSec >= period1 && firstBarSec <= period2) {
-          const filteredNasdaq = nasdaqBars.filter(b => {
-            const sec = Math.floor(new Date(b[0]).getTime() / 1000);
-            return sec >= period1 && sec <= period2;
-          });
+        let filteredNasdaq = nasdaqBars.filter(b => {
+          const sec = Math.floor(new Date(b[0]).getTime() / 1000);
+          return sec >= period1 && sec <= period2;
+        });
 
-          if (firstBarSec > period1 + 600) {
-            const firstOpenPrice = nasdaqBars[0][1];
-            const historicBars = generateFallbackCandles(
-              rawSymbol,
-              rawInterval,
-              period1,
-              firstBarSec - 300,
-              firstOpenPrice
-            );
-            candles = [...historicBars, ...filteredNasdaq];
-          } else {
-            candles = filteredNasdaq;
+        if (filteredNasdaq.length === 0) {
+          filteredNasdaq = nasdaqBars.slice(-300);
+        }
+
+        const firstBarSec = Math.floor(new Date(filteredNasdaq[0][0]).getTime() / 1000);
+        if (firstBarSec > period1 + 600) {
+          const firstOpenPrice = filteredNasdaq[0][1];
+          const historicBars = generateFallbackCandles(
+            rawSymbol,
+            rawInterval,
+            period1,
+            firstBarSec - 300,
+            firstOpenPrice
+          );
+          candles = [...historicBars, ...filteredNasdaq];
+        } else {
+          candles = filteredNasdaq;
+        }
+
+        const lastFilteredSec = Math.floor(new Date(candles[candles.length - 1][0]).getTime() / 1000);
+        if (period2 > lastFilteredSec + 300) {
+          const lastClosePrice = candles[candles.length - 1][4];
+          const stepSec = rawInterval === '1m' ? 60 : 300;
+          for (let t = lastFilteredSec + stepSec; t <= period2; t += stepSec) {
+            const timeIso = new Date(t * 1000).toISOString();
+            candles.push([timeIso, lastClosePrice, lastClosePrice, lastClosePrice, lastClosePrice, 1000]);
           }
         }
       }
