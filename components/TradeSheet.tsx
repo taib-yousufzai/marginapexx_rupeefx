@@ -8,6 +8,7 @@ import AnimatedLoader from '@/components/AnimatedLoader';
 import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
 import { useActivePositions } from '@/hooks/useActivePositions';
+import { cleanSym } from '@/contexts/PositionsContext';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
 import { useComexQuotes } from '@/hooks/useComexQuotes';
 import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
@@ -335,13 +336,20 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const chargeQty = orderUnit === 'lot' ? orderQty * lotSize : orderQty;
   const chargeExposure = chargeQty * chargePrice;
 
-  const anyPosForSymbol = activePositions.find(p => (p.symbol === item?.symbol || (item?.symbol && (p.symbol?.includes(item.symbol) || item.symbol.includes(p.symbol)))) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active'));
+  const targetItemSymClean = cleanSym(item?.symbol || '');
+  const isMatchingSymbol = (pSym?: string) => {
+    if (!pSym || !targetItemSymClean) return false;
+    const pClean = cleanSym(pSym);
+    return pClean === targetItemSymClean || pClean.includes(targetItemSymClean) || targetItemSymClean.includes(pClean);
+  };
+
+  const anyPosForSymbol = activePositions.find(p => isMatchingSymbol(p.symbol) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active'));
   const effectiveProductType = propProductType || (linkedPosId ? activePositions.find(p => p.id === linkedPosId)?.product_type : undefined) || (effectiveExitMode && anyPosForSymbol ? anyPosForSymbol.product_type : undefined) || productType;
   const targetPT = effectiveProductType as 'INTRADAY' | 'CARRY';
-  const existingPos = activePositions.find(p => (p.symbol === item?.symbol || (item?.symbol && (p.symbol?.includes(item.symbol) || item.symbol.includes(p.symbol)))) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active') && p.product_type === targetPT) || anyPosForSymbol;
+  const existingPos = activePositions.find(p => isMatchingSymbol(p.symbol) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active') && p.product_type === targetPT) || anyPosForSymbol;
   // Total qty across all open lots for this symbol+product_type (for multi-lot exit validation)
   const totalOpenQtyForSymbol = activePositions
-    .filter(p => (p.symbol === item?.symbol || (item?.symbol && (p.symbol?.includes(item.symbol) || item.symbol.includes(p.symbol)))) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active') && p.product_type === targetPT && p.side === existingPos?.side)
+    .filter(p => isMatchingSymbol(p.symbol) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active') && p.product_type === targetPT && p.side === existingPos?.side)
     .reduce((sum, p) => sum + (Number(p.qty_open) || 0), 0);
   const hasSellPos = existingPos?.side === 'SELL' || false;
   const hasBuyPos = existingPos?.side === 'BUY' || false;
@@ -503,7 +511,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           if (exactPos) initialExitQty = exactPos.qty_open;
         } else {
           const matchingPositions = activePositionsRef.current?.filter(
-            p => p.symbol === item.symbol && ((p.status as string) === 'open' || (p.status as string) === 'active') && p.side === oppositeSide && p.product_type === targetPT
+            p => isMatchingSymbol(p.symbol) && ((p.status as string) === 'open' || (p.status as string) === 'active') && p.side === oppositeSide && p.product_type === targetPT
           ) || [];
           initialExitQty = matchingPositions.reduce((sum, p) => sum + p.qty_open, 0);
         }
@@ -1057,20 +1065,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             ...diagnosticFields,
           };
 
-          const optimisticPayload = {
-            symbol: item.symbol,
-            kite_instrument: computedKiteSymbol || item.symbol,
-            segment: item.segment,
-            side: placeSide,
-            qty: finalQty,
-            qty_open: finalQty,
-            client_price: resolvedClientPrice,
-            product_type: orderPayload.product_type,
-            is_exit: true,
-            linked_position_id: currentLinkedPosId || undefined,
-          };
-
-          window.dispatchEvent(new CustomEvent('order_placed_with_data', { detail: optimisticPayload }));
           showToast(`${placeSide} order sent for ${item.symbol}`);
           handleCloseAnimation();
 
@@ -1188,20 +1182,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             ...diagnosticFields,
           };
 
-          const isExit = (placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos);
-          const optimisticPayload = {
-            symbol: item.symbol,
-            kite_instrument: computedKiteSymbol || item.symbol,
-            segment: item.segment,
-            side: placeSide,
-            qty: finalQty,
-            qty_open: finalQty,
-            client_price: resolvedClientPrice,
-            product_type: productType,
-            is_exit: isExit,
-            linked_position_id: currentLinkedPosId || undefined,
-          };
-          window.dispatchEvent(new CustomEvent('order_placed_with_data', { detail: optimisticPayload }));
           showToast(`${placeSide} order sent for ${item.symbol}`);
           handleCloseAnimation();
 

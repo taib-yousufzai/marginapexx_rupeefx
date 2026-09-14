@@ -3,11 +3,12 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import ChartContainer from '@/components/chart/ChartContainer';
 import { ErrorModal } from '@/components/ErrorModal';
-import { getDefaultWatchlistItems, getTabForItem, TAB_LABELS, TabLabel } from '@/app/watchlist/page';
+import { getDefaultWatchlistItems, getTabForItem, TAB_LABELS, TabLabel } from '@/lib/watchlistClassification';
 import { Candle } from '@/components/chart/types';
 import { useMyOrders } from '@/hooks/useMyOrders';
 import type { MyOrder } from '@/lib/types/order';
 import { useMyPositions, EnrichedPosition } from '@/hooks/useMyPositions';
+import { cleanSym } from '@/contexts/PositionsContext';
 import { useOrderEntry } from '@/hooks/useOrderEntry';
 import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
@@ -742,8 +743,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   // --- Real Data Hooks ---
   const { orders, cancelOrder, refresh: refreshOrders } = useMyOrders();
-  const { positions, refresh: refreshPositions, addOptimisticPosition } = useMyPositions();
-  const { placeOrder, closePosition } = useOrderEntry();
+  const { positions, refresh: refreshPositions, addOptimisticPosition, removePositionLocally } = useMyPositions();
+  const { placeOrder, closePosition, closePositionsBatch } = useOrderEntry();
 
   // --- Dashboard States ---
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -907,38 +908,21 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     }
   }, [lotSize]);
 
-  // Toast helper
-  const showToast = (msg: string, isError = false) => {
-    // Cancel any pending auto-dismiss so stale timers can't close the new toast early
-    if (toastTimerRef.current) {
-      clearTimeout(toastTimerRef.current);
-      toastTimerRef.current = null;
-    }
-    setToast({ visible: true, msg, isError });
-    // Errors stay visible longer so the user can actually read them
-    toastTimerRef.current = setTimeout(() => {
-      setToast({ visible: false, msg: '' });
-      toastTimerRef.current = null;
-    }, isError ? 4000 : 2500);
-  };
-
-  // Safety guard: if the toast is visible but the timer was lost (e.g. after
-  // Next.js fast refresh preserves state but resets refs), re-arm the dismiss.
+  // Declarative toast auto-dismiss: whenever a toast becomes visible or its message changes,
+  // automatically set a timer to dismiss it after 1s (or 2.5s for errors).
   useEffect(() => {
-    if (toast.visible && !toastTimerRef.current) {
-      toastTimerRef.current = setTimeout(() => {
-        setToast({ visible: false, msg: '' });
-        toastTimerRef.current = null;
-      }, toast.isError ? 4000 : 2500);
-    }
-    return () => {
-      // Cleanup on unmount so we don't call setToast on a dead component
-      if (!toast.visible && toastTimerRef.current) {
-        clearTimeout(toastTimerRef.current);
-        toastTimerRef.current = null;
-      }
-    };
-  }, [toast.visible, toast.isError]);
+    if (!toast.visible) return;
+    const timer = setTimeout(() => {
+      setToast({ visible: false, msg: '', isError: false });
+    }, toast.isError ? 2500 : 1000);
+
+    return () => clearTimeout(timer);
+  }, [toast.visible, toast.msg, toast.isError]);
+
+  // Toast helper
+  const showToast = useCallback((msg: string, isError = false) => {
+    setToast({ visible: true, msg, isError });
+  }, []);
 
   // Convert timeframe to Binance or Kite interval string
   const getIntervalString = () => {
@@ -1178,6 +1162,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     if (modifyOrderId) {
       setModifyOrderId(null);
     }
+    const targetIsExit = isExitFlow;
     setIsOrderBlockVisible(false);
     setChainContract(null);
     setIsExitFlow(false);
@@ -1209,7 +1194,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       trigger_price: (orderType === 'sl' || orderType === 'slm') ? parseFloat(triggerPrice) : undefined,
       stop_loss: gttSlPrice ? parseFloat(gttSlPrice) : undefined,
       target: gttTargetPrice ? parseFloat(gttTargetPrice) : undefined,
-      is_exit: isExitFlow
+      is_exit: targetIsExit
     }).then(res => {
       if (res.success) {
         showToast(modifyOrderId ? 'Order Modified Successfully!' : `${orderSide} Order Placed Successfully!`);
@@ -1306,13 +1291,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   // Instrument-specific position: find open position matching the currently viewed chart symbol
   const currentInstrumentPosition = useMemo(() => {
+    const targetClean = cleanSym(symbol);
     const matchingPositions = positions.filter(p => {
       if (p.status !== 'open' && p.status !== 'active') return false;
-      if (p.symbol === symbol) return true;
-      if (p.kite_instrument === symbol) return true;
-      if (p.symbol + 'USDT' === symbol) return true;
-      if (symbol + 'USDT' === p.symbol) return true;
-      return false;
+      const pClean = cleanSym(p.symbol);
+      const kiteClean = cleanSym(p.kite_instrument);
+      return pClean === targetClean || kiteClean === targetClean;
     });
     if (matchingPositions.length === 0) return null;
 
@@ -1362,7 +1346,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     if (quickExitLock.current || exitingPosIds.current.has(pos.id)) return;
     quickExitLock.current = true;
     exitingPosIds.current.add(pos.id);
-    setForceRender(prev => prev + 1);
 
     try {
       const posLotSize = getLotSize(pos.symbol);
@@ -1371,48 +1354,71 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const finalQty = selectedQty > 0 ? Math.min(pos.qty_open, selectedQty) : pos.qty_open;
 
       if (finalQty <= 0) {
+        quickExitLock.current = false;
+        exitingPosIds.current.delete(pos.id);
+        setForceRender(prev => prev + 1);
         return;
       }
 
-      const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
-      const effectiveLots = finalQty / posLotSize;
+      const idsToRemove = (pos._ids && pos._ids.length > 0) ? pos._ids : [pos.id];
 
-      showToast(`Placing quick exit order...`);
-      const exitTimeout = new Promise<{ success: false; error: string }>((resolve) =>
-        setTimeout(() => resolve({ success: false, error: 'Exit order timed out' }), 15000)
-      );
-      const res = await Promise.race([
-        placeOrder({
-          symbol: pos.symbol,
-          kite_instrument: pos.kite_instrument || pos.symbol,
-          segment: pos.settlement || segment,
-          side: exitSide,
-          qty: finalQty,
-          lots: effectiveLots,
-          order_type: 'MARKET',
-          product_type: pos.product_type || 'INTRADAY',
-          client_price: pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
-          is_exit: true,
-          linked_position_id: positionViewMode === 'detailed' ? pos.id : undefined
-        }),
-        exitTimeout
-      ]);
-
-      if (res.success) {
-        showToast(`Quick exit order placed`);
-        notifyOrderEvent();
-
-        // Reset transient quantity state to 1 lot (configured default) upon exit completion
-        setQtyValue(1);
-        setUseLots(true);
-        setIsExitFlow(false);
-        setIsAddMoreFlow(false);
-      } else {
-        showToast(res.error || 'Exit failed', true);
+      // Optimistic instant feedback: remove position locally immediately
+      if (finalQty >= pos.qty_open) {
+        idsToRemove.forEach((id: string) => removePositionLocally(id));
       }
+
+      showToast(`Position exited successfully`);
+      setQtyValue(1);
+      setUseLots(true);
+      setIsExitFlow(false);
+      setIsAddMoreFlow(false);
+
+      // Release lock immediately — do not block UI waiting for API/DB
+      quickExitLock.current = false;
+      exitingPosIds.current.delete(pos.id);
+      setIsSubmitting(false);
+      setForceRender(prev => prev + 1);
+
+      // Execute close position API call asynchronously in background
+      const exitPromise = (finalQty >= pos.qty_open)
+        ? (idsToRemove.length > 1 && closePositionsBatch
+            ? closePositionsBatch(idsToRemove)
+            : closePosition(
+                pos.id,
+                pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
+                pos.symbol,
+                pos.settlement || segment,
+                pos.side
+              )
+          )
+        : placeOrder({
+            symbol: pos.symbol,
+            kite_instrument: pos.kite_instrument || pos.symbol,
+            segment: pos.settlement || segment,
+            side: pos.side === 'BUY' ? 'SELL' : 'BUY',
+            qty: finalQty,
+            lots: finalQty / posLotSize,
+            order_type: 'MARKET',
+            product_type: pos.product_type || 'INTRADAY',
+            client_price: pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
+            is_exit: true,
+            linked_position_id: pos.id || ((pos as any)._ids && (pos as any)._ids[0])
+          });
+
+      exitPromise.then(res => {
+        if (res.success) {
+          notifyOrderEvent();
+        } else {
+          showToast(res.error || 'Exit failed — check positions', true);
+          refreshPositions();
+          refreshBalance();
+        }
+      }).catch(err => {
+        showToast(err?.message || 'Exit failed — check positions', true);
+        refreshPositions();
+      });
     } catch (err: any) {
       showToast(err?.message || 'Exit failed', true);
-    } finally {
       quickExitLock.current = false;
       exitingPosIds.current.delete(pos.id);
       setIsSubmitting(false);
@@ -1450,7 +1456,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const levType = pos.product_type === 'CARRY' ? (segSetting?.holding_type ?? 'Multiplier') : (segSetting?.intraday_type ?? 'Multiplier');
       const required = Math.round(levType === '%' ? (currentPrice * qVal) * (leverage / 100) : (levType === 'Fixed' ? (qVal / posLotSize) * leverage : (currentPrice * qVal) / leverage));
 
-      if (required > balance) {
+      if (balance > 0 && required > balance) {
         showToast(`Insufficient margin! Need ₹${required.toLocaleString('en-IN')}`, true);
         return;
       }
@@ -1549,7 +1555,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const intradayType = segSetting?.intraday_type ?? 'Multiplier';
       const required = Math.round(intradayType === '%' ? (currentPrice * finalQty) * (intradayLeverage / 100) : (intradayType === 'Fixed' ? (finalQty / lotSize) * intradayLeverage : (currentPrice * finalQty) / intradayLeverage));
 
-      if (required > balance) {
+      if (balance > 0 && required > balance) {
         showToast(`Insufficient margin! Need ₹${required.toLocaleString('en-IN')}`, true);
         return;
       }
@@ -1577,26 +1583,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       })();
       showToast(`Quick ${side} order placed!`);
 
-      // Inject optimistic position immediately for instant UI feedback
-      try {
-        const dbSeg = mapSegmentWithSymbol(segment, symbol);
-        addOptimisticPosition({
-          symbol,
-          settlement: dbSeg,
-          side,
-          qty_open: finalQty,
-          lots: effectiveUseLots ? qVal : (finalQty / lotSize),
-          entry_price: currentPrice,
-          avg_price: currentPrice,
-          ltp: currentPrice,
-          product_type: 'INTRADAY',
-          kite_instrument: kiteInst,
-          _preOrderQty: currentInstrumentPosition?.qty_open ?? 0,
-        } as any);
-      } catch (optErr) {
-        console.warn('[TradingChart] Optimistic position injection failed:', optErr);
-      }
-
       // Flash the button
       const btn = document.getElementById(side === 'BUY' ? 'buyButton' : 'sellButton');
       if (btn) {
@@ -1621,7 +1607,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         qty: finalQty,
         lots: effectiveUseLots ? qVal : (finalQty / lotSize),
         order_type: 'MARKET',
-        product_type: 'INTRADAY',
+        product_type: orderCarry === 'carry' ? 'CARRY' : 'INTRADAY',
         client_price: currentPrice,
         frontend_ask: activeLiveQuote?.ask || currentPrice,
         frontend_bid: activeLiveQuote?.bid || currentPrice,
@@ -1655,23 +1641,24 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     setAddingPosId(pos.id);
 
     try {
-      const addQty = pos.qty_open;
-      const dbSeg = mapSegmentWithSymbol(segment, symbol);
+      const posLotSize = getLotSize(pos.symbol || symbol);
+      const addQty = posLotSize;
+      const dbSeg = mapSegmentWithSymbol(segment, pos.symbol || symbol);
       const segSetting = getSegment(dbSeg, pos.side);
       const leverage = pos.product_type === 'CARRY' ? (segSetting?.holding_leverage ?? 10) : (segSetting?.intraday_leverage ?? 10);
       const levType = pos.product_type === 'CARRY' ? (segSetting?.holding_type ?? 'Multiplier') : (segSetting?.intraday_type ?? 'Multiplier');
-      const required = Math.round(levType === '%' ? (currentPrice * addQty) * (leverage / 100) : (levType === 'Fixed' ? (addQty / lotSize) * leverage : (currentPrice * addQty) / leverage));
+      const required = Math.round(levType === '%' ? (currentPrice * addQty) * (leverage / 100) : (levType === 'Fixed' ? (addQty / posLotSize) * leverage : (currentPrice * addQty) / leverage));
 
-      if (required > balance) {
+      if (balance > 0 && required > balance) {
         showToast(`Insufficient margin! Need ₹${required.toLocaleString('en-IN')}`, true);
         return;
       }
 
       showToast(`Adding ${addQty} to ${pos.side} position...`);
       
-      // Build proper kite instrument id (with exchange prefix) for server-side quote fetch
-      const kiteInst = (() => {
-        const s = symbol;
+      const targetSymbol = pos.symbol || symbol;
+      const kiteInst = pos.kite_instrument || (() => {
+        const s = targetSymbol;
         if (s.includes(':')) return s;
         const upper = s.toUpperCase();
         if (isCrypto || upper.endsWith('USDT') || ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].some(c => upper === c || upper.startsWith(c + 'USDT'))) {
@@ -1696,12 +1683,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
       const res = await Promise.race([
         placeOrder({
-          symbol: symbol,
+          symbol: targetSymbol,
           kite_instrument: kiteInst,
-          segment: segment,
+          segment: pos.settlement || segment,
           side: pos.side,
           qty: addQty,
-          lots: 0,
+          lots: 1,
           order_type: 'MARKET',
           product_type: pos.product_type === 'CARRY' ? 'CARRY' : 'INTRADAY',
           client_price: currentPrice || pos.current_ltp || pos.avg_price || 0,
@@ -1816,9 +1803,9 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
     if (snapshotId === '__none__') {
       // New position case: we had no open position before the order.
-      // Clear isSubmitting as soon as ANY open/active position for this symbol appears.
+      const targetClean = cleanSym(symbol);
       const hasNewPos = positions.some(
-        p => p.symbol === symbol && (p.status === 'open' || p.status === 'active')
+        p => (cleanSym(p.symbol) === targetClean || cleanSym(p.kite_instrument) === targetClean) && (p.status === 'open' || p.status === 'active')
       );
       changed = hasNewPos;
     } else {
@@ -2119,9 +2106,11 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     // ── Cumulative grouping ──
     const groupedPositionsMap = new Map<string, any>();
     for (const pos of currentSymbolPositions) {
-      const key = `${pos.symbol}|${pos.side}|${pos.product_type}`;
+      const normProdType = (pos.product_type || 'INTRADAY').toUpperCase();
+      const symKey = cleanSym(pos.symbol || pos.kite_instrument);
+      const key = `${symKey}|${pos.side}|${normProdType}`;
       if (!groupedPositionsMap.has(key)) {
-        groupedPositionsMap.set(key, { ...pos, _ids: [pos.id], _count: 1 });
+        groupedPositionsMap.set(key, { ...pos, symbol: pos.symbol || symKey, product_type: normProdType, _ids: [pos.id], _count: 1 });
       } else {
         const existing = groupedPositionsMap.get(key);
         const entryA = existing.avg_price || existing.entry_price || 0;
@@ -2206,7 +2195,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           const tradeCount = pos._count || 1;
 
           return (
-            <div key={positionViewMode === 'cumulative' ? `${pos.symbol}|${pos.side}|${pos.product_type}` : pos.id} className="position-row">
+            <div key={positionViewMode === 'cumulative' ? `${pos.symbol}|${pos.side}|${(pos.product_type || 'INTRADAY').toUpperCase()}` : pos.id} className="position-row">
               <div className="position-info-row">
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', flex: 1, minWidth: 0 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>

@@ -1,11 +1,12 @@
 'use client';
 
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { getSession } from '@/lib/auth';
 import { pageCache } from '@/lib/pageCache';
 import { useMyPositions, EnrichedPosition } from '@/hooks/useMyPositions';
+import { cleanSym } from '@/contexts/PositionsContext';
 import { useMyOrders } from '@/hooks/useMyOrders';
 import { useOrderEntry } from '@/hooks/useOrderEntry';
 import AnimatedLoader from '@/components/AnimatedLoader';
@@ -55,20 +56,29 @@ export default function PositionPage() {
     removePositionLocally,
     restorePositionLocally,
     startConversion,
-    endConversion,
-    lastFetchedAt,
+    endConversion
   } = useMyPositions(5000);
   const { closePosition, closePositionsBatch, loading: closingPos } = useOrderEntry();
+
+  // Listen for position-closed events fired by TradingChart so we eventually
+  // refresh without waiting for the next 5-second poll cycle
+  useEffect(() => {
+    const handler = () => { setTimeout(() => { refresh(); fetchClosed(); }, 200); };
+    window.addEventListener('position-closed', handler);
+    return () => window.removeEventListener('position-closed', handler);
+  }, [refresh]);
 
   // Closed positions are fetched separately (the main hook only returns open/active)
   const [closedPositions, setClosedPositions] = useState<EnrichedPosition[]>([]);
   const [closedLoading, setClosedLoading] = useState(false);
 
-  const fetchClosed = useCallback(async () => {
+  const fetchClosed = async () => {
     setClosedLoading(true);
     try {
       const data = await api.get<{ positions: any[] }>('/api/positions?status=closed');
       // Enrich closed positions with the computed fields expected by the UI.
+      // Closed positions from the raw API don't go through useMyPositions enrichment,
+      // so we derive the missing EnrichedPosition fields here.
       const enriched = (data.positions || []).map((p: any): EnrichedPosition => {
         const pnl = Number(p.pnl || 0);
         const qtyTotal = Number(p.qty_total || p.qty_open || p.qty || 1);
@@ -98,50 +108,26 @@ export default function PositionPage() {
     } catch { /* non-critical */ } finally {
       setClosedLoading(false);
     }
-  }, []);
+  };
 
-  // Listen for order and position events fired anywhere in the platform so we refresh both open & closed positions
   useEffect(() => {
-    const handleUpdate = () => {
-      refresh();
-      fetchClosed();
-      setTimeout(() => {
-        refresh();
-        fetchClosed();
-      }, 600);
-    };
-
-    // Only do a mount-refresh if data is stale (> 3 s old).
-    // When navigating here right after a scalp order, notifyOrderEvent() has already
-    // refreshed the context — calling refresh() again would cause a visible stale flash
-    // (old qty for 200-800 ms) before the new fetch resolves.
-    const dataAge = Date.now() - lastFetchedAt;
-    if (lastFetchedAt === 0 || dataAge > 3000) {
-      handleUpdate();
-    } else {
-      // Data is fresh — only fetch closed positions which are not covered by the context
-      fetchClosed();
-    }
-
-    window.addEventListener('order_placed', handleUpdate);
-    window.addEventListener('order_placed_with_data', handleUpdate);
-    window.addEventListener('order_executed', handleUpdate);
-    window.addEventListener('position_updated', handleUpdate);
-    window.addEventListener('position-closed', handleUpdate);
-    window.addEventListener('position_closed', handleUpdate);
-
+    refresh(); // <---- Immediately refresh open positions when navigating to this page
+    fetchClosed();
+    // Closed positions don't need rapid polling — refresh on events + slow fallback
     const iv = setInterval(fetchClosed, 30000);
-
+    const onOrderPlaced = () => {
+      // Refresh open positions immediately + follow-up to catch DB propagation
+      refresh();
+      setTimeout(() => { refresh(); fetchClosed(); }, 200);
+    };
+    window.addEventListener('order_placed', onOrderPlaced);
+    window.addEventListener('order_placed_with_data', onOrderPlaced);
     return () => {
       clearInterval(iv);
-      window.removeEventListener('order_placed', handleUpdate);
-      window.removeEventListener('order_placed_with_data', handleUpdate);
-      window.removeEventListener('order_executed', handleUpdate);
-      window.removeEventListener('position_updated', handleUpdate);
-      window.removeEventListener('position-closed', handleUpdate);
-      window.removeEventListener('position_closed', handleUpdate);
+      window.removeEventListener('order_placed', onOrderPlaced);
+      window.removeEventListener('order_placed_with_data', onOrderPlaced);
     };
-  }, [refresh, fetchClosed, lastFetchedAt]);
+  }, [refresh]);
 
   const { balance: balanceFromHook, settlementAmount } = useBalance();
   const balance = balanceFromHook;
@@ -218,6 +204,57 @@ export default function PositionPage() {
   const [isFetchingPreview, setIsFetchingPreview] = useState(false);
   // Track positions currently being converted to prevent double-taps / race conditions
   const convertingIdsRef = useRef<Set<string>>(new Set());
+
+  // ── Pending-order warning popup ────────────────────────────────────────────
+  // Shown when user tries to open a non-market exit sheet while a real PENDING
+  // SL / GTT / LIMIT exit order already exists for that position or symbol.
+  const [pendingOrderWarnMsg, setPendingOrderWarnMsg] = useState<string | null>(null);
+  const [pendingOrderWarnCallback, setPendingOrderWarnCallback] = useState<(() => void) | null>(null);
+
+  const checkPendingExitConflict = (posSymbol: string, exitSide: string, posId: string | null, isCumulative: boolean): string | null => {
+    const realPendingExits = rawOrders.filter(o => {
+      const isPending = ['PENDING', 'TRIGGER_PENDING'].includes((o.status as string) ?? '');
+      const isExit = Boolean((o as any).is_exit);
+      const sameSymbol = o.symbol === posSymbol;
+      const oppositeSide = o.side === exitSide;
+      const isNonMarket = !['MARKET'].includes((o.order_type as string) ?? '');
+      // Skip virtual synthetic orders (pos-sl-*, pos-target-*, pos-gtt-*)
+      const isReal = !String(o.id).startsWith('pos-');
+      return isPending && isExit && sameSymbol && oppositeSide && isNonMarket && isReal;
+    });
+
+    if (realPendingExits.length === 0) return null;
+
+    // A real exit order is "cumulative" if it has NO linked_position_id.
+    // If it has a linked_position_id, it is detailed/position-specific.
+    const isCumulativeOrder = (o: any) => !o.linked_position_id;
+    const isDetailedOrder   = (o: any) => Boolean(o.linked_position_id);
+
+    if (isCumulative) {
+      // Trying to place a cumulative exit — block if any cumulative order exists
+      if (realPendingExits.some(isCumulativeOrder)) {
+        return "You already have a cumulative open order for this symbol. Please modify or cancel it first.";
+      }
+      // Block if any detailed order exists (mixing detailed+cumulative not allowed)
+      if (realPendingExits.some(isDetailedOrder)) {
+        return "You have open orders for specific positions (detailed view). Please cancel them before placing a cumulative order.";
+      }
+    } else {
+      // Trying to place a detailed exit for a specific posId
+      // Block only if there's a cumulative order (can't mix)
+      if (realPendingExits.some(isCumulativeOrder)) {
+        return "You have a cumulative open order for this symbol. Please cancel it before placing detailed orders.";
+      }
+      // Block only if THIS specific position already has an exit order
+      if (posId && realPendingExits.some(o => o.linked_position_id === posId)) {
+        return "You already have an open order for this specific position. Please modify or cancel it first.";
+      }
+      // Different positions can each have their own exit orders — no conflict
+    }
+
+    return null;
+  };
+
   // Synchronous guard: prevents rapid taps from opening multiple TradeSheets before
   // React has committed the first state update. Must be a ref (not state) so it is
   // readable and settable within the same synchronous execution frame.
@@ -232,17 +269,13 @@ export default function PositionPage() {
     setTimeout(() => setSelectedPos(null), 300);
   }, 'posdetail');
 
-  const handleCloseChart = useCallback(() => {
+  useMobileBack(!!chartItem, () => {
     setChartItem(null);
     const chartSheet = document.getElementById('chartSheet');
     const chartOverlay = document.getElementById('chartSheetOverlay');
     if (chartSheet) chartSheet.classList.remove('open');
     if (chartOverlay) chartOverlay.classList.remove('active');
-    refresh();
-    fetchClosed();
-  }, [refresh, fetchClosed]);
-
-  useMobileBack(!!chartItem, handleCloseChart, 'poschart');
+  }, 'poschart');
 
   useMobileBack(!!tradeSheetItem, () => {
     setTradeSheetItem(null);
@@ -280,6 +313,35 @@ export default function PositionPage() {
     // This must be a ref check — setState is asynchronous and would not protect against
     // rapid repeated taps within the same event loop tick.
     if (isOpeningTradeSheetRef.current) return;
+
+    // Guard: if a real non-market pending exit order exists, show warning popup instead.
+    const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
+    const warningMsg = checkPendingExitConflict(pos.symbol, exitSide, pos.id, false);
+    if (warningMsg) {
+      setPendingOrderWarnMsg(warningMsg);
+      setPendingOrderWarnCallback(() => () => {
+        // User chose to proceed anyway — open the sheet
+        isOpeningTradeSheetRef.current = true;
+        closeSheet();
+        setTradeSheetItem({
+          name: pos.symbol,
+          symbol: pos.symbol,
+          kiteSymbol: pos.kite_instrument || pos.symbol,
+          segment: pos.settlement || 'INR',
+          price: pos.current_ltp,
+          change: `${pos.pnl_percent >= 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%`,
+        });
+        setTradeSheetSide(pos.side === 'BUY' ? 'SELL' : 'BUY');
+        setTradeSheetExitMode(true);
+        setTradeSheetProductType(pos.product_type as 'INTRADAY' | 'CARRY');
+        setTradeSheetIsAddMore(false);
+        setTradeSheetLinkedPosId(pos.id);
+        setTradeSheetInitialExitQty(isPartial ? pos.qty : undefined);
+        requestAnimationFrame(() => { isOpeningTradeSheetRef.current = false; });
+      });
+      return;
+    }
+
     isOpeningTradeSheetRef.current = true;
 
     // Close the detail bottom-sheet if open, then populate and open TradeSheet immediately.
@@ -306,6 +368,32 @@ export default function PositionPage() {
   };
 
   const openGroupTradeExit = (group: GroupedPosition) => {
+    const exitSide = group.side === 'BUY' ? 'SELL' : 'BUY';
+    const isCumulative = group.ids.length > 1;
+    const linkedId = isCumulative ? null : group.ids[0];
+    
+    const warningMsg = checkPendingExitConflict(group.representativePos.symbol, exitSide, linkedId, isCumulative);
+    if (warningMsg) {
+      setPendingOrderWarnMsg(warningMsg);
+      setPendingOrderWarnCallback(() => () => {
+        setTradeSheetItem({
+          name: group.symbol,
+          symbol: group.representativePos.symbol,
+          kiteSymbol: group.representativePos.kite_instrument || group.symbol,
+          segment: group.settlement || 'INR',
+          price: group.current_ltp,
+          change: `${group.pnl_percent >= 0 ? '+' : ''}${group.pnl_percent.toFixed(2)}%`,
+        });
+        setTradeSheetSide(group.side === 'BUY' ? 'SELL' : 'BUY');
+        setTradeSheetExitMode(true);
+        setTradeSheetProductType(group.product_type as 'INTRADAY' | 'CARRY');
+        setTradeSheetIsAddMore(false);
+        setTradeSheetLinkedPosId(linkedId);
+        setTradeSheetInitialExitQty(group.qty_open);
+      });
+      return;
+    }
+
     setTradeSheetItem({
       name: group.symbol,
       // Use the underlying DB symbol (pos.symbol), NOT the display symbol (group.symbol
@@ -321,7 +409,7 @@ export default function PositionPage() {
     setTradeSheetExitMode(true);
     setTradeSheetProductType(group.product_type as 'INTRADAY' | 'CARRY');
     setTradeSheetIsAddMore(false);
-    setTradeSheetLinkedPosId(group.ids.length === 1 ? group.ids[0] : null);
+    setTradeSheetLinkedPosId(linkedId);
     setTradeSheetInitialExitQty(group.qty_open);
   };
 
@@ -334,6 +422,33 @@ export default function PositionPage() {
   };
 
   const openExitSheet = (pos: EnrichedPosition, totalQty?: number, isCumulative?: boolean) => {
+    const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
+    const isCumul = isCumulative ?? false;
+    const linkedId = isCumul ? null : pos.id;
+
+    // Guard: if a real non-market pending exit order exists, show warning popup.
+    const warningMsg = checkPendingExitConflict(pos.symbol, exitSide, linkedId, isCumul);
+    if (warningMsg) {
+      setPendingOrderWarnMsg(warningMsg);
+      setPendingOrderWarnCallback(() => () => {
+        setTradeSheetItem({
+          name: pos.symbol,
+          symbol: pos.symbol,
+          kiteSymbol: pos.kite_instrument || pos.symbol,
+          segment: pos.settlement || 'INR',
+          price: pos.current_ltp,
+          change: `${pos.pnl_percent >= 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%`,
+        });
+        setTradeSheetSide(pos.side === 'BUY' ? 'SELL' : 'BUY');
+        setTradeSheetExitMode(true);
+        setTradeSheetProductType(pos.product_type as 'INTRADAY' | 'CARRY');
+        setTradeSheetIsAddMore(false);
+        setTradeSheetLinkedPosId(isCumulative ? null : pos.id);
+        setTradeSheetInitialExitQty(totalQty);
+      });
+      return;
+    }
+
     setTradeSheetItem({
       name: pos.symbol,
       symbol: pos.symbol,
@@ -461,7 +576,7 @@ export default function PositionPage() {
   const exitingPosIds = useRef<Set<string>>(new Set());
   const [exitingSet, setExitingSet] = useState<Set<string>>(new Set());
 
-  const handleExit = async (posId: string) => {
+  const handleExit = (posId: string) => {
     if (exitingPosIds.current.has(posId)) return; // already in flight
     exitingPosIds.current.add(posId);
     setExitingSet(new Set(exitingPosIds.current));
@@ -473,12 +588,16 @@ export default function PositionPage() {
 
     // Close sheet immediately for instant feedback
     closeSheet();
-    showToast('Closing position...');
+    showToast('Position closed successfully');
 
-    try {
-      const res = await closePosition(posId, posToClose?.current_ltp ?? posToClose?.ltp ?? undefined, posToClose?.symbol ?? undefined, posToClose?.settlement ?? undefined, posToClose?.side ?? undefined);
+    closePosition(
+      posId,
+      posToClose?.current_ltp ?? posToClose?.ltp ?? undefined,
+      posToClose?.symbol ?? undefined,
+      posToClose?.settlement ?? undefined,
+      posToClose?.side ?? undefined
+    ).then(res => {
       if (res.success) {
-        showToast('Position closed successfully');
         refresh();
         window.dispatchEvent(new CustomEvent('position-closed'));
       } else {
@@ -488,16 +607,16 @@ export default function PositionPage() {
           restorePositionLocally(posId);
         } else if (posToClose) refresh();
       }
-    } catch (err: any) {
-      const errMsg = err.message || 'Failed to exit position';
+    }).catch((err: any) => {
+      const errMsg = err?.message || 'Failed to exit position';
       setErrorModalMsg(errMsg);
       if (posToClose && restorePositionLocally) {
         restorePositionLocally(posId);
       } else if (posToClose) refresh();
-    } finally {
+    }).finally(() => {
       exitingPosIds.current.delete(posId);
       setExitingSet(new Set(exitingPosIds.current));
-    }
+    });
   };
 
   const openPositions = useMemo(() => {
@@ -532,10 +651,12 @@ export default function PositionPage() {
 
   const groupedOpenPositions: GroupedPosition[] = useMemo(() => {
     const map = new Map<string, GroupedPosition>();
+
     for (const pos of openPositions) {
       const rawSymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : pos.symbol;
       const displaySymbol = fmtSymbolName(rawSymbol, pos.name || (pos as any).instrument_name);
-      const key = `${displaySymbol}|${pos.side}|${pos.product_type}`;
+      const symKey = cleanSym(pos.symbol || rawSymbol);
+      const key = `${symKey}|${pos.side}|${pos.product_type}`;
       const existing = map.get(key);
       if (!existing) {
         map.set(key, {
@@ -727,9 +848,8 @@ export default function PositionPage() {
     return Array.from(map.values());
   }, [rawOrders]);
 
-  const handleExitAllConfirm = async () => {
+  const handleExitAllConfirm = () => {
     if (!hasOpenPositions) return;
-    setIsExitingAll(true);
     setIsExitAllModalOpen(false); // Close modal immediately for instant UX
 
     let successCount = 0;
@@ -740,7 +860,6 @@ export default function PositionPage() {
 
     if (exitablePositions.length === 0) {
       showToast('All open positions are currently locked due to holding rules.');
-      setIsExitingAll(false);
       return;
     }
 
@@ -749,96 +868,102 @@ export default function PositionPage() {
       posIds.forEach(id => removePositionLocally(id));
     }
 
-    const result = await closePositionsBatch(posIds);
+    showToast(`Closing ${posIds.length} position(s)...`);
 
-    if (result.success && result.results) {
-      let firstError = '';
-      const successfulIds = new Set(result.results.filter((r: any) => r.success).map((r: any) => r.positionId));
-      
-      posIds.forEach(id => {
-        if (!successfulIds.has(id)) {
-          failCount++;
-          if (restorePositionLocally) restorePositionLocally(id);
+    closePositionsBatch(posIds).then(result => {
+      if (result.success && result.results) {
+        let firstError = '';
+        const successfulIds = new Set(result.results.filter((r: any) => r.success).map((r: any) => r.positionId));
+        
+        posIds.forEach(id => {
+          if (!successfulIds.has(id)) {
+            failCount++;
+            if (restorePositionLocally) restorePositionLocally(id);
+          } else {
+            successCount++;
+          }
+        });
+
+        result.results.forEach((res: any) => {
+          if (!res.success && !firstError && res.error) firstError = res.error;
+        });
+
+        if (failCount === 0) {
+          showToast(`Successfully closed ${successCount} position(s).`);
         } else {
-          successCount++;
+          showToast(`Closed ${successCount}, failed ${failCount}. ${firstError ? `Error: ${firstError}` : ''}`);
         }
-      });
-
-      result.results.forEach((res: any) => {
-        if (!res.success && !firstError && res.error) firstError = res.error;
-      });
-
-      setIsExitingAll(false);
-      setIsExitAllModalOpen(false);
-
-      if (failCount === 0) {
-        showToast(`Successfully closed ${successCount} position(s).`);
       } else {
-        showToast(`Closed ${successCount}, failed ${failCount}. ${firstError ? `Error: ${firstError}` : ''}`);
+        failCount = exitablePositions.length;
+        if (restorePositionLocally) {
+          posIds.forEach(id => restorePositionLocally(id));
+        }
+        showToast(`Closed ${successCount}, failed ${failCount}. Error: ${result.error || 'Unknown'}`);
       }
-    } else {
-      failCount = exitablePositions.length;
+      refresh();
+      window.dispatchEvent(new Event('position-closed'));
+    }).catch((err: any) => {
       if (restorePositionLocally) {
         posIds.forEach(id => restorePositionLocally(id));
       }
-      setIsExitingAll(false);
-      setIsExitAllModalOpen(false);
-      showToast(`Closed ${successCount}, failed ${failCount}. Error: ${result.error || 'Unknown'}`);
-    }
-    refresh();
-    window.dispatchEvent(new Event('position-closed'));
+      showToast(`Bulk exit failed: ${err?.message || 'Unknown'}`);
+      refresh();
+    });
   };
 
-  const handleGroupExitConfirm = async () => {
+  const handleGroupExitConfirm = () => {
     if (!groupExitModalGroup) return;
     const group = groupExitModalGroup;
     setGroupExitModalGroup(null);
-    setIsExitingAll(true); // use the same central spinner
 
     const posIds = group.ids;
     if (removePositionLocally) {
       posIds.forEach(id => removePositionLocally(id));
     }
 
-    const result = await closePositionsBatch(posIds);
+    showToast(`Closing ${group.symbol} position(s)...`);
 
-    if (result.success) {
-      const successfulIds = new Set((result.results || []).filter((r: any) => r.success).map((r: any) => r.positionId));
-      let hadFailures = false;
-      let firstError = '';
-      
-      posIds.forEach(id => {
-        if (!successfulIds.has(id)) {
-          hadFailures = true;
-          if (restorePositionLocally) restorePositionLocally(id);
-        }
-      });
-
-      if (result.results) {
-        result.results.forEach((res: any) => {
-          if (!res.success && !firstError && res.error) firstError = res.error;
+    closePositionsBatch(posIds).then(result => {
+      if (result.success) {
+        const successfulIds = new Set((result.results || []).filter((r: any) => r.success).map((r: any) => r.positionId));
+        let hadFailures = false;
+        let firstError = '';
+        
+        posIds.forEach(id => {
+          if (!successfulIds.has(id)) {
+            hadFailures = true;
+            if (restorePositionLocally) restorePositionLocally(id);
+          }
         });
-      }
 
-      if (hadFailures) {
-        const msg = `Closed some, but failed for others. Error: ${firstError || 'Unknown'}`;
-        setErrorModalMsg(msg);
+        if (result.results) {
+          result.results.forEach((res: any) => {
+            if (!res.success && !firstError && res.error) firstError = res.error;
+          });
+        }
+
+        if (hadFailures) {
+          const msg = `Closed some, but failed for others. Error: ${firstError || 'Unknown'}`;
+          setErrorModalMsg(msg);
+        } else {
+          showToast(`Successfully closed ${group.symbol} position(s).`);
+        }
       } else {
-        showToast(`Successfully closed ${group.symbol} position(s).`);
+        if (restorePositionLocally) {
+          posIds.forEach(id => restorePositionLocally(id));
+        }
+        const msg = `Error closing ${group.symbol}: ${result.error || 'Unknown'}`;
+        setErrorModalMsg(msg);
       }
-    } else {
+      refresh();
+      window.dispatchEvent(new Event('position-closed'));
+    }).catch((err: any) => {
       if (restorePositionLocally) {
         posIds.forEach(id => restorePositionLocally(id));
       }
-      const msg = `Error closing ${group.symbol}: ${result.error || 'Unknown'}`;
-      setErrorModalMsg(msg);
-    }
-    setIsExitingAll(false);
-    refresh();
-    setTimeout(() => {
+      setErrorModalMsg(`Error closing ${group.symbol}: ${err?.message || 'Unknown'}`);
       refresh();
-      window.dispatchEvent(new Event('position-closed'));
-    }, 200);
+    });
   };
 
   const totalPnl = useMemo(() => positions.reduce((acc, p) => acc + (p.total_pnl || 0), 0), [positions]);
@@ -875,7 +1000,7 @@ export default function PositionPage() {
               <div className="pos-header mobile-only">
                 <div className="pos-header-left">
                   <div className="pos-brand">
-                    <span>NIVESHX<span className="apex-text"> TRADING</span></span>
+                    <span>MARGIN<span className="apex-text">APEX</span></span>
                   </div>
 
                 </div>
@@ -1830,6 +1955,31 @@ export default function PositionPage() {
         </div>
       )}
 
+      {/* ── Pending Order Warning Popup ── */}
+      {pendingOrderWarnMsg && (
+        <div className="confirm-backdrop" onClick={() => { setPendingOrderWarnMsg(null); setPendingOrderWarnCallback(null); }}>
+          <div className="confirm-card" onClick={e => e.stopPropagation()}>
+            <div className="confirm-icon" style={{ background: '#fffbeb' }}>
+              <i className="fas fa-exclamation-triangle" style={{ color: '#d97706' }} />
+            </div>
+            <h3 className="confirm-title">Open Order Exists</h3>
+            <p className="confirm-message">
+              {pendingOrderWarnMsg}
+            </p>
+            <div className="confirm-actions">
+              <button
+                className="confirm-btn confirm-btn-cancel"
+                style={{ flex: 1 }}
+                onClick={() => { setPendingOrderWarnMsg(null); setPendingOrderWarnCallback(null); }}
+              >
+                Go Back
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       {/* Add More — full watchlist-style trade sheet */}
       <TradeSheet
         item={tradeSheetItem}
@@ -1845,7 +1995,7 @@ export default function PositionPage() {
       />
 
       {/* Chart Sheet */}
-      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={handleCloseChart}></div>
+      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); }}></div>
       <div id="chartSheet" className="trade-sheet" style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
           {chartItem && (
@@ -1853,7 +2003,13 @@ export default function PositionPage() {
               symbol={chartItem.kiteSymbol || chartItem.symbol}
               segment={chartItem.segment}
               liveQuote={{ lastPrice: positions.find(p => p.symbol === chartItem.symbol)?.current_ltp ?? chartItem.price }}
-              onClose={handleCloseChart}
+              onClose={() => {
+                const sheet = document.getElementById('chartSheet');
+                const overlay = document.getElementById('chartSheetOverlay');
+                if (sheet) sheet.classList.remove('open');
+                if (overlay) overlay.classList.remove('active');
+                setChartItem(null);
+              }}
             />
           )}
         </div>

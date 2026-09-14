@@ -38,6 +38,19 @@ export interface PositionsContextType {
 
 const PositionsContext = createContext<PositionsContextType | null>(null);
 
+export const cleanSym = (s?: string | null): string => {
+  if (!s) return '';
+  let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+  const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD'];
+  const knownBaseCrypto = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'];
+  if (knownBaseCrypto.includes(str)) {
+    str += 'USDT';
+  } else if (str.endsWith('USD') && !str.endsWith('USDT') && !nonCrypto.includes(str)) {
+    str = str.slice(0, -3) + 'USDT';
+  }
+  return str;
+};
+
 
 
 const mapSegmentToDbSegment = (s: string): string => {
@@ -117,6 +130,9 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
   // Tracks IDs of positions that were added optimistically (not yet confirmed by DB)
   const optimisticPositionIds = useRef<Set<string>>(new Set());
+  const lastOptimisticAddRef = useRef<{ signature: string; time: number }>({ signature: '', time: 0 });
+  const processedOptIdsRef = useRef<Set<string>>(new Set());
+  const optimisticDeltasRef = useRef<Map<string, { expectedQty: number; addedAt: number }>>(new Map());
 
   // Static properties map to cache computations that never change per position lifecycle
   const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({}); 
@@ -137,11 +153,56 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     fetchPositions();
   }, []);
 
-  // Inject a temporary placeholder position so the user sees it instantly
-  // after a scalp order — before the DB write propagates. The real DB fetch
-  // will replace this placeholder when it arrives.
-  const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition>) => {
-    const tempId = `__optimistic__${Date.now()}`;
+const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { opt_id?: string }) => {
+  const targetClean = cleanSym(partialPos.symbol || partialPos.kite_instrument || '');
+  const normProdType = (partialPos.product_type || 'INTRADAY').toUpperCase();
+  const qty = partialPos.qty_open || 0;
+  const side = partialPos.side || 'BUY';
+
+  if (partialPos.opt_id) {
+    if (processedOptIdsRef.current.has(partialPos.opt_id)) {
+      return;
+    }
+    processedOptIdsRef.current.add(partialPos.opt_id);
+    if (processedOptIdsRef.current.size > 300) {
+      const first = processedOptIdsRef.current.values().next().value;
+      if (first) processedOptIdsRef.current.delete(first);
+    }
+  } else {
+    const sig = `${targetClean}|${side}|${normProdType}|${qty}`;
+    const nowMs = Date.now();
+    if (lastOptimisticAddRef.current.signature === sig && (nowMs - lastOptimisticAddRef.current.time) < 500) {
+      return;
+    }
+    lastOptimisticAddRef.current = { signature: sig, time: nowMs };
+  }
+
+  const deltaKey = `${targetClean}|${side}|${normProdType}`;
+
+  setRawPositions(prev => {
+    // Find ANY existing open position for this symbol + side + product_type (optimistic OR real DB position)
+    const existingIdx = prev.findIndex(
+      p => cleanSym(p.symbol || p.kite_instrument) === targetClean && p.side === partialPos.side && (p.product_type || 'INTRADAY').toUpperCase() === normProdType && (p.status === 'open' || p.status === 'active' || !p.status)
+    );
+
+    if (existingIdx >= 0) {
+      const updated = [...prev];
+      const existing = updated[existingIdx];
+      const addedQty = partialPos.qty_open || 0;
+      const addedLots = (partialPos as any).lots || 0;
+      const newQty = (existing.qty_open || 0) + addedQty;
+
+      optimisticDeltasRef.current.set(deltaKey, { expectedQty: newQty, addedAt: Date.now() });
+
+      updated[existingIdx] = {
+        ...existing,
+        qty_open: newQty,
+        lots: (existing.lots || 0) + addedLots,
+      };
+      return updated;
+    }
+
+    const tempId = `__optimistic__${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date().toISOString();
     const optimisticPos: MyPosition = {
       id: tempId,
@@ -155,25 +216,19 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       avg_price: partialPos.avg_price || partialPos.entry_price || 0,
       ltp: partialPos.ltp || partialPos.entry_price || 0,
       status: 'open',
-      product_type: partialPos.product_type || 'INTRADAY',
       kite_instrument: partialPos.kite_instrument || partialPos.symbol || '',
       entry_time: now,
       locked_margin: partialPos.locked_margin || 0,
       brokerage: 0,
       ...partialPos,
+      product_type: normProdType as any,
     } as MyPosition;
 
+    optimisticDeltasRef.current.set(deltaKey, { expectedQty: partialPos.qty_open || 0, addedAt: Date.now() });
     optimisticPositionIds.current.add(tempId);
-    setRawPositions(prev => [optimisticPos, ...prev]);
-
-    // Auto-remove the optimistic placeholder after 4s (real data should arrive by then)
-    setTimeout(() => {
-      if (optimisticPositionIds.current.has(tempId)) {
-        optimisticPositionIds.current.delete(tempId);
-        setRawPositions(prev => prev.filter(p => p.id !== tempId));
-      }
-    }, 4000);
-  }, []);
+    return [optimisticPos, ...prev];
+  });
+}, []);
 
   const startConversion = useCallback((posId: string, newType: string) => {
     setInFlightConversions(prev => ({ ...prev, [posId]: newType }));
@@ -224,13 +279,17 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         if (!staticProps[p.id]) {
           const dbSeg = mapSegmentWithSymbol(p.settlement || '', p.symbol);
           const segUpper = dbSeg.toUpperCase();
-          const isCrypto = segUpper.includes('CRYPTO') || !!(p.symbol && p.symbol.endsWith('USDT'));
+          const isCrypto = segUpper.includes('CRYPTO') || !!(p.symbol && (p.symbol.endsWith('USDT') || p.symbol.endsWith('USD')));
           const isComex = (p as any).preferredView === 'comex' || segUpper.includes('COMEX');
 
           let binanceSymbol = '';
           if (isCrypto) {
-            binanceSymbol = (p.symbol || '').replace('/', '');
-            if (!binanceSymbol.endsWith('USDT')) binanceSymbol += 'USDT';
+            binanceSymbol = (p.symbol || '').replace(/^(CRYPTO:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+            if (binanceSymbol.endsWith('USD') && !binanceSymbol.endsWith('USDT')) {
+              binanceSymbol = binanceSymbol.slice(0, -3) + 'USDT';
+            } else if (!binanceSymbol.endsWith('USDT')) {
+              binanceSymbol += 'USDT';
+            }
           }
 
           staticProps[p.id] = {
@@ -242,6 +301,36 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
             binanceSymbol
           };
         }
+      });
+
+      // Clean up optimisticallyRemovedIds for positions that the server no longer returns
+      for (const id of Array.from(optimisticallyRemovedIds.current)) {
+        if (!serverIds.has(id)) {
+          optimisticallyRemovedIds.current.delete(id);
+        }
+      }
+
+      // Apply optimistic quantity overrides if server DB hasn't caught up yet
+      const now = Date.now();
+      const processedPositions = newPositions.map((p: any) => {
+        const targetClean = cleanSym(p.symbol || p.kite_instrument || '');
+        const normProdType = (p.product_type || 'INTRADAY').toUpperCase();
+        const deltaKey = `${targetClean}|${p.side}|${normProdType}`;
+        const override = optimisticDeltasRef.current.get(deltaKey);
+
+        if (override) {
+          if (now - override.addedAt > 6000) {
+            // Fail-safe expiry after 6 seconds
+            optimisticDeltasRef.current.delete(deltaKey);
+          } else if (p.qty_open >= override.expectedQty) {
+            // Server caught up or exceeded expected quantity
+            optimisticDeltasRef.current.delete(deltaKey);
+          } else {
+            // Keep optimistic quantity active until server catches up
+            return { ...p, qty_open: Math.max(p.qty_open, override.expectedQty) };
+          }
+        }
+        return p;
       });
 
       setRawPositions(prev => {
@@ -260,9 +349,26 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
             window.dispatchEvent(new Event('position-closed'));
           }, 0);
         }
-        // Clear any optimistic placeholders now that real data has arrived
-        optimisticPositionIds.current.clear();
-        return newPositions;
+
+        // Preserve optimistic placeholders whose matching real server position has not arrived yet
+        const unreplacedOptimistic = prev.filter(p => {
+          if (!p.id.startsWith('__optimistic__')) return false;
+          // Expire optimistic placeholder after 6 seconds as a fail-safe
+          const idParts = p.id.split('_');
+          const timeMs = parseInt(idParts[2] || '0', 10);
+          if (timeMs > 0 && Date.now() - timeMs > 6000) return false;
+
+          const optClean = cleanSym(p.symbol || p.kite_instrument || '');
+          const normProduct = (p.product_type || 'INTRADAY').toUpperCase();
+          const hasRealMatch = processedPositions.some((real: any) => {
+            const realClean = cleanSym(real.symbol || real.kite_instrument || '');
+            const realProduct = (real.product_type || 'INTRADAY').toUpperCase();
+            return realClean === optClean && real.side === p.side && realProduct === normProduct;
+          });
+          return !hasRealMatch;
+        });
+
+        return [...unreplacedOptimistic, ...processedPositions];
       });
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -307,8 +413,49 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     const handleOrderPlacedWithData = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail) {
-        if (detail.is_exit && detail.linked_position_id) {
-          removePositionLocally(detail.linked_position_id);
+        if (detail.is_exit) {
+          const exitQty = detail.qty || detail.qty_open || 0;
+          if (detail.linked_position_id) {
+            setRawPositions(prev => {
+              const pos = prev.find(p => p.id === detail.linked_position_id);
+              if (pos) {
+                if (!exitQty || exitQty >= pos.qty_open) {
+                  optimisticallyRemovedIds.current.add(pos.id);
+                  return prev.filter(p => p.id !== pos.id);
+                } else {
+                  // Partial exit
+                  const targetClean = cleanSym(pos.symbol || pos.kite_instrument || '');
+                  const normProdType = (pos.product_type || 'INTRADAY').toUpperCase();
+                  const deltaKey = `${targetClean}|${pos.side}|${normProdType}`;
+                  const newQty = Math.max(0, pos.qty_open - exitQty);
+                  optimisticDeltasRef.current.set(deltaKey, { expectedQty: newQty, addedAt: Date.now() });
+                  return prev.map(p => p.id === pos.id ? { ...p, qty_open: newQty } : p);
+                }
+              }
+              return prev;
+            });
+          } else if (detail.symbol) {
+            const targetClean = cleanSym(detail.symbol);
+            const side = detail.side || 'BUY';
+            const normProdType = (detail.product_type || 'INTRADAY').toUpperCase();
+            setRawPositions(prev => {
+              const matching = prev.filter(p => cleanSym(p.symbol) === targetClean);
+              if (matching.length > 0) {
+                const totalQty = matching.reduce((sum, p) => sum + (p.qty_open || 0), 0);
+                if (!exitQty || exitQty >= totalQty) {
+                  matching.forEach(p => optimisticallyRemovedIds.current.add(p.id));
+                  return prev.filter(p => cleanSym(p.symbol) !== targetClean);
+                } else {
+                  // Partial exit
+                  const deltaKey = `${targetClean}|${side}|${normProdType}`;
+                  const newQty = Math.max(0, totalQty - exitQty);
+                  optimisticDeltasRef.current.set(deltaKey, { expectedQty: newQty, addedAt: Date.now() });
+                  return prev.map(p => cleanSym(p.symbol) === targetClean ? { ...p, qty_open: Math.max(0, p.qty_open - exitQty) } : p);
+                }
+              }
+              return prev;
+            });
+          }
         } else if (!detail.is_exit) {
           addOptimisticPosition(detail);
         }

@@ -11,6 +11,7 @@ export interface BalanceContextType {
   settlementAmount: number;
   loading: boolean;
   refresh: () => Promise<void>;
+  validatePreflight: (requiredMargin: number) => { valid: boolean; reason?: string };
 }
 
 const BalanceDataContext = createContext<BalanceContextType | null>(null);
@@ -152,8 +153,18 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
     };
   }, [fetchBalance]);
 
+  const validatePreflight = useCallback((requiredMargin: number): { valid: boolean; reason?: string } => {
+    if (balance > 0 && requiredMargin > balance) {
+      return {
+        valid: false,
+        reason: `Insufficient margin. Required: ₹${requiredMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}, Available: ₹${balance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+      };
+    }
+    return { valid: true };
+  }, [balance]);
+
   return (
-    <BalanceDataContext.Provider value={{ balance, settlementAmount, loading, refresh: fetchBalance }}>
+    <BalanceDataContext.Provider value={{ balance, settlementAmount, loading, refresh: fetchBalance, validatePreflight }}>
       {children}
     </BalanceDataContext.Provider>
   );

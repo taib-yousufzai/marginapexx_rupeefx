@@ -1,4 +1,4 @@
-import { chromium } from '/home/cluelessdev/.gemini/antigravity/brain/4554b5a9-80e8-4cd8-b1cf-9be9b6f5de19/scratch/node_modules/playwright';
+import { chromium } from 'playwright-core';
 import path from 'path';
 
 async function checkDashboardUI() {
