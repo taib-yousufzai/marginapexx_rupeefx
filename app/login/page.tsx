@@ -75,9 +75,10 @@ export default function LoginPage() {
       if (!result.error) {
         const role = getRole(result.user ?? null);
         const isAdmin = role === 'admin' || role === 'super_admin';
-        const route = isAdmin ? '/admin' : '/';
+        const isBroker = role === 'broker';
+        const route = isAdmin ? '/admin' : isBroker ? '/broker' : '/';
         
-        if (isAdmin || result.user?.email === 'demo@gmail.com') {
+        if (isAdmin || isBroker || result.user?.email === 'demo@gmail.com') {
           router.replace(route);
         } else {
           setPendingRoute(route);
@@ -123,9 +124,10 @@ export default function LoginPage() {
       if (!result.error) {
         const role = getRole(result.user ?? null);
         const isAdmin = role === 'admin' || role === 'super_admin';
-        const route = isAdmin ? '/admin' : '/';
+        const isBroker = role === 'broker';
+        const route = isAdmin ? '/admin' : isBroker ? '/broker' : '/';
         
-        if (isAdmin || result.user?.email === 'demo@gmail.com') {
+        if (isAdmin || isBroker || result.user?.email === 'demo@gmail.com') {
           router.replace(route);
         } else {
           setPendingRoute(route);
@@ -147,8 +149,8 @@ export default function LoginPage() {
     <div className="login-page">
       {/* Branding — matches nav bar style (Requirement 1.3) */}
       <div className="login-branding">
-        <span className="login-brand-margin">NIVESH</span>
-        <span className="login-brand-apex">X</span>
+        <span className="login-brand-margin">NIVESHX </span>
+        <span className="login-brand-apex">TRADING</span>
       </div>
 
       {/* Auth card */}
