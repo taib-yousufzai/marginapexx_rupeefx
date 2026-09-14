@@ -147,8 +147,8 @@ export default function LoginPage() {
     <div className="login-page">
       {/* Branding — matches nav bar style (Requirement 1.3) */}
       <div className="login-branding">
-        <span className="login-brand-margin">MARGIN</span>
-        <span className="login-brand-apex">APEX</span>
+        <span className="login-brand-margin">NIVESH</span>
+        <span className="login-brand-apex">X</span>
       </div>
 
       {/* Auth card */}
@@ -243,7 +243,7 @@ export default function LoginPage() {
             type="submit"
             className="login-submit-btn"
             disabled={isLoading}
-            aria-label="Log in to Margin Apex"
+            aria-label="Log in to NiveshX Trading"
             suppressHydrationWarning
           >
             {isLoading ? (

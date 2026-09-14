@@ -19,13 +19,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'Margin Apex',
+  title: 'NiveshX Trading',
   description: 'Clean Icons & Trading App UI',
   manifest: '/manifest.webmanifest?v=9',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'Margin Apex'
+    title: 'NiveshX Trading'
   },
   formatDetection: {
     telephone: false

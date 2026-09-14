@@ -2,8 +2,8 @@ import { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'Margin Apex',
-    short_name: 'Margin Apex',
+    name: 'NiveshX Trading',
+    short_name: 'NiveshX',
     description: 'Advanced Trading App experience',
     start_url: '/',
     display: 'standalone',
