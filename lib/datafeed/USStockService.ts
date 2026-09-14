@@ -57,11 +57,27 @@ export const US_BASE_PRICES: Record<string, number> = {
   'NATGAS': 2.30,
 };
 
+export const FOREX_BASE_PRICES: Record<string, number> = {
+  'GBPUSD': 1.3523,
+  'EURUSD': 1.1597,
+  'USDJPY': 153.61,
+  'USDCHF': 0.8166,
+  'USDCAD': 1.3863,
+  'AUDUSD': 0.7155,
+  'NZDUSD': 0.5811,
+  'USDINR': 95.61,
+  'EURINR': 110.88,
+  'GBPINR': 129.29,
+  'JPYINR': 0.622,
+};
+
 export function getUSStockBasePrice(symbol: string): number {
-  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').trim().toUpperCase();
+  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').replace('/', '').trim().toUpperCase();
   if (US_BASE_PRICES[clean]) return US_BASE_PRICES[clean];
+  if (FOREX_BASE_PRICES[clean]) return FOREX_BASE_PRICES[clean];
   const baseClean = clean.replace(/=F$/i, '');
   if (US_BASE_PRICES[baseClean]) return US_BASE_PRICES[baseClean];
+  if (FOREX_BASE_PRICES[baseClean]) return FOREX_BASE_PRICES[baseClean];
   return 100;
 }
 

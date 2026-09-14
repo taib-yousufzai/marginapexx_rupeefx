@@ -4,7 +4,7 @@
  * when real exchange data is unavailable.
  */
 
-import { getUSStockBasePrice, US_BASE_PRICES } from './datafeed/USStockService';
+import { getUSStockBasePrice, US_BASE_PRICES, FOREX_BASE_PRICES } from './datafeed/USStockService';
 
 export interface FallbackQuote {
   timestamp: string;
@@ -32,6 +32,7 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
   }
 
   const clean = symbolKey.toUpperCase().replace(/^(NFO|NSE|BSE|MCX|CRYPTO|FOREX|US):/, '').trim();
+  const cleanUnslashed = clean.replace('/', '');
   const isCall = clean.endsWith('CE');
   const isPut = clean.endsWith('PE');
   const isFut = clean.endsWith('FUT');
@@ -54,9 +55,12 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
   let basePrice = 15.2;
 
   const isUSStock = Boolean(US_BASE_PRICES[clean] || symbolKey.toUpperCase().startsWith('US:'));
+  const isForex = Boolean(FOREX_BASE_PRICES[cleanUnslashed] || symbolKey.toUpperCase().startsWith('FOREX:'));
 
   if (isUSStock) {
     basePrice = getUSStockBasePrice(clean);
+  } else if (isForex) {
+    basePrice = FOREX_BASE_PRICES[cleanUnslashed] || 1.15;
   } else if (strike > 0) {
     if (isCall) {
       // Call options: premium factor varies between 1.5% and 3.5% of strike
@@ -78,6 +82,8 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
     // Non-numeric symbol (e.g. underlying stock/crypto)
     basePrice = 50 + (posHash % 450);
   }
+
+  const decimals = basePrice < 10 ? 4 : 2;
 
   // Deterministic percentage change ranging from -4.5% to +4.5%
   // Call and Put on same strike get OPPOSITE signs so Call is up while Put is down (or vice versa)!

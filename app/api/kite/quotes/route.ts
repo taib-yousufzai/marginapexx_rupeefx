@@ -117,6 +117,71 @@ async function fetchBinanceQuotesBatch(cryptoSymbols: string[]): Promise<Record<
   return result;
 }
 
+let forexCache: { rates: Record<string, number>; timestamp: number } | null = null;
+
+async function fetchForexQuotesBatch(forexSymbols: string[]): Promise<Record<string, any>> {
+  const result: Record<string, any> = {};
+  if (forexSymbols.length === 0) return result;
+
+  try {
+    const now = Date.now();
+    if (!forexCache || (now - forexCache.timestamp > 15000)) {
+      const res = await fetch('https://open.er-api.com/v6/latest/USD', {
+        cache: 'no-store',
+        signal: AbortSignal.timeout(2500),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.rates) {
+          forexCache = { rates: json.rates, timestamp: now };
+        }
+      }
+    }
+
+    if (forexCache?.rates) {
+      const rates = forexCache.rates;
+      for (const rawSym of forexSymbols) {
+        const clean = rawSym.replace(/^FOREX:/i, '').replace('/', '').trim().toUpperCase();
+        let rate = 0;
+
+        if (clean === 'EURUSD') rate = rates.EUR ? 1 / rates.EUR : 1.1597;
+        else if (clean === 'GBPUSD') rate = rates.GBP ? 1 / rates.GBP : 1.3523;
+        else if (clean === 'USDJPY') rate = rates.JPY || 153.61;
+        else if (clean === 'USDCHF') rate = rates.CHF || 0.8166;
+        else if (clean === 'USDCAD') rate = rates.CAD || 1.3863;
+        else if (clean === 'AUDUSD') rate = rates.AUD ? 1 / rates.AUD : 0.7155;
+        else if (clean === 'NZDUSD') rate = rates.NZD ? 1 / rates.NZD : 0.5811;
+        else if (clean === 'USDINR') rate = rates.INR || 95.61;
+        else if (clean === 'EURINR') rate = rates.EUR && rates.INR ? rates.INR / rates.EUR : 110.88;
+        else if (clean === 'GBPINR') rate = rates.GBP && rates.INR ? rates.INR / rates.GBP : 129.29;
+        else if (clean === 'JPYINR') rate = rates.JPY && rates.INR ? rates.INR / rates.JPY : 0.622;
+
+        if (rate > 0) {
+          const decimals = rate < 10 ? 4 : 2;
+          const roundedRate = Number(rate.toFixed(decimals));
+          const quoteObj = {
+            timestamp: new Date().toISOString(),
+            last_price: roundedRate,
+            volume: 10000,
+            ohlc: { open: roundedRate, high: roundedRate, low: roundedRate, close: roundedRate },
+            net_change: 0,
+            bid: roundedRate,
+            ask: roundedRate,
+          };
+          result[rawSym] = quoteObj;
+          result[clean] = quoteObj;
+          result[`FOREX:${clean}`] = quoteObj;
+          if (rawSym.includes('/')) result[rawSym] = quoteObj;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Forex Quotes API] Warning fetching forex rates:', err);
+  }
+
+  return result;
+}
+
 async function fetchKiteQuotesBatch(
   kiteRequestInstruments: string[],
   apiKey: string,
@@ -394,11 +459,27 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
       }
     }
 
-    // 3. Fetch missing Forex, US & COMEX symbols directly via MT5 or Fallback
-    const missingUsForexIds = [...forexRequestIds, ...usRequestIds].filter(id => !foundKiteIds.has(id));
-    if (missingUsForexIds.length > 0) {
+    // 3. Fetch missing Forex symbols directly from Exchange Rates API
+    const missingForexIds = forexRequestIds.filter(id => !foundKiteIds.has(id));
+    if (missingForexIds.length > 0) {
+      const forexQuotes = await fetchForexQuotesBatch(missingForexIds);
+      for (const reqId of missingForexIds) {
+        const clean = reqId.replace(/^FOREX:/i, '').replace('/', '').trim().toUpperCase();
+        const quote = forexQuotes[reqId] || forexQuotes[clean] || forexQuotes[reqId.toUpperCase()];
+        if (quote) {
+          finalMappedData[reqId] = quote;
+          finalMappedData[clean] = quote;
+          finalMappedData[`FOREX:${clean}`] = quote;
+          foundKiteIds.add(reqId);
+        }
+      }
+    }
+
+    // 4. Fetch missing US & COMEX symbols directly via MT5 or Fallback
+    const missingUsIds = usRequestIds.filter(id => !foundKiteIds.has(id));
+    if (missingUsIds.length > 0) {
       const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');
-      for (const reqId of missingUsForexIds) {
+      for (const reqId of missingUsIds) {
         let mt5Quote: any = null;
         try {
           mt5Quote = await fetchMT5StockQuote(reqId);
@@ -423,7 +504,6 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
         const clean = reqId.replace(/^(FOREX:|US:|COMEX:|MCX:)/i, '');
         finalMappedData[clean] = quotePayload;
         finalMappedData[`US:${clean}`] = quotePayload;
-        finalMappedData[`FOREX:${clean}`] = quotePayload;
         finalMappedData[`COMEX:${clean}`] = quotePayload;
         foundKiteIds.add(reqId);
       }
