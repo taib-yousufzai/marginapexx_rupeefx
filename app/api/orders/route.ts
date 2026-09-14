@@ -318,7 +318,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     ]);
 
     const timeoutPromise = new Promise<any>((resolve) =>
-      setTimeout(() => resolve({ timeout: true }), 2500)
+      setTimeout(() => resolve({ timeout: true }), 8000)
     );
 
     const raceRes = await Promise.race([queryPromise, timeoutPromise]).catch(err => {
@@ -326,14 +326,17 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return { timeout: true };
     });
 
+    if (raceRes?.timeout) {
+      console.warn('[GET /api/orders] Supabase Cloud query timed out (8s)');
+      return NextResponse.json({ error: 'Orders query timed out' }, { status: 504 });
+    }
+
     let userProfileRes: any = { data: null };
     let ordersRes: any = { data: [] };
     let posRes: any = { data: [] };
 
-    if (raceRes && !raceRes.timeout && Array.isArray(raceRes)) {
+    if (raceRes && Array.isArray(raceRes)) {
       [userProfileRes, ordersRes, posRes] = raceRes;
-    } else {
-      console.warn('[GET /api/orders] Supabase Cloud query timed out (2.5s); returning empty fallback.');
     }
 
     const userProfile = userProfileRes?.data;

@@ -74,9 +74,9 @@ export async function GET(request: NextRequest) {
       positionsQuery = positionsQuery.in('status', ['open', 'OPEN', 'active', 'ACTIVE']).order('created_at', { ascending: false });
     }
 
-    // Fetch positions with a fast 2.5s timeout wrapper
+    // Fetch positions with an 8s timeout wrapper
     const timeoutPromise = new Promise<any>((resolve) =>
-      setTimeout(() => resolve({ timeout: true }), 2500)
+      setTimeout(() => resolve({ timeout: true }), 8000)
     );
 
     const posResult = await Promise.race([positionsQuery, timeoutPromise]).catch(err => {
@@ -85,8 +85,8 @@ export async function GET(request: NextRequest) {
     });
 
     if (posResult?.timeout || posResult?.error) {
-      console.warn('[Positions API] Query timed out (2.5s) or failed; returning empty array fallback');
-      return NextResponse.json({ positions: [] });
+      console.warn('[Positions API] Query timed out (8s) or failed');
+      return NextResponse.json({ error: 'Positions query timed out' }, { status: 504 });
     }
 
     // For closed positions, locked_margin is 0 after close. Recover the original margin
