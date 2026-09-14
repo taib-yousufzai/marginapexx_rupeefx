@@ -1,8 +1,8 @@
 /**
- * Internal Order API — NiveshX Trading platform orders
+ * Internal Order API — MarginApex platform orders
  *
  * GET  /api/orders          → user's own order history (from Supabase)
- * POST /api/orders          → place a new order through NiveshX Trading
+ * POST /api/orders          → place a new order through MarginApex
  *
  * All order placement runs through this endpoint. Zerodha is NEVER called
  * to place orders — it is used read-only to fetch the LTP for fill price
@@ -13,7 +13,42 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient } from '@/lib/redis';
+import { getCachedScriptSettings } from '@/lib/redisSettingsCache';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+
+function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[] | Record<string, number>): number {
+  const n = symbol.toUpperCase();
+  if (dbSettings) {
+    if (Array.isArray(dbSettings)) {
+      const match = dbSettings.find(s => n.includes(s.symbol.toUpperCase()) || s.symbol.toUpperCase().includes(n));
+      if (match) return Number(match.lot_size);
+    } else {
+      for (const [sym, size] of Object.entries(dbSettings)) {
+        const upper = sym.toUpperCase();
+        if (n.includes(upper) || upper.includes(n)) return Number(size);
+      }
+    }
+  }
+  if (n.includes('BANKNIFTY') || n.includes('BANKEX')) return 15;
+  if (n.includes('FINNIFTY')) return 40;
+  if (n.includes('MIDCP') || n.includes('MIDCAP')) return 75;
+  if (n.includes('SENSEX')) return 10;
+  if (n.includes('NIFTY')) return 25;
+  return 1;
+}
+
+function cleanSymHelper(s?: string | null): string {
+  if (!s) return '';
+  let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+  const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD'];
+  const knownBaseCrypto = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'];
+  if (knownBaseCrypto.includes(str)) {
+    str += 'USDT';
+  } else if (str.endsWith('USD') && !str.endsWith('USDT') && !nonCrypto.includes(str)) {
+    str = str.slice(0, -3) + 'USDT';
+  }
+  return str;
+}
 import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import { parseOptionSymbol } from '@/lib/parseOptionSymbol';
@@ -26,7 +61,7 @@ import { calculateSingleLegCharge, calculateOrderBrokerage } from '@/lib/trading
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 
-import { mapSymbolToSegment, mapSegmentToDbSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
+import { mapSymbolToSegment } from '@/lib/trading/SymbolMapping';
 import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
 import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
 import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
@@ -225,20 +260,23 @@ async function fetchKiteQuotes(instruments: string[]): Promise<Record<string, Se
   }
 }
 
-
-
-function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[]): number {
-  const n = symbol.toUpperCase();
-  if (dbSettings && Array.isArray(dbSettings)) {
-    const match = dbSettings.find(s => n.includes(s.symbol.toUpperCase()) || s.symbol.toUpperCase().includes(n));
-    if (match) return Number(match.lot_size);
-  }
-  if (n.includes('BANKNIFTY') || n.includes('BANKEX')) return 15;
-  if (n.includes('FINNIFTY')) return 40;
-  if (n.includes('MIDCP') || n.includes('MIDCAP')) return 75;
-  if (n.includes('SENSEX')) return 10;
-  if (n.includes('NIFTY')) return 25;
-  return 1;
+/**
+ * Map UI display segment to database segment key.
+ */
+function mapSegmentToDbSegment(s: string): string {
+  if (!s) return '';
+  const trimmed = s.trim();
+  if (trimmed === 'NSE - Futures' || trimmed === 'BSE - Futures') return 'INDEX-FUT';
+  if (trimmed === 'NSE - Options' || trimmed === 'BSE - Options') return 'INDEX-OPT';
+  if (trimmed === 'NSE - Stock Futures' || trimmed === 'BSE - Stock Futures') return 'STOCK-FUT';
+  if (trimmed === 'NSE - Stock Options' || trimmed === 'BSE - Stock Options') return 'STOCK-OPT';
+  if (trimmed === 'MCX - Futures') return 'MCX-FUT';
+  if (trimmed === 'MCX - Options') return 'MCX-OPT';
+  if (trimmed === 'NSE - Equity' || trimmed === 'BSE - Equity') return 'STOCKS';
+  if (trimmed === 'Crypto' || trimmed === 'CRYPTO') return 'CRYPTO';
+  if (trimmed === 'Forex' || trimmed === 'FOREX' || trimmed === 'CDS - Futures' || trimmed === 'CDS - Options') return 'FOREX';
+  if (trimmed === 'COMEX - Futures' || trimmed === 'COMEX - Options' || trimmed === 'COMEX' || trimmed === 'COI') return 'COMEX';
+  return trimmed;
 }
 
 
@@ -314,27 +352,39 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const openPositions = posRes.data ?? [];
 
-    const orders: MyOrder[] = dbOrders.map((r: Record<string, unknown>) => ({
-      id: r.id as string,
-      symbol: r.symbol as string,
-      segment: (r.segment as string) ?? '',
-      side: r.side as 'BUY' | 'SELL',
-      status: r.status as MyOrder['status'],
-      qty: Number(r.qty),
-      lots: Number(r.lots ?? 0),
-      fill_price: Number(r.fill_price ?? r.price),
-      ltp_at_entry: Number(r.ltp_at_entry ?? 0),
-      order_type: (r.order_type as MyOrder['order_type']) ?? 'MARKET',
-      product_type: (r.product_type as MyOrder['product_type']) ?? 'INTRADAY',
-      info: sanitizeOrderInfo(r.info as string ?? null),
-      brokerage: Number(r.brokerage ?? 0),
-      client_price: r.client_price !== null ? Number(r.client_price) : undefined,
-      trigger_price: r.trigger_price !== null ? Number(r.trigger_price) : undefined,
-      stop_loss: r.stop_loss !== null ? Number(r.stop_loss) : undefined,
-      target: r.target !== null ? Number(r.target) : undefined,
-      is_exit: r.is_exit !== undefined ? Boolean(r.is_exit) : false,
-      created_at: r.created_at as string,
-    }));
+    const orders: MyOrder[] = dbOrders.map((r: Record<string, unknown>) => {
+      // linked_position_id is the raw unsanitized UUID linking this order to a position.
+      // We need it separately because sanitizeOrderInfo() strips UUIDs from `info`.
+      const rawLinkedPosId = (r.linked_position_id as string | null) || null;
+      // Fallback: if linked_position_id column missing, try to recover UUID from raw info
+      const rawInfoStr = r.info as string | null ?? null;
+      const uuidMatch = rawInfoStr ? rawInfoStr.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) : null;
+      const linkedPositionId = rawLinkedPosId || (uuidMatch ? uuidMatch[0] : null);
+
+      return {
+        id: r.id as string,
+        symbol: r.symbol as string,
+        segment: (r.segment as string) ?? '',
+        side: r.side as 'BUY' | 'SELL',
+        status: r.status as MyOrder['status'],
+        qty: Number(r.qty),
+        lots: Number(r.lots ?? 0),
+        fill_price: Number(r.fill_price ?? r.price),
+        ltp_at_entry: Number(r.ltp_at_entry ?? 0),
+        order_type: (r.order_type as MyOrder['order_type']) ?? 'MARKET',
+        product_type: (r.product_type as MyOrder['product_type']) ?? 'INTRADAY',
+        info: sanitizeOrderInfo(r.info as string ?? null),
+        linked_position_id: linkedPositionId,
+        brokerage: Number(r.brokerage ?? 0),
+        client_price: r.client_price !== null ? Number(r.client_price) : undefined,
+        trigger_price: r.trigger_price !== null ? Number(r.trigger_price) : undefined,
+        stop_loss: r.stop_loss !== null ? Number(r.stop_loss) : undefined,
+        target: r.target !== null ? Number(r.target) : undefined,
+        is_exit: r.is_exit !== undefined ? Boolean(r.is_exit) : false,
+        created_at: r.created_at as string,
+      };
+    });
+
 
     // Dynamically synthesize virtual pending orders for positions with SL/Target
     // BUT only when a real DB order doesn't already cover that exit (to avoid duplicates
@@ -357,8 +407,31 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       const stopLoss = pos.stop_loss ? Number(pos.stop_loss) : (pos.sl ? Number(pos.sl) : null);
       const target = pos.target ? Number(pos.target) : (pos.tp ? Number(pos.tp) : null);
 
-      // Only add virtual SL card if no real pending exit order exists for this symbol+side
-      if (stopLoss !== null && stopLoss > 0 && !realPendingExitKeys.has(exitKey)) {
+      // Check if both SL and Target exist -> Synthesize a single GTT order
+      if (stopLoss !== null && stopLoss > 0 && target !== null && target > 0 && !realPendingExitKeys.has(exitKey)) {
+        virtualOrders.push({
+          id: `pos-gtt-${pos.id}`,
+          symbol: pos.symbol,
+          segment: pos.settlement || '',
+          side: pos.side === 'BUY' ? 'SELL' : 'BUY', // GTT exit is opposite side
+          is_exit: true,
+          status: 'PENDING',
+          qty: Number(pos.qty_open),
+          lots: Number(pos.lots ?? 0) || (pos.qty_open > 0 ? 1 : 0),
+          fill_price: stopLoss, // GTT doesn't have a single fill price, use SL as visual fallback
+          ltp_at_entry: Number(pos.avg_price ?? pos.entry_price),
+          order_type: 'GTT',
+          product_type: (pos.product_type as any) ?? 'INTRADAY',
+          info: 'GTT (Exit)',
+          brokerage: 0,
+          trigger_price: stopLoss,
+          stop_loss: stopLoss,
+          target: target,
+          created_at: pos.created_at || new Date().toISOString(),
+        });
+      } 
+      // Only add virtual SL card if ONLY SL exists (or Target is 0/null) and no real pending exit order exists
+      else if (stopLoss !== null && stopLoss > 0 && !realPendingExitKeys.has(exitKey)) {
         virtualOrders.push({
           id: `pos-sl-${pos.id}`,
           symbol: pos.symbol,
@@ -379,8 +452,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
           created_at: pos.created_at || new Date().toISOString(),
         });
       }
-
-      if (target !== null && target > 0) {
+      // Only add virtual Target card if ONLY Target exists (or SL is 0/null) and no real pending exit order
+      else if (target !== null && target > 0 && !realPendingExitKeys.has(exitKey)) {
         virtualOrders.push({
           id: `pos-target-${pos.id}`,
           symbol: pos.symbol,
@@ -434,7 +507,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, linked_position_id, orderAttemptId } = body;
-    const is_exit = Boolean(body.is_exit === true || (body.is_exit as any) === 'true' || (body.is_exit as any) === 1 || (body.is_exit as any) === '1');
+    const is_exit = Boolean(body.is_exit === true || body.is_exit === 'true' || body.is_exit === 1 || body.is_exit === '1');
 
     // 2b. Idempotency pre-check using Redis (with 300ms fast safety guard)
     let attemptRedisKey: string | null = null;
@@ -470,18 +543,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Quantity must be positive' }, { status: 400 });
     }
 
-    const dbSegment = mapSegmentWithSymbol(segment, symbol);
+    const dbSegment = mapSegmentToDbSegment(segment);
     const admin = getAdminClient();
 
-    // Check market hours (with in-memory cache to avoid ~767ms Supabase round-trip)
+    // Check market hours
     try {
       const exchangeName = symbol.includes(':') ? symbol.split(':')[0] : 'NSE';
       const ex = exchangeName.toUpperCase();
       const segUpper = dbSegment.toUpperCase();
 
-      if (!segUpper.includes('CRYPTO')) {
+      if (!segUpper.includes('CRYPTO') && !is_exit) {
         const segmentId = RiskValidation.resolveTradingHoursSegmentId(symbol, dbSegment);
-
         const nowMs = Date.now();
         const cachedHour = tradingHoursCache.get(segmentId);
         let segmentHour: any = null;
@@ -490,13 +562,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (cachedHour && cachedHour.expiresAt > nowMs) {
           segmentHour = cachedHour.data;
         } else {
-          const res = await admin
-            .from('trading_hours')
+          const res: any = await (admin
+            .from('trading_hours') as any)
             .select('name, start_time, end_time, is_active')
             .eq('id', segmentId)
             .maybeSingle();
-          segmentHour = res.data;
-          hrError = res.error;
+          segmentHour = res?.data;
+          hrError = res?.error;
           if (!hrError && segmentHour) {
             tradingHoursCache.set(segmentId, { data: segmentHour, expiresAt: nowMs + TRADING_HOURS_TTL_MS });
           }
@@ -542,7 +614,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 4-6 + 8-9: Run all independent DB queries AND the Kite LTP fetch in parallel.
     // This is the key optimization — previously these were sequential (~4 round-trips).
-    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult, platformExitMode] = await Promise.all([
+    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult] = await Promise.all([
       // Profile
       admin.from('profiles')
         .select('id, active, read_only, segments, parent_id, balance, trading_mode')
@@ -573,79 +645,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .eq('user_id', user.id)
         .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending']),
 
-      // Fetch quotes — either Kite or Binance depending on segment (with fast safety timeouts)
+      // Fetch quotes — either Kite or Binance depending on segment (with 2.0s fast timeout guard)
       (async () => {
         const fetchPromise = (async () => {
           if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
-            // 1. Try Redis cache first (0ms)
-            let cleanSym = symbol.replace('/', '').toUpperCase();
-            if (dbSegment === 'CRYPTO' && !cleanSym.endsWith('USDT')) {
-              cleanSym = cleanSym + 'USDT';
-            }
-            try {
-              const redis = getRedisClient();
-              const cached = await redis.hget('market:quotes', cleanSym);
-              if (cached) {
-                const tick = JSON.parse(cached);
-                if (tick && (tick.last_price > 0 || tick.lastPrice > 0)) {
-                  const ltp = Number(tick.last_price || tick.lastPrice);
-                  return { [kiteInst]: { last_price: ltp, bid: Number(tick.bid || ltp), ask: Number(tick.ask || ltp), depth: tick.depth || null } };
-                }
-              }
-            } catch (e) { }
-
-            // 2. If client_price is already provided by the live WebSocket client, use it immediately!
-            // Do not block trade execution on an external 2.5s HTTP call to api.binance.com!
-            if (client_price && Number(client_price) > 0) {
-              const cp = Number(client_price);
-              const fAsk = body.frontend_ask && Number(body.frontend_ask) > 0 ? Number(body.frontend_ask) : cp;
-              const fBid = body.frontend_bid && Number(body.frontend_bid) > 0 ? Number(body.frontend_bid) : cp;
-              return { [kiteInst]: { last_price: cp, bid: fBid, ask: fAsk } };
-            }
-
             const quote = await fetchBinanceQuote(symbol);
             return quote ? { [kiteInst]: quote } : {};
-          } else if (dbSegment === 'COMEX' || dbSegment === 'US-EQ' || symbol.endsWith('=F') || symbol.startsWith('US:') || (kiteInst && kiteInst.startsWith('COMEX:'))) {
-            // For COMEX and US instruments, Kite REST API does not host their quotes.
-            // Returning empty allows instant fallback to client_price without waiting for Kite timeouts.
-            return {};
           } else {
             return fetchKiteQuotes(instrumentsToFetch);
           }
         })();
 
         const timeoutPromise = new Promise<Record<string, ServerQuote>>((resolve) =>
-          setTimeout(() => resolve({}), 800)
+          setTimeout(() => resolve({}), 150)
         );
 
         return Promise.race([fetchPromise, timeoutPromise]);
       })(),
 
-      // Fetch script settings for dynamic lot size
-      admin.from('script_settings')
-        .select('symbol, lot_size'),
-
-      // Fetch exit price mode in parallel
-      getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK'),
+      // Fetch script settings for dynamic lot size (cached in Redis / memory)
+      getCachedScriptSettings(() => admin),
     ]);
 
     const t4_backendQuoteRead = Date.now();
     const profile = profileResult.data;
     const profileErr = profileResult.error;
-    let rawQuote = quotesMap[kiteInst];
-    let kiteLtp = typeof rawQuote === 'number' ? rawQuote : (rawQuote?.last_price ?? null);
-
-    // If ticker quote timed out or missed, fallback to client WebSocket price
-    if ((!kiteLtp || kiteLtp <= 0) && client_price && Number(client_price) > 0) {
-      kiteLtp = Number(client_price);
-      rawQuote = {
-        last_price: kiteLtp,
-        bid: body.frontend_bid && Number(body.frontend_bid) > 0 ? Number(body.frontend_bid) : kiteLtp,
-        ask: body.frontend_ask && Number(body.frontend_ask) > 0 ? Number(body.frontend_ask) : kiteLtp
-      };
-      quotesMap[kiteInst] = rawQuote;
-    }
-
+    const rawQuote = quotesMap[kiteInst];
+    const kiteLtp = typeof rawQuote === 'number' ? rawQuote : (rawQuote?.last_price ?? null);
     const dbScriptSettings = (scriptSettingsResult?.data as any[]) ?? [];
 
     // 4. Profile checks
@@ -703,7 +729,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         user_id: user.id,
         segment: dbSegment,
         side: 'BUY',
-        trade_allowed: true,
+        trade_allowed: !dbSegment.toUpperCase().includes('CRYPTO'),
         max_lot: 50,
         max_order_lot: 50,
         intraday_leverage,
@@ -727,7 +753,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         user_id: user.id,
         segment: dbSegment,
         side: 'SELL',
-        trade_allowed: true,
+        trade_allowed: !dbSegment.toUpperCase().includes('CRYPTO'),
         max_lot: 50,
         max_order_lot: 50,
         intraday_leverage,
@@ -1063,6 +1089,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (order_type === 'LIMIT' || order_type === 'SL' || order_type === 'GTT') {
       fillPrice = client_price || trigger_price || baseLtp;
     } else {
+      const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
       const exitPriceMode = (platformExitMode || buySetting?.exit_price_mode || sellSetting?.exit_price_mode || 'BID_ASK') as 'BID_ASK' | 'LTP';
 
       let basePrice: number;
@@ -1119,7 +1146,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         finalFillPrice: fillPrice,
 
-        quoteTimestamp: typeof rawQuote === 'object' ? ((rawQuote as any)?.timestamp ?? t4_backendQuoteRead) : t4_backendQuoteRead,
+        quoteTimestamp: typeof rawQuote === 'object' ? (rawQuote?.timestamp ?? t4_backendQuoteRead) : t4_backendQuoteRead,
         executionTimestamp: t5_executionTime,
 
         timestamps: {
@@ -1148,18 +1175,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let resolvedIsExit: boolean = is_exit ?? false;
     let resolvedLinkedPositionId: string | null = linked_position_id ?? null;
 
-    if (['SL', 'SLM'].includes(targetOrderType) && !resolvedIsExit) {
+    if (!resolvedLinkedPositionId) {
+      const targetClean = cleanSymHelper(symbol);
+      const targetProd = (product_type || 'INTRADAY').toUpperCase();
       const matchingPosition = openPositions.find((p: any) =>
-        p.symbol === symbol &&
+        cleanSymHelper(p.symbol || p.kite_instrument) === targetClean &&
         p.side !== side &&                              // opposite side
-        (p.product_type ?? 'INTRADAY') === (product_type ?? 'INTRADAY')
+        (p.product_type || 'INTRADAY').toUpperCase() === targetProd
       );
       if (matchingPosition) {
         resolvedIsExit = true;
-        resolvedLinkedPositionId = resolvedLinkedPositionId || matchingPosition.id;
+        resolvedLinkedPositionId = matchingPosition.id;
         console.log(
-          `[POST /api/orders] Auto-resolved is_exit=true for ${targetOrderType} order ` +
-          `against open position ${matchingPosition.id} (symbol=${symbol}, side=${matchingPosition.side})`
+          `[POST /api/orders] Auto-resolved is_exit=true & linkedPositionId=${matchingPosition.id} for ${targetOrderType} order ` +
+          `(symbol=${symbol}, side=${matchingPosition.side})`
         );
       }
     }
@@ -1172,6 +1201,61 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // This route does not insert sub-order rows (confirmed: no secondary
     // place_order_v2 call below), so this is enforced by design.  The stop_loss
     // and target values are stored on the GTT order row only.
+
+    // ── Fix 3.1c: Duplicate exit order guard ─────────────────────────────────
+    // If this is a non-immediate (PENDING) exit order (SL, GTT, LIMIT exit),
+    // check whether a real PENDING exit order already exists for this position.
+    // This prevents double SL orders when SLM auto-inserts one and the user
+    // manually adds another via the position panel exit flow.
+    if (resolvedIsExit && !isImmediate) {
+      const linkedPosIdForCheck = resolvedLinkedPositionId;
+      const exitSideForCheck = side; // exit order's own side (opposite of position)
+
+      const { data: existingExitOrders } = await admin
+        .from('orders')
+        .select('id, order_type, linked_position_id, info')
+        .eq('user_id', user.id)
+        .eq('symbol', symbol)
+        .eq('side', exitSideForCheck)
+        .eq('is_exit', true)
+        .in('status', ['PENDING', 'TRIGGER_PENDING'])
+        .limit(5);
+
+      if (existingExitOrders && existingExitOrders.length > 0) {
+        // Filter the fetched orders to only cancel those that actually conflict
+        const isPositionUuid = (s: string | null | undefined) =>
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s ?? ''));
+
+        const conflictingOrders = existingExitOrders.filter((o: any) => {
+          // Reconstruct the linked ID since DB info column might contain it
+          const rawLinkedId = o.linked_position_id || null;
+          const rawInfoStr = o.info || null;
+          const uuidMatch = rawInfoStr ? rawInfoStr.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i) : null;
+          const oLinkedId = rawLinkedId || (uuidMatch ? uuidMatch[0] : null);
+
+          if (!linkedPosIdForCheck) {
+            // We are placing a cumulative order. All existing orders conflict.
+            return true;
+          } else {
+            // We are placing a detailed order for `linkedPosIdForCheck`.
+            // Conflict if existing is cumulative (no ID), or detailed for the SAME ID.
+            if (!oLinkedId) return true; // Cumulative order conflicts
+            if (oLinkedId === linkedPosIdForCheck) return true; // Same position conflicts
+            return false; // Different position -> NO CONFLICT, do not cancel
+          }
+        });
+
+        if (conflictingOrders.length > 0) {
+          const idsToCancel = conflictingOrders.map((o: any) => o.id);
+          await admin
+            .from('orders')
+            .update({ status: 'CANCELLED', updated_at: new Date().toISOString(), info: 'Replaced by new exit order' })
+            .eq('user_id', user.id)
+            .in('id', idsToCancel);
+          console.log(`[POST /api/orders] Duplicate exit guard: cancelled ${idsToCancel.length} conflicting PENDING exit order(s) for ${symbol} before placing new exit.`);
+        }
+      }
+    }
 
     const executeDbCall = async () => {
       const { data: oId, error: rpcErr } = await admin.rpc('place_order_v2', {
@@ -1259,6 +1343,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           p_linked_position_id: linkedPosId,
         });
         console.log(`[POST /api/orders] SLM: linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
+
+        // Also stamp stop_loss on the position row so that:
+        // (a) the virtual pos-sl-* dedup key fires correctly in GET /api/orders,
+        // (b) if the real SL order is later cancelled the position still carries the price.
+        if (linkedPosId) {
+          await admin
+            .from('positions')
+            .update({ stop_loss: resolvedStopLoss, updated_at: new Date().toISOString() })
+            .eq('id', linkedPosId)
+            .eq('user_id', user.id)
+            .in('status', ['open', 'OPEN', 'active']);
+        }
       } catch (slErr) {
         // Non-fatal: SLM entry already executed; log but don't block response
         console.warn('[POST /api/orders] Non-fatal: failed to insert linked SL exit order for SLM entry:', slErr);
@@ -1305,6 +1401,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ]);
       } catch { /* ignore */ }
     }
+
+    try {
+      const redis = getRedisClient();
+      redis.publish('order_events', JSON.stringify({
+        user_id: user.id,
+        order_id: response.order_id,
+        status: response.status,
+        fill_price: response.fill_price,
+        symbol: symbol,
+        side: side,
+        timestamp: new Date().toISOString(),
+      })).catch(() => {});
+    } catch { /* ignore */ }
 
     return NextResponse.json(response, { status: 201 });
   } catch (topErr: any) {

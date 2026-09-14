@@ -6,6 +6,8 @@ import type { MyOrder } from '@/lib/types/order';
 import { api, ApiError } from '@/lib/api';
 import { getSharedSessionSync } from '@/lib/sharedSession';
 
+import { soundEngine } from '@/lib/audio';
+
 export interface OrdersContextType {
   orders: MyOrder[];
   loading: boolean;
@@ -13,6 +15,9 @@ export interface OrdersContextType {
   refresh: () => Promise<void>;
   cancelOrder: (id: string) => Promise<{ success: boolean; error?: string }>;
   updateOrderLocally: (updatedOrder: MyOrder) => void;
+  addOptimisticOrder: (order: MyOrder) => void;
+  removeOptimisticOrder: (tempId: string) => void;
+  swapOptimisticOrder: (tempId: string, realOrder: MyOrder) => void;
 }
 
 const OrdersDataContext = createContext<OrdersContextType | null>(null);
@@ -28,8 +33,25 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
   const fetchOrders = useCallback(async () => {
     try {
       const data = await api.get<{ orders: MyOrder[] }>('/api/orders?limit=100');
-      globalOrdersCache = data.orders ?? [];
-      setOrders(globalOrdersCache);
+      const fetchedOrders = data.orders ?? [];
+
+      setOrders(prev => {
+        const fetchedIds = new Set(fetchedOrders.map(o => o.id));
+        const now = Date.now();
+
+        // Preserve SUBMITTING orders and recent local orders (< 8s old) not yet in DB read response
+        const pendingLocalOrders = prev.filter(o => {
+          if (fetchedIds.has(o.id)) return false;
+          if (o.status === 'SUBMITTING') return true;
+          const createdTime = new Date(o.created_at || now).getTime();
+          const age = now - (isNaN(createdTime) ? now : createdTime);
+          return age < 8000;
+        });
+
+        const merged = [...pendingLocalOrders, ...fetchedOrders];
+        globalOrdersCache = merged;
+        return merged;
+      });
       setError(null);
     } catch (err) {
       console.warn('[OrdersContext] Transient error fetching orders:', err);
@@ -68,15 +90,15 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
     });
 
     // Refresh whenever any component places an order or closes a position
-    const handleOrderPlaced = () => {
+    const handleOrderPlaced = () => fetchOrders();
+    const handleOrderExecuted = () => {
+      soundEngine.playOrderExecuted();
       fetchOrders();
-      setTimeout(fetchOrders, 600);
     };
     window.addEventListener('order_placed', handleOrderPlaced);
     window.addEventListener('position-closed', handleOrderPlaced);
     window.addEventListener('position_closed', handleOrderPlaced);
-    window.addEventListener('position_updated', handleOrderPlaced);
-    window.addEventListener('order_executed', handleOrderPlaced);
+    window.addEventListener('order_executed', handleOrderExecuted);
 
     async function init() {
       // Wait for a valid session before fetching — prevents a 401 flash on
@@ -113,7 +135,6 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('position-closed', handleOrderPlaced);
       window.removeEventListener('position_closed', handleOrderPlaced);
-      window.removeEventListener('position_updated', handleOrderPlaced);
       window.removeEventListener('order_executed', handleOrderPlaced);
     };
   }, [fetchOrders, refreshInterval]);
@@ -125,6 +146,30 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       const newOrders = exists
         ? prev.map(o => (o.id === updatedOrder.id ? { ...o, ...updatedOrder } : o))
         : [updatedOrder, ...prev];
+      globalOrdersCache = newOrders;
+      return newOrders;
+    });
+  }, []);
+
+  const addOptimisticOrder = useCallback((optimisticOrder: MyOrder) => {
+    setOrders(prev => {
+      const newOrders = [optimisticOrder, ...prev];
+      globalOrdersCache = newOrders;
+      return newOrders;
+    });
+  }, []);
+
+  const removeOptimisticOrder = useCallback((tempId: string) => {
+    setOrders(prev => {
+      const newOrders = prev.filter(o => o.id !== tempId);
+      globalOrdersCache = newOrders;
+      return newOrders;
+    });
+  }, []);
+
+  const swapOptimisticOrder = useCallback((tempId: string, realOrder: MyOrder) => {
+    setOrders(prev => {
+      const newOrders = prev.map(o => (o.id === tempId ? realOrder : o));
       globalOrdersCache = newOrders;
       return newOrders;
     });
@@ -142,7 +187,17 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
   }, [fetchOrders]);
 
   return (
-    <OrdersDataContext.Provider value={{ orders, loading, error, refresh: fetchOrders, cancelOrder, updateOrderLocally }}>
+    <OrdersDataContext.Provider value={{
+      orders,
+      loading,
+      error,
+      refresh: fetchOrders,
+      cancelOrder,
+      updateOrderLocally,
+      addOptimisticOrder,
+      removeOptimisticOrder,
+      swapOptimisticOrder,
+    }}>
       {children}
     </OrdersDataContext.Provider>
   );

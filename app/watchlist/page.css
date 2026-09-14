@@ -1057,7 +1057,6 @@ html.black .select-all-btn, body.black .select-all-btn {
     border-radius: 1.25rem 1.25rem 0 0;
     z-index: 9999;
     transform: translateY(100%);
-    transition: transform 0.38s cubic-bezier(0.25, 0.9, 0.35, 1.05);
     box-shadow: 0 -0.5rem 2.5rem rgba(0, 0, 0, 0.18);
     display: flex;
     flex-direction: column;
@@ -2924,7 +2923,6 @@ body.dark .instrument-delete-btn:hover {
         visibility: visible !important;
         z-index: 99999 !important;
         box-shadow: 0 -0.625rem 1.875rem rgba(0, 0, 0, 0.2) !important;
-        transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
         background: var(--container-bg, #FFFFFF) !important;
         display: flex !important;
         flex-direction: column !important;

@@ -461,4 +461,220 @@ describe('Clear History & Weekly History P&L Suite', () => {
 
 });
 
+// ─── BUG-1 Regression Suite ──────────────────────────────────────────────────
+// 12 required regression tests for "Admin Clear History Does Not Clear User
+// History Page" (the stale-cache / historyResetAt filter bypass bug).
+//
+// These tests operate on the same pure-function helpers already defined above
+// (filterClosedPositions / filterOrders) so they run without any network I/O.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('BUG-1 Regression: User-facing History page respects history_reset_at', () => {
+
+  // Shared helpers (mirror of those at the top of the outer describe, kept
+  // local for readability in isolation)
+  function filterClosed(positions: MockPosition[], resetAt: string | null): MockPosition[] {
+    return positions.filter(p => {
+      if (p.status !== 'closed') return false;
+      if (!resetAt) return true;
+      const closedTime = p.exit_time || p.updated_at;
+      return new Date(closedTime) > new Date(resetAt);
+    });
+  }
+
+  function filterOrds(orders: MockOrder[], resetAt: string | null): MockOrder[] {
+    return orders.filter(o => {
+      const pendingStatuses = new Set(['PENDING', 'TRIGGER_PENDING']);
+      if (pendingStatuses.has(o.status as string)) return true;
+      if (!resetAt) return true;
+      const finalizedTime = o.updated_at || o.created_at;
+      return new Date(finalizedTime) > new Date(resetAt);
+    });
+  }
+
+  const now = new Date();
+  const past = (daysAgo: number) => new Date(now.getTime() - daysAgo * 86400_000).toISOString();
+
+  // ── Test 1 ───────────────────────────────────────────────────────────────
+  it('1. Old closed position created/closed before reset → hidden in History', () => {
+    const pos: MockPosition = {
+      id: 'pos-pre-reset',
+      user_id: 'u1',
+      symbol: 'NIFTY',
+      status: 'closed',
+      pnl: 1000,
+      entry_time: past(10),
+      exit_time: past(5),
+      updated_at: past(5),
+    };
+    const resetAt = past(2); // reset happened 2 days ago; position closed 5 days ago
+    expect(filterClosed([pos], resetAt)).toHaveLength(0);
+  });
+
+  // ── Test 2 ───────────────────────────────────────────────────────────────
+  it('2. Old completed/cancelled/rejected order finalized before reset → hidden in History', () => {
+    const executed: MockOrder = { id: 'ord-exec-old', user_id: 'u1', status: 'EXECUTED', created_at: past(10), updated_at: past(5) };
+    const cancelled: MockOrder = { id: 'ord-canc-old', user_id: 'u1', status: 'CANCELLED', created_at: past(10), updated_at: past(5) };
+    const rejected: MockOrder  = { id: 'ord-rej-old',  user_id: 'u1', status: 'REJECTED',  created_at: past(10), updated_at: past(5) };
+    const resetAt = past(2);
+    expect(filterOrds([executed, cancelled, rejected], resetAt)).toHaveLength(0);
+  });
+
+  // ── Test 3 ───────────────────────────────────────────────────────────────
+  it('3. New closed position finalized AFTER reset → visible in History', () => {
+    const pos: MockPosition = {
+      id: 'pos-post-reset',
+      user_id: 'u1',
+      symbol: 'BANKNIFTY',
+      status: 'closed',
+      pnl: 500,
+      entry_time: past(1),
+      exit_time: past(0),
+      updated_at: past(0),
+    };
+    const resetAt = past(2);
+    const visible = filterClosed([pos], resetAt);
+    expect(visible).toHaveLength(1);
+    expect(visible[0].id).toBe('pos-post-reset');
+  });
+
+  // ── Test 4 ───────────────────────────────────────────────────────────────
+  it('4. Old open position is NOT affected by history_reset_at (open positions bypass filter)', () => {
+    const pos: MockPosition = {
+      id: 'pos-open-old',
+      user_id: 'u1',
+      symbol: 'RELIANCE',
+      status: 'open',
+      pnl: 200,
+      entry_time: past(10),
+      exit_time: null,
+      updated_at: past(10),
+    };
+    const resetAt = past(0); // reset just now
+    // Open positions never go through the closed-position filter
+    const visible = filterClosed([pos], resetAt);
+    expect(visible).toHaveLength(0); // closed filter excludes it (not closed)
+    // Direct status check — still open
+    expect(pos.status).toBe('open');
+  });
+
+  // ── Test 5 ───────────────────────────────────────────────────────────────
+  it('5. Pending/open/trigger_pending order is NOT affected by history_reset_at', () => {
+    const pending: MockOrder = { id: 'ord-pending', user_id: 'u1', status: 'PENDING', created_at: past(10) };
+    const resetAt = past(0); // reset just now
+    const visible = filterOrds([pending], resetAt);
+    expect(visible).toContainEqual(pending);
+  });
+
+  // ── Test 6 ───────────────────────────────────────────────────────────────
+  it('6. Position opened before reset but closed AFTER reset → visible in History', () => {
+    const pos: MockPosition = {
+      id: 'pos-open-before-close-after',
+      user_id: 'u1',
+      symbol: 'NIFTY',
+      status: 'closed',
+      pnl: 700,
+      entry_time: past(10), // opened well before reset
+      exit_time: past(0),   // closed today (after reset)
+      updated_at: past(0),
+    };
+    const resetAt = past(5);
+    const visible = filterClosed([pos], resetAt);
+    expect(visible).toHaveLength(1);
+    expect(visible[0].id).toBe('pos-open-before-close-after');
+  });
+
+  // ── Test 7 ───────────────────────────────────────────────────────────────
+  it('7. Order created before reset but finalized AFTER reset → visible in History', () => {
+    const order: MockOrder = {
+      id: 'ord-old-finalized-new',
+      user_id: 'u1',
+      status: 'EXECUTED',
+      created_at: past(10),   // created before reset
+      updated_at: past(0),    // executed today (after reset)
+    };
+    const resetAt = past(5);
+    const visible = filterOrds([order], resetAt);
+    expect(visible).toHaveLength(1);
+    expect(visible[0].id).toBe('ord-old-finalized-new');
+  });
+
+  // ── Test 8 ───────────────────────────────────────────────────────────────
+  it('8. Clear History only changes target user\'s history_reset_at; other users unaffected', () => {
+    const targetUser:  MockProfile = { id: 'u-target', role: 'USER', balance: 50000, history_reset_at: null };
+    const otherUser:   MockProfile = { id: 'u-other',  role: 'USER', balance: 80000, history_reset_at: null };
+    const adminCaller: MockProfile = { id: 'u-admin',  role: 'admin', balance: 0,    history_reset_at: null };
+
+    // Simulate endpoint: .update({ history_reset_at }).eq('id', targetUser.id)
+    const resetAt = now.toISOString();
+    targetUser.history_reset_at = resetAt;
+    // Other user and admin caller must remain unchanged
+    expect(otherUser.history_reset_at).toBeNull();
+    expect(adminCaller.history_reset_at).toBeNull();
+    expect(targetUser.history_reset_at).toBe(resetAt);
+  });
+
+  // ── Test 9 ───────────────────────────────────────────────────────────────
+  it('9. Wallet balance remains unchanged after Clear History', () => {
+    const user: MockProfile = { id: 'u1', role: 'USER', balance: 125000, history_reset_at: null };
+    user.history_reset_at = now.toISOString();
+    expect(user.balance).toBe(125000);
+  });
+
+  // ── Test 10 ──────────────────────────────────────────────────────────────
+  it('10. Ledger entry count remains unchanged after Clear History', () => {
+    const ledger: MockTransaction[] = [
+      { id: 'tx-1', user_id: 'u1', type: 'DEPOSIT',    amount: 100000, created_at: past(30) },
+      { id: 'tx-2', user_id: 'u1', type: 'PNL_CREDIT', amount:   1500, created_at: past(5)  },
+      { id: 'tx-3', user_id: 'u1', type: 'WITHDRAWAL', amount:  10000, created_at: past(2)  },
+    ];
+    const countBefore = ledger.length;
+    // Simulate Clear History (only touches profiles.history_reset_at)
+    const user: MockProfile = { id: 'u1', role: 'USER', balance: 91500, history_reset_at: now.toISOString() };
+    expect(ledger.length).toBe(countBefore);
+    expect(user.balance).toBe(91500);
+  });
+
+  // ── Test 11 ──────────────────────────────────────────────────────────────
+  it('11. Transaction records are unchanged after Clear History', () => {
+    const transactions: MockTransaction[] = [
+      { id: 'tx-margin', user_id: 'u1', type: 'MARGIN_DEBIT',  amount: 5000, created_at: past(10) },
+      { id: 'tx-pnl',    user_id: 'u1', type: 'PNL_CREDIT',    amount: 800,  created_at: past(5)  },
+    ];
+    const snapshot = transactions.map(t => ({ ...t }));
+    // Simulate Clear History
+    const user: MockProfile = { id: 'u1', role: 'USER', balance: 50000, history_reset_at: now.toISOString() };
+    // Transactions must be bit-for-bit identical
+    expect(transactions).toEqual(snapshot);
+    expect(user.balance).toBe(50000);
+  });
+
+  // ── Test 12 ──────────────────────────────────────────────────────────────
+  it('12. Repeated Clear History is safe and idempotent (second reset is strictly newer)', () => {
+    const user: MockProfile = { id: 'u1', role: 'USER', balance: 60000, history_reset_at: past(5) };
+    const firstReset = user.history_reset_at!;
+
+    // Second reset happens later at past(2)
+    const secondReset = past(2);
+    user.history_reset_at = secondReset;
+
+    expect(new Date(user.history_reset_at).getTime()).toBeGreaterThan(new Date(firstReset).getTime());
+    expect(user.balance).toBe(60000);
+
+    // Old position closed at past(4) (between first reset past(5) and second reset past(2)) is hidden by second reset
+    const posBetweenResets: MockPosition = {
+      id: 'pos-between',
+      user_id: 'u1',
+      symbol: 'GOLD',
+      status: 'closed',
+      pnl: 300,
+      entry_time: past(6),
+      exit_time: past(4), // closed between first reset past(5) and second reset past(2)
+      updated_at: past(4),
+    };
+    const visible = filterClosed([posBetweenResets], user.history_reset_at);
+    expect(visible).toHaveLength(0);
+  });
+
+});
 

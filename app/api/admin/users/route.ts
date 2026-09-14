@@ -18,7 +18,7 @@
 import { requireAuth } from '../../../../lib/api-middleware';
 import { getRole } from '../../../../lib/auth'; // trigger recompile
 import { auditLog } from '../../../../lib/audit';
-import { getDescendantUserIds, assertUserInHierarchy } from '../../../../lib/hierarchy';
+import { getDescendantUserIds } from '../../../../lib/hierarchy';
 
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -39,37 +39,20 @@ export async function GET(request: Request): Promise<Response> {
       .from('profiles')
       .select('id, client_id, email, full_name, phone, role, parent_id, segments, active, read_only, demo_user, intraday_sq_off, auto_sqoff, showcase_auto_sqoff, sqoff_method, balance, settlement_amount, created_at, scheduled_delete_at, trading_mode, mode_locked_until, template_id, history_reset_at');
     
-    if (isDemo) {
-      // Demo accounts belong to everyone: no hierarchy restriction
-      pQuery = pQuery.eq('demo_user', true);
-    } else if (!fetchAll) {
-      // Live accounts: strict hierarchy restriction
-      pQuery = pQuery.eq('demo_user', false);
-      if (callerRole === 'broker') {
-        pQuery = pQuery.eq('parent_id', callerId);
-      } else if (callerRole === 'admin') {
-        const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
-        if (descendantIds !== null) {
-          if (descendantIds.length === 0) {
-            return Response.json([], { status: 200 });
-          }
-          pQuery = pQuery.in('id', descendantIds);
+    if (callerRole === 'broker') {
+      pQuery = pQuery.eq('parent_id', callerId);
+    } else if (callerRole === 'admin') {
+      const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
+      if (descendantIds !== null) {
+        if (descendantIds.length === 0) {
+          return Response.json([], { status: 200 });
         }
+        pQuery = pQuery.in('id', descendantIds);
       }
-    } else {
-      // All accounts: hierarchy descendants OR any demo user
-      if (callerRole === 'broker') {
-        pQuery = pQuery.or(`parent_id.eq.${callerId},demo_user.eq.true`);
-      } else if (callerRole === 'admin') {
-        const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
-        if (descendantIds !== null) {
-          if (descendantIds.length === 0) {
-            pQuery = pQuery.eq('demo_user', true);
-          } else {
-            pQuery = pQuery.or(`id.in.(${descendantIds.join(',')}),demo_user.eq.true`);
-          }
-        }
-      }
+    }
+
+    if (!fetchAll) {
+      pQuery = pQuery.eq('demo_user', isDemo);
     }
     
     const { data: profiles, error: pError } = await pQuery;
@@ -224,15 +207,8 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    if (callerRole === 'broker') {
+    if (!profileFields.parent_id && (callerRole === 'admin' || callerRole === 'broker')) {
       profileFields.parent_id = callerUser.id;
-    } else if (callerRole === 'admin') {
-      if (profileFields.parent_id && typeof profileFields.parent_id === 'string') {
-        const denied = await assertUserInHierarchy(adminClient, callerUser.id, profileFields.parent_id, callerRole);
-        if (denied) return denied;
-      } else {
-        profileFields.parent_id = callerUser.id;
-      }
     }
 
 

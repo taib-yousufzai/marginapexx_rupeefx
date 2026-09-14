@@ -5,38 +5,33 @@ import { SupabaseClient } from '@supabase/supabase-js';
  * 
  * Rules:
  * - Super Admins have visibility over everyone.
- * - Admins can view/manage Brokers they created, and Users under those Brokers (and direct Users).
+ * - Admins can view/manage Brokers they created, and Users under those Brokers.
  * - Brokers can view/manage their own Users.
  * - Users can only view themselves.
  */
 export async function isUserInHierarchy(
   supabase: SupabaseClient,
   actorId: string,
-  targetUserId: string,
-  actorRole?: string
+  targetUserId: string
 ): Promise<boolean> {
   // Trivially true if actor is the target
   if (actorId === targetUserId) {
     return true;
   }
 
-  let role = actorRole;
+  // Fetch actor's role
+  const { data: actorData, error: actorError } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', actorId)
+    .single();
 
-  // Fetch actor's role if not provided
-  if (!role) {
-    const { data: actorData, error: actorError } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', actorId)
-      .single();
-
-    if (actorError || !actorData) {
-      console.error('Error fetching actor role:', actorError);
-      return false;
-    }
-
-    role = actorData.role;
+  if (actorError || !actorData) {
+    console.error('Error fetching actor role:', actorError);
+    return false;
   }
+
+  const role = actorData.role;
 
   // Super admins see everyone
   if (role === 'super_admin') {
@@ -48,24 +43,13 @@ export async function isUserInHierarchy(
     return false;
   }
 
-  // Demo accounts belong to everyone: admins and brokers can view/manage demo users
-  if (role === 'admin' || role === 'broker') {
-    const { data: targetProfile } = await supabase
-      .from('profiles')
-      .select('demo_user')
-      .eq('id', targetUserId)
-      .single() as { data: any, error: any };
-
-    if (targetProfile?.demo_user === true) {
-      return true;
-    }
-  }
-
-  // Walk up the target user's ancestry tree.
-  // Maximum traversal depth of 10 to support deep hierarchies.
+  // Fetch the target user's ancestry using a recursive CTE via RPC or multiple queries.
+  // Since we might not have a recursive RPC deployed, we can walk up the tree manually
+  // or query parent_id. The tree depth is at most 3 (User -> Broker -> Admin).
+  
   let currentTargetId: string | null = targetUserId;
   let depth = 0;
-  const MAX_DEPTH = 10;
+  const MAX_DEPTH = 3;
 
   while (currentTargetId && depth < MAX_DEPTH) {
     const { data: targetData, error: targetError } = await supabase
@@ -118,22 +102,5 @@ export async function getDescendantUserIds(
   };
 
   return getChildren(actorId);
-}
-
-/**
- * Guard that verifies if target user is in actor's hierarchy.
- * Returns 403 Response if access denied, or null if allowed.
- */
-export async function assertUserInHierarchy(
-  supabase: SupabaseClient,
-  actorId: string,
-  targetUserId: string,
-  actorRole?: string
-): Promise<Response | null> {
-  const allowed = await isUserInHierarchy(supabase, actorId, targetUserId, actorRole);
-  if (!allowed) {
-    return Response.json({ error: 'Forbidden: User not in your hierarchy' }, { status: 403 });
-  }
-  return null;
 }
 

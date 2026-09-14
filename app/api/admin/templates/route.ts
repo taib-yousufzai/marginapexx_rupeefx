@@ -34,29 +34,11 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const authResult = await apiRequireAuth(request, ['MANAGE_TEMPLATES']);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerRole, callerUser } = authResult;
+    const { adminClient } = authResult;
 
-    let query = adminClient
+    const { data, error } = await adminClient
       .from('account_templates')
-      .select('id, name, description, is_default, segments, read_only, demo_user, intraday_sq_off, auto_sqoff, showcase_auto_sqoff, sqoff_method, trading_mode, carry_rollover_day, carry_rollover_time, created_by, created_at, updated_at');
-
-    if (callerRole !== 'super_admin') {
-      // Admins only see templates they created + super admin/system templates.
-      // Other admins' templates are never visible.
-      const { data: superAdmins } = await adminClient
-        .from('profiles')
-        .select('id')
-        .eq('role', 'super_admin');
-
-      const superAdminIds = (superAdmins ?? []).map((s: { id: string }) => s.id);
-      let orFilter = `created_by.eq.${callerUser.id},created_by.is.null`;
-      if (superAdminIds.length > 0) {
-        orFilter += `,created_by.in.(${superAdminIds.join(',')})`;
-      }
-      query = query.or(orFilter);
-    }
-
-    const { data, error } = await query
+      .select('id, name, description, is_default, segments, read_only, demo_user, intraday_sq_off, auto_sqoff, showcase_auto_sqoff, sqoff_method, trading_mode, carry_rollover_day, carry_rollover_time, created_by, created_at, updated_at')
       .order('is_default', { ascending: false })
       .order('created_at', { ascending: true });
 
@@ -75,7 +57,7 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const authResult = await apiRequireAuth(request, ['MANAGE_TEMPLATES']);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerRole, callerUser } = authResult;
+    const { adminClient, callerUser } = authResult;
 
     let body: Record<string, unknown>;
     try {
@@ -88,10 +70,8 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: 'Template name is required' }, { status: 400 });
     }
 
-    // Only super admins can create a global default template
-    if (callerRole !== 'super_admin') {
-      body.is_default = false;
-    } else if (body.is_default === true) {
+    // If new template is default, unset all others first
+    if (body.is_default === true) {
       await adminClient
         .from('account_templates')
         .update({ is_default: false })

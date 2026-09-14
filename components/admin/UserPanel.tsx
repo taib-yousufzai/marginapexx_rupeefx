@@ -34,7 +34,7 @@ export default function UserPanel({ open, onClose, onCreateUser, selectedUser, o
     setUsersLoading(true);
     const endpoint = isBroker ? `/api/broker/users` : `/api/admin/users?demo=${isDemoMode}`;
     apiCall(endpoint, { method: 'GET' }).then(({ ok, status, data }) => {
-      if (ok && Array.isArray(data)) {
+      if (ok) {
         const items = (data as UserListItem[]).map(u => ({
           ...u,
           role: u.role.toUpperCase(),

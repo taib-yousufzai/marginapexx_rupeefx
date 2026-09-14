@@ -19,6 +19,7 @@ import { buildSymbolInfo, getCanonicalSymbol } from './symbolResolver';
 export class Datafeed implements IBasicDataFeed {
   private readonly realtimeProvider: RealtimeProvider;
   private readonly lastBarCache = new Map<string, Bar>();
+  private static readonly barRangeCache = new Map<string, { bars: Bar[]; noData: boolean; expiry: number }>();
   private firstBarFired = false;
   private firstRealtimeTickLogged = false;
   private getBarsCallNum = 0;
@@ -99,12 +100,23 @@ export class Datafeed implements IBasicDataFeed {
     console.log(`[PROD-CHART] timestamp=${Date.now()} loadId=${this.loadId} symbol=${canonicalSymbol} resolution=${resolution} event=GET_BARS_START elapsed=${startElapsed}ms callNum=${currentCallNum} firstDataRequest=${periodParams.firstDataRequest}`);
     this.onProgress?.(`getBars_start_${currentCallNum}`);
 
+    const clientCacheKey = `${canonicalSymbol}:${resolution}:${periodParams.from}:${periodParams.to}`;
+    const cachedRange = Datafeed.barRangeCache.get(clientCacheKey);
+    if (cachedRange && cachedRange.expiry > Date.now()) {
+      console.log(`[PROD-CHART] CLIENT MEM CACHE HIT for ${clientCacheKey}`);
+      this.onProgress?.(`getBars_end_${currentCallNum}`);
+      onResult(cachedRange.bars, { noData: cachedRange.noData });
+      return;
+    }
+
     try {
       const { bars, noData } = await fetchBars(symbolInfo, resolution, periodParams, this.segment, this.loadId, currentCallNum, this.loadStartTime);
       const elapsed = (performance.now() - this.loadStartTime).toFixed(1);
       console.log(`[PROD-CHART] timestamp=${Date.now()} loadId=${this.loadId} symbol=${canonicalSymbol} resolution=${resolution} event=GET_BARS_END elapsed=${elapsed}ms callNum=${currentCallNum} barCount=${bars.length} noData=${noData}`);
       this.onProgress?.(`getBars_end_${currentCallNum}`);
       
+      Datafeed.barRangeCache.set(clientCacheKey, { bars, noData, expiry: Date.now() + 30000 });
+
       if (bars.length > 0 && (periodParams.firstDataRequest === undefined || periodParams.firstDataRequest)) {
         const firstBar = bars[0] as Bar;
         const lastBar = bars[bars.length - 1] as Bar;

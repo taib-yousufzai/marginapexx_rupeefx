@@ -1,5 +1,5 @@
 'use client';
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { signOut } from '@/lib/auth';
 import AnimatedLoader from '@/components/AnimatedLoader';
@@ -72,52 +72,30 @@ export default function UsersPage({ selectedUser: _selectedUser, onSelectUser, o
   const [toast, setToast] = useState<ToastState>(null);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
-  const latestRequestIdRef = useRef(0);
-  const inFlightRef = useRef(false);
 
   const fetchUsers = useCallback((silent = false) => {
-    if (silent && inFlightRef.current) return;
-    inFlightRef.current = true;
-    const currentRequestId = ++latestRequestIdRef.current;
-
     if (!silent) setUsersLoading(true);
-    apiCall(`/api/admin/users?demo=${isDemoMode}`, { method: 'GET' })
-      .then(({ ok, status, data }) => {
-        if (currentRequestId !== latestRequestIdRef.current) return;
-        if (ok && Array.isArray(data)) {
-          setUsers((data as UserListItem[]).map(mapUserListItem));
-        } else if (status === 401) {
-          signOut();
-          router.replace('/login');
-        } else if (status === 403) {
-          setToast({ message: 'Access Denied', type: 'error' });
-        } else if (!silent) {
-          setToast({ message: 'Server Error', type: 'error' });
-        }
-      })
-      .catch((err: unknown) => {
-        if (currentRequestId !== latestRequestIdRef.current) return;
-        if (!silent) {
-          setToast({ message: err instanceof Error ? err.message : 'Network error', type: 'error' });
-        }
-      })
-      .finally(() => {
-        if (currentRequestId === latestRequestIdRef.current) {
-          inFlightRef.current = false;
-          setUsersLoading(false);
-        }
-      });
+    apiCall(`/api/admin/users?demo=${isDemoMode}`, { method: 'GET' }).then(({ ok, status, data }) => {
+      if (ok) {
+        setUsers((data as UserListItem[]).map(mapUserListItem));
+      } else if (status === 401) {
+        signOut();
+        router.replace('/login');
+      } else if (status === 403) {
+        setToast({ message: 'Access Denied', type: 'error' });
+      } else {
+        setToast({ message: 'Server Error', type: 'error' });
+      }
+      setUsersLoading(false);
+    });
   }, [router, isDemoMode]);
 
   useEffect(() => {
-    fetchUsers(false);
+    setTimeout(() => fetchUsers(), 0);
     const interval = setInterval(() => {
-      fetchUsers(true); // silent refresh
-    }, 2000);
-    return () => {
-      clearInterval(interval);
-      inFlightRef.current = false;
-    };
+      fetchUsers(true); // silent refresh every second
+    }, 1000);
+    return () => clearInterval(interval);
   }, [fetchUsers]);
 
   const handleDelete = () => {
@@ -237,7 +215,7 @@ export default function UsersPage({ selectedUser: _selectedUser, onSelectUser, o
       </div>
 
       <div className="adm-users-list">
-        {usersLoading && users.length === 0 ? (
+        {usersLoading ? (
           <div style={{ padding: '40px 0', width: '100%' }}>
             <AnimatedLoader text="Loading users..." fullScreen={false} />
           </div>

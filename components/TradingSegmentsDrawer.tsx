@@ -261,7 +261,15 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, added
   const [expandedSubcategories, setExpandedSubcategories] = useState<Record<string, boolean>>({});
   const [allowedSegments, setAllowedSegments] = useState<string[]>([]);
   const [rawOptionInstruments, setRawOptionInstruments] = useState<Record<string, Instrument[]>>({});
-  const [librarySegments, setLibrarySegments] = useState<Segment[] | null>(null);
+  const [librarySegments, setLibrarySegments] = useState<Segment[] | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('cached_drawer_segments');
+        if (cached) return JSON.parse(cached);
+      } catch (_) {}
+    }
+    return null;
+  });
 
   const { quotes } = useMarketQuotes(UNDERLYING_QUOTE_KEYS);
 
@@ -280,9 +288,8 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, added
     fetchAllowedSegments();
   }, []);
 
-  // Fetch full instrument hierarchy from library endpoint when drawer opens
+  // Fetch full instrument hierarchy from library endpoint on mount so opening drawer is instant (0ms)
   useEffect(() => {
-    if (!isOpen) return;
     let isSubscribed = true;
 
     async function loadLibrary() {
@@ -325,6 +332,9 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, added
             };
           });
           setLibrarySegments(mapped);
+          try {
+            localStorage.setItem('cached_drawer_segments', JSON.stringify(mapped));
+          } catch (_) {}
         }
       } catch (err) {
         console.error('Failed to load library segments', err);
@@ -333,7 +343,7 @@ export default function TradingSegmentsDrawer({ isOpen, onClose, onSelect, added
 
     loadLibrary();
     return () => { isSubscribed = false; };
-  }, [isOpen]);
+  }, []);
 
   // Fetch live option contracts for option subcategories when drawer opens
   useEffect(() => {

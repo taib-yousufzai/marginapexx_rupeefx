@@ -48,6 +48,11 @@ vi.mock('@supabase/supabase-js', () => ({
   })),
 }));
 
+vi.mock('@/lib/hierarchy', () => ({
+  isUserInHierarchy: vi.fn().mockResolvedValue(true),
+  getDescendantUserIds: vi.fn().mockResolvedValue(null),
+}));
+
 // ---------------------------------------------------------------------------
 // Import handlers AFTER mocks are set up
 // ---------------------------------------------------------------------------
@@ -626,7 +631,7 @@ describe('Admin API - Property 8: DELETE never calls auth.admin.deleteUser', () 
         async (userId) => {
           vi.clearAllMocks();
           try {
-            const { getRedisClient } = await import('../../../../../lib/redis');
+            const { getRedisClient } = await import('@/lib/redis');
             const redis = getRedisClient();
             if (redis && typeof (redis as any).flushall === 'function') {
               await (redis as any).flushall();

@@ -47,11 +47,11 @@ export async function POST(request: NextRequest) {
       if (!email) {
         return NextResponse.json({ error: 'Missing email address' }, { status: 400 });
       }
-      const emailSubject = subject || 'Test Notification from NiveshX Trading';
-      const emailMessage = message || 'This is a test notification from NiveshX Trading verifying SendGrid/Gmail SMTP integration.';
+      const emailSubject = subject || 'Test Notification from MarginApex';
+      const emailMessage = message || 'This is a test notification from MarginApex verifying SendGrid/Gmail SMTP integration.';
       const emailHtml = `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px">
-          <h2 style="color:#1a1a2e;margin-bottom:8px">NiveshX Trading Test</h2>
+          <h2 style="color:#1a1a2e;margin-bottom:8px">MarginApex Test</h2>
           <p style="color:#444;margin-bottom:24px">${emailMessage}</p>
         </div>
       `;
@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
       if (!phone) {
         return NextResponse.json({ error: 'Missing phone number' }, { status: 400 });
       }
-      const smsMessage = message || 'This is a test SMS from NiveshX Trading verifying Twilio SMS integration.';
+      const smsMessage = message || 'This is a test SMS from MarginApex verifying Twilio SMS integration.';
       const smsRes = await sendSms(phone, smsMessage);
       results.sms = smsRes;
     }

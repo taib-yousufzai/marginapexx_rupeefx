@@ -1,6 +1,4 @@
 import { requireAdmin } from '../../../_auth';
-import { getRole } from '@/lib/auth';
-import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 export type SegmentSettingRow = {
   id: string;
@@ -42,14 +40,10 @@ export async function GET(
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerUser } = authResult;
-    const callerRole = getRole(callerUser);
+    const { adminClient } = authResult;
 
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
-
-    const denied = await assertUserInHierarchy(adminClient, callerUser.id, id, callerRole);
-    if (denied) return denied;
 
     const { data, error } = await adminClient
       .from('scalper_segment_settings')
@@ -75,14 +69,10 @@ export async function POST(
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerUser } = authResult;
-    const callerRole = getRole(callerUser);
+    const { adminClient } = authResult;
 
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
-
-    const denied = await assertUserInHierarchy(adminClient, callerUser.id, id, callerRole);
-    if (denied) return denied;
 
     let body: unknown;
     try {

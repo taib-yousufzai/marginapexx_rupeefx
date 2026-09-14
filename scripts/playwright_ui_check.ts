@@ -2,53 +2,53 @@ import { chromium } from 'playwright-core';
 import path from 'path';
 
 async function checkDashboardUI() {
-  console.log('=== RUNNING PLAYWRIGHT DASHBOARD UI VERIFICATION ===\n');
+  console.log('=== RUNNING PLAYWRIGHT TRADING DASHBOARD & OPTIMISTIC ORDER VERIFICATION ===\n');
 
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  console.log('1. Navigating to login page http://localhost:3000...');
-  await page.goto('http://localhost:3000', { waitUntil: 'networkidle' });
+  console.log('1. Navigating to http://localhost:3000/login...');
+  await page.goto('http://localhost:3000/login', { waitUntil: 'networkidle' });
 
-  // Click Try Demo Account
-  console.log('2. Clicking "Try Demo Account"...');
-  const demoBtn = page.locator('text="Try Demo Account"').first();
-  await demoBtn.click();
+  console.log('2. Entering demo credentials (demo@gmail.com)...');
+  await page.fill('#username', 'demo@gmail.com');
+  await page.fill('#password', 'demo123');
 
-  // Wait for main dashboard to load
+  console.log('3. Clicking Sign in...');
+  await page.click('button[type="submit"]');
+
+  // Handle Risk Rules popup if displayed
+  try {
+    const acceptBtn = page.locator('button:has-text("I Understand"), button:has-text("Accept"), button:has-text("Agree")').first();
+    if (await acceptBtn.isVisible({ timeout: 4000 })) {
+      console.log('4. Accepting risk rules popup...');
+      await acceptBtn.click();
+    }
+  } catch {}
+
   await page.waitForTimeout(3000);
-  console.log('3. Dashboard loaded! Current URL:', page.url());
+  console.log('5. Current URL after login:', page.url());
 
   // Capture full trading dashboard screenshot
   const screenshotDash = path.join(process.cwd(), 'ui_dashboard.png');
   await page.screenshot({ path: screenshotDash });
   console.log(`📸 Saved Trading Dashboard screenshot: ${screenshotDash}`);
 
-  // Find Orders tab or section
-  const ordersTab = page.locator('text="Orders"').first();
-  if (await ordersTab.isVisible()) {
-    console.log('4. Clicking "Orders" tab...');
-    await ordersTab.click();
-    await page.waitForTimeout(1500);
-    const screenshotOrders = path.join(process.cwd(), 'ui_orders_tab.png');
-    await page.screenshot({ path: screenshotOrders });
-    console.log(`📸 Saved Open Orders tab screenshot: ${screenshotOrders}`);
-  }
-
-  // Find Positions tab or section
-  const positionsTab = page.locator('text="Positions"').first();
-  if (await positionsTab.isVisible()) {
-    console.log('5. Clicking "Positions" tab...');
-    await positionsTab.click();
-    await page.waitForTimeout(1500);
-    const screenshotPos = path.join(process.cwd(), 'ui_positions_tab.png');
-    await page.screenshot({ path: screenshotPos });
-    console.log(`📸 Saved Positions tab screenshot: ${screenshotPos}`);
+  // Navigate to Option Chain page if available
+  console.log('6. Testing Option Chain / Order Entry UI...');
+  try {
+    await page.goto('http://localhost:3000/option-chain', { waitUntil: 'networkidle', timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(2000);
+    const screenshotOpt = path.join(process.cwd(), 'ui_option_chain.png');
+    await page.screenshot({ path: screenshotOpt });
+    console.log(`📸 Saved Option Chain screenshot: ${screenshotOpt}`);
+  } catch (e) {
+    console.log('Option chain page check skipped:', e);
   }
 
   await browser.close();
-  console.log('\n=== PLAYWRIGHT DASHBOARD UI VERIFICATION COMPLETE ===');
+  console.log('\n=== PLAYWRIGHT UI VERIFICATION COMPLETE ===');
 }
 
 checkDashboardUI().catch(err => {

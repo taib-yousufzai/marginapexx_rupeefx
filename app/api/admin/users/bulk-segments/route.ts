@@ -5,24 +5,18 @@
  */
 
 import { requireAdmin } from '../../_auth';
-import { getRole } from '@/lib/auth';
-import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 export async function POST(request: Request): Promise<Response> {
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerUser } = authResult;
-    const callerRole = getRole(callerUser);
+    const { adminClient } = authResult;
 
     const { broker, segments, config } = await request.json();
 
     if (!broker || !segments || !Array.isArray(segments) || segments.length === 0 || !config) {
       return Response.json({ error: 'Missing required fields' }, { status: 400 });
     }
-
-    const denied = await assertUserInHierarchy(adminClient, callerUser.id, broker, callerRole);
-    if (denied) return denied;
 
     // 1. Find all users under this broker (including sub-brokers and clients)
     const { data: profiles, error: pError } = await adminClient

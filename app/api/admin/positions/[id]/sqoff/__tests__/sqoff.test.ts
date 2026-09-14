@@ -11,8 +11,7 @@ vi.mock('../../../../_auth', () => {
       adminClient: {
         rpc: mockRpc,
         from: mockFrom,
-      },
-      callerUser: { id: 'admin-1', user_metadata: { role: 'super_admin' } },
+      }
     }),
   };
 });
@@ -30,9 +29,9 @@ describe('Admin Square-Off POST /api/admin/positions/[id]/sqoff', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     const { requireAdmin } = await import('../../../../_auth');
-    const authResult = await requireAdmin(null as any);
-    mockRpc = (authResult as any).adminClient.rpc;
-    mockFrom = (authResult as any).adminClient.from;
+    const authResult = (await requireAdmin(null as any)) as any;
+    mockRpc = authResult.adminClient.rpc;
+    mockFrom = authResult.adminClient.from;
 
     mockFrom.mockImplementation((table: string) => {
       const qb: any = {

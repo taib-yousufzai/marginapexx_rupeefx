@@ -5,7 +5,7 @@ export const ALL_THEMES: Theme[] = ['light', 'dark', 'black', 'blue'];
 export function getSavedTheme(): Theme {
   if (typeof window === 'undefined') return 'light';
   try {
-    const saved = (localStorage.getItem('niveshXTheme') || localStorage.getItem('marginApexTheme')) as Theme | null;
+    const saved = localStorage.getItem('marginApexTheme') as Theme | null;
     if (saved && ALL_THEMES.includes(saved)) {
       return saved;
     }
@@ -37,7 +37,7 @@ export function applyTheme(theme: Theme): void {
   document.body.setAttribute('data-theme', validTheme);
 
   try {
-    localStorage.setItem('niveshXTheme', validTheme);
+    localStorage.setItem('marginApexTheme', validTheme);
   } catch (e) {}
 
   // Dispatch custom event for reactive UI components across the app

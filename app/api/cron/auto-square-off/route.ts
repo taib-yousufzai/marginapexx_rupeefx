@@ -171,14 +171,15 @@ export async function GET(request: Request) {
 
         // --- AUTO SQUARE OFF INTRADAY POSITIONS ---
         const liveQuote = await fetchQuote(pos.symbol, pos.settlement);
-        if (!liveQuote) {
-          console.error(`[Auto Sq-Off] No live bid/ask for ${pos.symbol}. Cannot square off position ${pos.id} without correct price. Skipping.`);
+        const basePrice = liveQuote
+          ? (pos.side === 'BUY' ? liveQuote.bid : liveQuote.ask)
+          : Number(pos.ltp || pos.entry_price || 0);
+
+        if (!basePrice || basePrice <= 0) {
+          console.error(`[Auto Sq-Off] No valid price for ${pos.symbol} (pos ${pos.id}). Skipping.`);
           results.intradayErrors = (results.intradayErrors || 0) + 1;
           continue;
         }
-
-        // BUY position exits via SELL → use BID; SELL position exits via BUY → use ASK.
-        const basePrice = pos.side === 'BUY' ? liveQuote.bid : liveQuote.ask;
 
         let exitPrice = basePrice;
         if (segSetting) {

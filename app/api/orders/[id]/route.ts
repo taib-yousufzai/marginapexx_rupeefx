@@ -500,6 +500,37 @@ async function handleModifyOrder(
 
     console.log(`[EXEC_TRACE ${new Date().toISOString()}] NEW_ORDER_INSERTED_SUCCESS | New Order ID: ${newOrder.id} | Status: ${newOrder.status} | Type: ${newOrder.order_type}`);
 
+    // Sync position's stop_loss / target whenever a real exit order is modified.
+    // This keeps the positions table in sync so that if the new order is later
+    // cancelled, the cancel handler can reliably clear these fields.
+    if (targetIsExit && resolvedLinkedPosId) {
+      const isUuid = /^[0-9a-f-]{36}$/i.test(String(resolvedLinkedPosId));
+      if (isUuid) {
+        const posFields: any = {};
+        if (targetOrderType === 'GTT') {
+          posFields.stop_loss = newOrderPayload.stop_loss ?? null;
+          posFields.target = newOrderPayload.target ?? null;
+        } else if (targetOrderType === 'SL' || targetOrderType === 'SLM') {
+          posFields.stop_loss = newOrderPayload.trigger_price ?? null;
+          posFields.target = null;
+        } else if (targetOrderType === 'LIMIT' || targetOrderType === 'TARGET') {
+          posFields.stop_loss = null;
+          posFields.target = newOrderPayload.price ?? newOrderPayload.client_price ?? null;
+        } else {
+          // MARKET or other types clear everything
+          posFields.stop_loss = null;
+          posFields.target = null;
+        }
+        await admin
+          .from('positions')
+          .update(posFields)
+          .eq('id', resolvedLinkedPosId)
+          .eq('user_id', user.id)
+          .in('status', ['open', 'active']);
+        console.log(`[EXEC_TRACE] POSITION_SYNCED | posId=${resolvedLinkedPosId} | fields=${JSON.stringify(posFields)}`);
+      }
+    }
+
     return NextResponse.json({
       success: true,
       order: newOrder,
@@ -566,18 +597,59 @@ async function handleCancelOrder(
       });
     }
 
-    // Update order status if it's still PENDING
+    // Update order status if it's still PENDING or TRIGGER_PENDING
     const { data, error } = await admin
       .from('orders')
       .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('user_id', user.id)
-      .eq('status', 'PENDING')
+      .in('status', ['PENDING', 'TRIGGER_PENDING'])
       .select()
       .single();
 
     if (error) {
       return NextResponse.json({ error: 'Could not cancel order. It might already be executed or cancelled.' }, { status: 400 });
+    }
+
+    // After cancelling any real exit order (GTT, SL, SLM, TARGET/LIMIT exit),
+    // ALWAYS clear stop_loss AND target on the linked position so the virtual
+    // pos-sl-* / pos-target-* / pos-gtt-* orders don't reappear.
+    const isExitOrder = data && (
+      data.is_exit === true ||
+      data.is_exit === 'true' ||
+      data.is_exit === 't' ||
+      data.is_exit === '1' ||
+      data.is_exit === 1
+    );
+    if (isExitOrder) {
+      // Always wipe BOTH stop_loss and target — a cancelled exit order means
+      // none of the exit instruction should remain on the position.
+      const clearFields = { stop_loss: null, target: null };
+
+      // Strategy 1: clear by linked_position_id or info if it's a UUID
+      const linkedPosId = data.linked_position_id || data.info || null;
+      const isUuid = linkedPosId && /^[0-9a-f-]{36}$/i.test(String(linkedPosId));
+      if (isUuid) {
+        await admin
+          .from('positions')
+          .update(clearFields)
+          .eq('id', linkedPosId)
+          .eq('user_id', user.id)
+          .in('status', ['open', 'active']);
+        console.log(`[CANCEL] Cleared SL/Target on position ${linkedPosId}`);
+      } else {
+        // Strategy 2 (fallback): clear by symbol — find the open position for this symbol
+        // This handles old orders where info was overwritten with a note instead of UUID
+        if (data.symbol) {
+          await admin
+            .from('positions')
+            .update(clearFields)
+            .eq('user_id', user.id)
+            .eq('symbol', data.symbol)
+            .in('status', ['open', 'active']);
+          console.log(`[CANCEL] Cleared SL/Target on positions for symbol ${data.symbol} (fallback)`);
+        }
+      }
     }
 
     return NextResponse.json({ order: data });

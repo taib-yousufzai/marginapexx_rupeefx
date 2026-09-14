@@ -43,20 +43,6 @@ export default function AdminPage() {
   const [selectedUser, setSelectedUser] = useState<AdminUserPayload>({ id: '', role: '' });
   const [userRole, setUserRole] = useState<string>('');
   const [isDemoMode, setIsDemoMode] = useState(false);
-
-  useEffect(() => {
-    const saved = localStorage.getItem('niveshx_admin_demo_mode');
-    if (saved !== null) {
-      setIsDemoMode(saved === 'true');
-    }
-  }, []);
-
-  const handleToggleDemoMode = (enabled: boolean) => {
-    setIsDemoMode(enabled);
-    try {
-      localStorage.setItem('niveshx_admin_demo_mode', String(enabled));
-    } catch {}
-  };
   const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
 
   const toggleGroup = (groupKey: string) => setCollapsedGroups(prev => ({ ...prev, [groupKey]: !prev[groupKey] }));
@@ -227,7 +213,7 @@ export default function AdminPage() {
               {isDemoMode ? 'DEMO ENVIRONMENT' : 'LIVE ENVIRONMENT'}
             </span>
             <label className="adm-switch" style={{ margin: 0 }}>
-              <input type="checkbox" checked={isDemoMode} onChange={e => handleToggleDemoMode(e.target.checked)} />
+              <input type="checkbox" checked={isDemoMode} onChange={e => setIsDemoMode(e.target.checked)} />
               <span className="adm-slider round"></span>
             </label>
           </div>

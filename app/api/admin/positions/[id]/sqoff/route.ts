@@ -17,8 +17,6 @@
  */
 
 import { requireAdmin } from '../../../_auth';
-import { getRole } from '@/lib/auth';
-import { assertUserInHierarchy } from '@/lib/hierarchy';
 import { calculateCarryBrokerage } from '@/lib/trading/BrokerageCalculator';
 
 export async function POST(
@@ -29,8 +27,7 @@ export async function POST(
     // Step 1: Authenticate and authorize the caller
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerUser } = authResult;
-    const callerRole = getRole(callerUser);
+    const { adminClient } = authResult;
 
     // Step 2: Resolve params
     const resolvedParams = await Promise.resolve(params);
@@ -47,9 +44,6 @@ export async function POST(
     if (fetchError || position === null) {
       return Response.json({ error: 'Position not found or already closed' }, { status: 404 });
     }
-
-    const denied = await assertUserInHierarchy(adminClient, callerUser.id, position.user_id, callerRole);
-    if (denied) return denied;
 
     // Step 4: Fetch live bid/ask from Ticker Daemon.
     // BUY position exits via SELL → use BID; SELL position exits via BUY → use ASK.

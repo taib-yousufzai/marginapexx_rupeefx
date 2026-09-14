@@ -75,10 +75,9 @@ export default function LoginPage() {
       if (!result.error) {
         const role = getRole(result.user ?? null);
         const isAdmin = role === 'admin' || role === 'super_admin';
-        const isBroker = role === 'broker';
-        const route = isAdmin ? '/admin' : isBroker ? '/broker' : '/';
+        const route = isAdmin ? '/admin' : '/';
         
-        if (isAdmin || isBroker || result.user?.email === 'demo@gmail.com') {
+        if (isAdmin || result.user?.email === 'demo@gmail.com') {
           router.replace(route);
         } else {
           setPendingRoute(route);
@@ -124,10 +123,9 @@ export default function LoginPage() {
       if (!result.error) {
         const role = getRole(result.user ?? null);
         const isAdmin = role === 'admin' || role === 'super_admin';
-        const isBroker = role === 'broker';
-        const route = isAdmin ? '/admin' : isBroker ? '/broker' : '/';
+        const route = isAdmin ? '/admin' : '/';
         
-        if (isAdmin || isBroker || result.user?.email === 'demo@gmail.com') {
+        if (isAdmin || result.user?.email === 'demo@gmail.com') {
           router.replace(route);
         } else {
           setPendingRoute(route);
@@ -149,8 +147,8 @@ export default function LoginPage() {
     <div className="login-page">
       {/* Branding — matches nav bar style (Requirement 1.3) */}
       <div className="login-branding">
-        <span className="login-brand-margin">NIVESHX </span>
-        <span className="login-brand-apex">TRADING</span>
+        <span className="login-brand-margin">MARGIN</span>
+        <span className="login-brand-apex">APEX</span>
       </div>
 
       {/* Auth card */}
@@ -245,7 +243,7 @@ export default function LoginPage() {
             type="submit"
             className="login-submit-btn"
             disabled={isLoading}
-            aria-label="Log in to NiveshX Trading"
+            aria-label="Log in to Margin Apex"
             suppressHydrationWarning
           >
             {isLoading ? (

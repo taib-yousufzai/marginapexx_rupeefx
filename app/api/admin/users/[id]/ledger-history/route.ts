@@ -18,8 +18,6 @@
 
 import { requireAdmin } from '../../../_auth';
 import type { EntryType, LedgerEntry } from '../../../../../../lib/ledger';
-import { getRole } from '@/lib/auth';
-import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 const VALID_ENTRY_TYPES: EntryType[] = [
   'DEPOSIT',
@@ -38,15 +36,11 @@ export async function GET(
     // Returns 403 if the caller does not hold admin / super_admin / broker role
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
-    const { adminClient, callerUser } = authResult;
-    const callerRole = getRole(callerUser);
+    const { adminClient } = authResult;
 
     // Step 2: Resolve route param
     const resolvedParams = await Promise.resolve(params);
     const userId = resolvedParams.id;
-
-    const denied = await assertUserInHierarchy(adminClient, callerUser.id, userId, callerRole);
-    if (denied) return denied;
 
     // Step 3: Verify the target user exists
     const { data: profile, error: profileError } = await adminClient

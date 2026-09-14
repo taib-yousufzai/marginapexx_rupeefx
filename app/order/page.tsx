@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useMyOrders } from '@/hooks/useMyOrders';
@@ -33,34 +33,6 @@ export default function OrderPage() {
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const [chartItem, setChartItem] = useState<any>(null);
 
-  const { orders, loading: ordersLoading, error, cancelOrder, refresh } = useMyOrders();
-  const { connected: kiteConnected } = useKitePositions();
-
-  // Listen for order and position events fired anywhere in the platform so order history stays synced
-  useEffect(() => {
-    const handleUpdate = () => {
-      refresh();
-      setTimeout(refresh, 600);
-    };
-
-    // Always fetch fresh orders on mount / page navigation
-    handleUpdate();
-
-    window.addEventListener('order_placed', handleUpdate);
-    window.addEventListener('order_executed', handleUpdate);
-    window.addEventListener('position_updated', handleUpdate);
-    window.addEventListener('position-closed', handleUpdate);
-    window.addEventListener('position_closed', handleUpdate);
-
-    return () => {
-      window.removeEventListener('order_placed', handleUpdate);
-      window.removeEventListener('order_executed', handleUpdate);
-      window.removeEventListener('position_updated', handleUpdate);
-      window.removeEventListener('position-closed', handleUpdate);
-      window.removeEventListener('position_closed', handleUpdate);
-    };
-  }, [refresh]);
-
   // ── Mobile Back Button Interception ──
   useMobileBack(isSheetOpen, () => {
     setIsSheetOpen(false);
@@ -77,7 +49,6 @@ export default function OrderPage() {
     const chartOverlay = document.getElementById('chartSheetOverlay');
     if (chartSheet) chartSheet.classList.remove('open');
     if (chartOverlay) chartOverlay.classList.remove('active');
-    refresh();
   }, 'orderchart');
 
   useMobileBack(!!tradeSheetItem, () => {
@@ -100,18 +71,27 @@ export default function OrderPage() {
     }, 80);
   };
 
+  const { orders, loading: ordersLoading, error, cancelOrder, refresh } = useMyOrders();
+  const { connected: kiteConnected } = useKitePositions();
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 1800);
   };
 
-  const handleCancel = async (id: string) => {
-    const res = await cancelOrder(id);
-    if (res.success) {
-      showToast('Order cancelled successfully');
-    } else {
-      showToast(`Error: ${res.error}`);
-    }
+  const handleCancel = (id: string) => {
+    showToast('Order cancelled successfully');
+    cancelOrder(id).then(res => {
+      if (res.success) {
+        refresh();
+      } else {
+        showToast(`Error: ${res.error}`);
+        refresh();
+      }
+    }).catch((err: any) => {
+      showToast(`Error: ${err?.message || 'Cancel failed'}`);
+      refresh();
+    });
   };
 
   const handleModify = (order: any) => {
@@ -189,7 +169,7 @@ export default function OrderPage() {
               <div className="ord-header mobile-only">
                 <div className="ord-header-left">
                   <div className="ord-brand">
-                    <span>NIVESHX<span className="apex-text"> TRADING</span></span>
+                    <span>MARGIN<span className="apex-text">APEX</span></span>
                   </div>
                   <div className="ord-brand-sub">Platform Orders • Internal Execution</div>
                 </div>
@@ -321,7 +301,7 @@ export default function OrderPage() {
                       <div className="ord-row ord-row-price">
                         <span className="ord-label">{isPending ? (order.order_type === 'LIMIT' ? 'LIMIT PRICE' : 'PRICE') : 'FILL PRICE'}</span>
                         <span className={`ord-price-val ${isBuy ? 'buy-price' : 'sell-price'}`}>
-                          {fmtPrice(isPending ? (order.client_price || (order as any).price || order.trigger_price || order.fill_price) : order.fill_price)}
+                          {fmtPrice(isPending ? (order.client_price || order.price || order.trigger_price || order.fill_price) : order.fill_price)}
                         </span>
                       </div>
                       <div className="ord-row ord-row-info">
@@ -609,7 +589,7 @@ export default function OrderPage() {
         </div>
       </main>
 
-      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); refresh(); }}></div>
+      <div id="chartSheetOverlay" className="trade-sheet-overlay" onClick={() => { const sheet = document.getElementById('chartSheet'); const overlay = document.getElementById('chartSheetOverlay'); if (sheet) sheet.classList.remove('open'); if (overlay) overlay.classList.remove('active'); setChartItem(null); }}></div>
       <div id="chartSheet" className="trade-sheet" style={{ height: '100dvh', paddingBottom: '0', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 1, position: 'relative', width: '100%', overflow: 'hidden' }}>
           {chartItem && (
@@ -622,7 +602,6 @@ export default function OrderPage() {
                 if (sheet) sheet.classList.remove('open');
                 if (overlay) overlay.classList.remove('active');
                 setChartItem(null);
-                refresh();
               }}
             />
           )}

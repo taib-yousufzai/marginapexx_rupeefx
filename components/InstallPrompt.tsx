@@ -193,7 +193,7 @@ export default function InstallPrompt() {
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: '0.88rem', fontWeight: 700, lineHeight: 1.2 }}>
-              Install NiveshX Trading
+              Install Margin Apex
             </div>
             <div style={{ fontSize: '0.68rem', color: '#9CA3AF', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {isIOS ? 'Tap to get detailed iOS installation steps' : 'Add to your Home Screen'}
@@ -360,7 +360,7 @@ function IosInstallGuideModal({ isIPad, onClose }: IosInstallGuideModalProps) {
           }}>
             <i className="fas fa-mobile-alt" style={{ color: '#10B981', fontSize: '1.6rem' }} />
           </div>
-          <h3 style={{ margin: '0', fontSize: '1.25rem', fontWeight: 800 }}>Install NiveshX Trading</h3>
+          <h3 style={{ margin: '0', fontSize: '1.25rem', fontWeight: 800 }}>Install Margin Apex</h3>
           <p style={{ margin: '6px 0 0 0', fontSize: '0.8rem', color: '#9CA3AF' }}>
             Follow these steps to run in fullscreen mode on iOS Safari:
           </p>

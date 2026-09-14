@@ -7,8 +7,8 @@
  */
 
 import { requireAdmin, requireSuperAdmin } from '../../_auth';
-import { getRole } from '../../../../../lib/auth';
-import { isUserInHierarchy } from '../../../../../lib/hierarchy';
+import { getRole } from '@/lib/auth';
+import { isUserInHierarchy } from '@/lib/hierarchy';
 
 
 // Profile fields that can be updated via PATCH (password is handled separately)
@@ -46,10 +46,8 @@ export async function GET(
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
 
-    const callerRole = getRole(callerUser);
-
     // Check hierarchy permission
-    if (!await isUserInHierarchy(adminClient, callerUser.id, id, callerRole)) {
+    if (!await isUserInHierarchy(adminClient, callerUser.id, id)) {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -89,10 +87,8 @@ export async function PATCH(
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
 
-    const callerRole = getRole(callerUser);
-
     // Check hierarchy permission
-    if (!await isUserInHierarchy(adminClient, callerUser.id, id, callerRole)) {
+    if (!await isUserInHierarchy(adminClient, callerUser.id, id)) {
       return Response.json({ error: 'Forbidden' }, { status: 403 });
     }
 
@@ -158,8 +154,8 @@ export async function PATCH(
         (existingScalperResult.data ?? []).map(s => `${s.segment.toUpperCase()}-${s.side.toUpperCase()}`)
       );
 
-      const defaultSettingsRows = [];
-      const defaultScalperSettingsRows = [];
+      const defaultSettingsRows: any[] = [];
+      const defaultScalperSettingsRows: any[] = [];
 
       for (const seg of activeSegments) {
         const segUpper = seg.toUpperCase();

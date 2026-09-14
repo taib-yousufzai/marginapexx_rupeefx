@@ -111,39 +111,37 @@ BEGIN
     IF p_status = 'EXECUTED' THEN
         -- Validate exit order constraints
         IF p_is_exit THEN
-            -- Check if linked_position_id is supplied
+            -- Check if linked_position_id is supplied to anchor position side & product_type
             IF p_linked_position_id IS NOT NULL THEN
-                SELECT side, qty_open, product_type
-                INTO v_pos_side, v_pos_qty_open, p_product_type
+                SELECT side, product_type
+                INTO v_pos_side, p_product_type
                 FROM public.positions
                 WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active');
             END IF;
 
-            -- If linked position not found or not supplied, query by user, symbol, opposite side
+            -- Always calculate total open position quantity across all lots for this symbol & opposite side
+            SELECT side, COALESCE(SUM(qty_open), 0)
+            INTO v_pos_side, v_pos_qty_open
+            FROM public.positions
+            WHERE user_id = p_user_id 
+              AND (symbol = p_symbol OR symbol ILIKE p_symbol OR symbol ILIKE split_part(p_symbol, ':', 2))
+              AND LOWER(status) IN ('open', 'active')
+              AND product_type = p_product_type
+              AND side <> p_side
+            GROUP BY side
+            LIMIT 1;
+
+            -- Fall back to any open position for this symbol with opposite side if product_type differed
             IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
-                SELECT side, COALESCE(SUM(qty_open), 0)
-                INTO v_pos_side, v_pos_qty_open
+                SELECT side, COALESCE(SUM(qty_open), 0), product_type
+                INTO v_pos_side, v_pos_qty_open, p_product_type
                 FROM public.positions
                 WHERE user_id = p_user_id 
                   AND (symbol = p_symbol OR symbol ILIKE p_symbol OR symbol ILIKE split_part(p_symbol, ':', 2))
                   AND LOWER(status) IN ('open', 'active')
-                  AND product_type = p_product_type
                   AND side <> p_side
-                GROUP BY side
+                GROUP BY side, product_type
                 LIMIT 1;
-
-                -- Fall back to any open position for this symbol with opposite side if product_type differed
-                IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
-                    SELECT side, COALESCE(SUM(qty_open), 0), product_type
-                    INTO v_pos_side, v_pos_qty_open, p_product_type
-                    FROM public.positions
-                    WHERE user_id = p_user_id 
-                      AND (symbol = p_symbol OR symbol ILIKE p_symbol OR symbol ILIKE split_part(p_symbol, ':', 2))
-                      AND LOWER(status) IN ('open', 'active')
-                      AND side <> p_side
-                    GROUP BY side, product_type
-                    LIMIT 1;
-                END IF;
             END IF;
 
             IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN

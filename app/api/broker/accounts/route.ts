@@ -6,7 +6,7 @@
 
 import { requireBroker } from '../_auth';
 import { NextResponse } from 'next/server';
-import { aggregatePositions } from '@/lib/admin/accountAggregation';
+import { aggregatePositions } from '../../admin/accounts/route';
 
 interface Profile {
   id: string;

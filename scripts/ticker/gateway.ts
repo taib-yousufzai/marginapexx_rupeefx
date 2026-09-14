@@ -25,9 +25,30 @@ export class WebSocketGateway extends EventEmitter {
     this.wss = new WebSocketServer({ noServer: true });
     this.pubsubClient = createRedisPubSubClient();
 
+    // Subscribe to global order events channel for instant execution broadcasting
+    this.pubsubClient.subscribe('order_events').catch((err: any) => {
+      logger.error({ err }, 'Failed to subscribe to order_events PubSub channel');
+    });
+
     // Set up Redis Pub/Sub message handler
     this.pubsubClient.on('message', (channel: string, message: string) => {
       telemetry.recordWsMessageReceived();
+
+      if (channel === 'order_events') {
+        try {
+          const orderEvt = JSON.parse(message);
+          const payload = JSON.stringify({ type: 'ORDER_UPDATE', data: orderEvt });
+          for (const conn of this.connections) {
+            if (conn.ws.readyState === WebSocket.OPEN) {
+              conn.ws.send(payload);
+            }
+          }
+        } catch (err) {
+          logger.error({ err, channel }, 'Failed to parse order_events message from Redis PubSub');
+        }
+        return;
+      }
+
       const prefix = 'market:ticks:';
       if (channel.startsWith(prefix)) {
         const symbol = channel.substring(prefix.length);

@@ -69,25 +69,17 @@ export default function FundsPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const copyToClipboard = (text: string, label: string) => {
-    if (!text || text === '-') return;
+    if (!text) return;
     navigator.clipboard.writeText(text);
     setToast({ message: `${label} copied!`, type: 'success' });
     setTimeout(() => setToast(null), 2000);
   };
 
   const handleWhatsAppSupport = () => {
-    window.open('https://wa.me/917068132260', '_blank');
+    window.open('https://wa.me/918796119115', '_blank');
   };
 
   const downloadQRCode = () => {
-    if (activeAccount?.qr_image_url) {
-      const downloadLink = document.createElement("a");
-      downloadLink.href = activeAccount.qr_image_url;
-      downloadLink.download = `NiveshX_Trading_QR_${amount}.png`;
-      downloadLink.target = "_blank";
-      downloadLink.click();
-      return;
-    }
     const svg = document.querySelector(".qr-container svg") as SVGGraphicsElement;
     if (!svg) return;
     const svgData = new XMLSerializer().serializeToString(svg);
@@ -104,7 +96,7 @@ export default function FundsPage() {
       }
       const pngFile = canvas.toDataURL("image/png");
       const downloadLink = document.createElement("a");
-      downloadLink.download = `NiveshX_Trading_QR_${amount}.png`;
+      downloadLink.download = `MarginApex_QR_${amount}.png`;
       downloadLink.href = pngFile;
       downloadLink.click();
     };
@@ -387,7 +379,7 @@ export default function FundsPage() {
                             </div>
                           )}
 
-                            {depositStep === 2 && !submitted && (
+                          {depositStep === 2 && !submitted && (
                             <div className="step-2-area fadeInUp">
                               <div className="section-title" style={{ fontSize: '0.8rem', fontWeight: 800, marginBottom: '20px', color: 'var(--text-primary)' }}>
                                 PAYMENT DETAILS ({paymentMethod === 'UPI' ? 'UPI' : 'BANK'})
@@ -468,25 +460,15 @@ export default function FundsPage() {
                                     ))}
                                   </div>
                                 )}
-                                <button 
-                                  className="submit-funds-btn" 
-                                  style={{ marginTop: '24px', opacity: !activeAccount ? 0.5 : 1, cursor: !activeAccount ? 'not-allowed' : 'pointer' }}
-                                  disabled={!activeAccount}
-                                  onClick={() => setDepositStep(3)}
-                                >
+                                <button className="submit-funds-btn" style={{ marginTop: '24px' }} onClick={() => setDepositStep(3)}>
                                   I Have Paid <i className="fas fa-chevron-right"></i>
                                 </button>
-                                {!activeAccount && (
-                                  <p style={{ fontSize: '0.75rem', color: '#c0392b', marginTop: '10px', textAlign: 'center' }}>
-                                    No active deposit account is currently available. Please contact support.
-                                  </p>
-                                )}
                                 <button className="back-link" onClick={() => setDepositStep(1)} style={{ display: 'block', width: '100%', textAlign: 'center', marginTop: '16px', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}>
                                   <i className="fas fa-arrow-left"></i> Change Amount / Method
                                 </button>
                               </div>
                             </div>
-                            )}
+                          )}
 
                           {depositStep === 3 && !submitted && (
                             <div className="step-3-area fadeInUp">
@@ -581,7 +563,7 @@ export default function FundsPage() {
                     <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
                     <div className="whatsapp-content">
                       <div className="whatsapp-headline">Facing any issue? Contact Support</div>
-                      <div className="whatsapp-sub"><i className="fas fa-headset"></i> +91 7068132260 (WhatsApp)</div>
+                      <div className="whatsapp-sub"><i className="fas fa-headset"></i> Get help on WhatsApp</div>
                     </div>
                     <div className="whatsapp-arrow"><i className="fas fa-chevron-right"></i></div>
                   </div>

@@ -206,7 +206,7 @@ export default function ChartContainer({
         timezone: 'Asia/Kolkata',
         theme: isDark ? 'dark' : 'light',
         autosize: true,
-        client_id: 'niveshx_trading',
+        client_id: 'marginapexx',
         user_id: 'public_user',
         disabled_features: [
           'header_widget',
@@ -304,7 +304,7 @@ export default function ChartContainer({
           tvWidgetRef.current.save((state: any) => {
             if (state) {
               try {
-                localStorage.setItem('niveshx_tv_layout', JSON.stringify(state));
+                localStorage.setItem('marginapexx_tv_layout', JSON.stringify(state));
               } catch (storageErr) {
                 // Quietly handle QuotaExceededError when browser localStorage capacity is reached
               }

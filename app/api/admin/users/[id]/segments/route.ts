@@ -10,7 +10,6 @@
 
 import { requireAdmin } from '../../../_auth';
 import { getRole } from '../../../../../../lib/auth';
-import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,10 +68,18 @@ export async function GET(
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
 
-    // Scope access to users within caller's hierarchy
+    // Scope broker access to their own child users
     const callerRole = getRole(callerUser);
-    const denied = await assertUserInHierarchy(adminClient, callerUser.id, id, callerRole);
-    if (denied) return denied;
+    if (callerRole === 'broker') {
+      const { data: targetProfile, error: targetError } = await adminClient
+        .from('profiles')
+        .select('parent_id')
+        .eq('id', id)
+        .single();
+      if (targetError || !targetProfile || targetProfile.parent_id !== callerUser.id) {
+        return Response.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    }
 
     const url = new URL(request.url);
     const mode = url.searchParams.get('mode') ?? 'normal';
@@ -117,10 +124,18 @@ export async function POST(
     const resolvedParams = await Promise.resolve(params);
     const id = resolvedParams.id;
 
-    // Scope updates to users within caller's hierarchy
+    // Scope broker updates to their own child users
     const callerRole = getRole(callerUser);
-    const denied = await assertUserInHierarchy(adminClient, callerUser.id, id, callerRole);
-    if (denied) return denied;
+    if (callerRole === 'broker') {
+      const { data: targetProfile, error: targetError } = await adminClient
+        .from('profiles')
+        .select('parent_id')
+        .eq('id', id)
+        .single();
+      if (targetError || !targetProfile || targetProfile.parent_id !== callerUser.id) {
+        return Response.json({ error: 'Forbidden' }, { status: 403 });
+      }
+    }
 
     // Step 3: Parse JSON body
     let body: unknown;

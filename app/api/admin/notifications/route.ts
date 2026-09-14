@@ -9,31 +9,18 @@
  */
 
 import { requireAdmin } from '../_auth';
-import { getRole } from '@/lib/auth';
-import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 export async function POST(request: Request) {
   try {
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
     const { adminClient, callerUser } = authResult;
-    const callerRole = getRole(callerUser);
 
     const body = await request.json();
     const { target, userId, title, message } = body;
 
     if (!title || !message) {
       return Response.json({ error: 'Title and message are required' }, { status: 400 });
-    }
-
-    if (callerRole !== 'super_admin') {
-      if (['All Users', 'all', 'active', 'brokers'].includes(target)) {
-        return Response.json({ error: 'Forbidden: Only Super Admins can send system-wide broadcasts' }, { status: 403 });
-      }
-      if (userId) {
-        const denied = await assertUserInHierarchy(adminClient, callerUser.id, userId, callerRole);
-        if (denied) return denied;
-      }
     }
 
     let targetUserIds: string[] = [];
@@ -48,6 +35,7 @@ export async function POST(request: Request) {
       }
     } else if (target === 'Broker Users') {
       // Fetch all users where parent_id matches the selected user (who is likely a broker)
+      // Actually, targeted notifications in Update tab usually target the selected user's sub-users if they are a broker.
       const { data, error } = await adminClient.from('profiles').select('id').eq('parent_id', userId);
       if (!error && data) targetUserIds = data.map(u => u.id);
     } else if (target === 'All Users') {

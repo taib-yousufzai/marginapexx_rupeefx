@@ -46,14 +46,23 @@ export async function GET(request: Request): Promise<Response> {
 
     const adminClient = getAdminClient();
 
-    // Fetch balance and settlement_amount directly from profiles table
-    const { data: profile, error: profileError } = await adminClient
+    // Fetch balance from profiles with a hard 3s timeout.
+    // Without this, a Supabase 522 hangs the route for 15s+.
+    const profilePromise = adminClient
       .from('profiles')
       .select('balance, settlement_amount')
       .eq('id', user.id)
-      .single();
+      .single()
+      .abortSignal(AbortSignal.timeout(3000));
+
+    const { data: profile, error: profileError } = await profilePromise;
 
     if (profileError) {
+      const isTimeout = profileError.message?.includes('abort') || profileError.message?.includes('timeout') || profileError.code === '20';
+      if (isTimeout) {
+        // Return a safe default — client retries on the next poll cycle
+        return Response.json({ balance: 0, settlementAmount: 0 }, { status: 200 });
+      }
       console.error('[GET /api/pay/balance] profile fetch error:', profileError.message);
       return Response.json({ error: 'Internal server error' }, { status: 500 });
     }
@@ -64,6 +73,7 @@ export async function GET(request: Request): Promise<Response> {
     // Step 4: Return 200 with the computed balance and settlement amount
     // Validates: Requirements 4.4, 4.5
     return Response.json({ balance, settlementAmount }, { status: 200 });
+
   } catch {
     // Validates: Requirements 4.6
     return Response.json({ error: 'Internal server error' }, { status: 500 });

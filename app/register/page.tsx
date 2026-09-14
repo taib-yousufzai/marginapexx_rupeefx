@@ -259,8 +259,8 @@ function RegisterForm() {
     return (
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">NIVESHX </span>
-          <span className="login-brand-apex">TRADING</span>
+          <span className="login-brand-margin">MARGIN</span>
+          <span className="login-brand-apex">APEX</span>
         </div>
         <div className="login-card">
           <div style={{ textAlign: 'center', padding: '24px 0' }}>
@@ -277,8 +277,8 @@ function RegisterForm() {
   return (
     <div className="login-page">
       <div className="login-branding">
-        <span className="login-brand-margin">NIVESHX </span>
-        <span className="login-brand-apex">TRADING</span>
+        <span className="login-brand-margin">MARGIN</span>
+        <span className="login-brand-apex">APEX</span>
       </div>
 
       <div className="login-card">

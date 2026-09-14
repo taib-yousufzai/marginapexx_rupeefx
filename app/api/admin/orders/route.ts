@@ -32,17 +32,15 @@ export async function GET(request: Request): Promise<Response> {
 
     // Fetch allowed profiles based on caller's role hierarchy
     let pQuery = adminClient.from('profiles').select('id, email, full_name, client_id').eq('demo_user', isDemo);
-    if (!isDemo) {
-      if (callerRole === 'broker') {
-        pQuery = pQuery.eq('parent_id', callerId);
-      } else if (callerRole === 'admin') {
-        const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
-        if (descendantIds !== null) {
-          if (descendantIds.length === 0) {
-            return Response.json({ orders: [], total: 0 }, { status: 200 });
-          }
-          pQuery = pQuery.in('id', descendantIds);
+    if (callerRole === 'broker') {
+      pQuery = pQuery.eq('parent_id', callerId);
+    } else if (callerRole === 'admin') {
+      const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
+      if (descendantIds !== null) {
+        if (descendantIds.length === 0) {
+          return Response.json({ orders: [], total: 0 }, { status: 200 });
         }
+        pQuery = pQuery.in('id', descendantIds);
       }
     }
     const { data: profiles } = await pQuery;
@@ -88,12 +86,14 @@ export async function GET(request: Request): Promise<Response> {
       }
     }
     
-    // Always restrict to allowed profiles within caller's hierarchy / environment
-    const allowedUserIds = (profiles ?? []).map((p: any) => p.id);
-    if (allowedUserIds.length > 0) {
-      query = query.in('user_id', allowedUserIds);
-    } else {
-      return Response.json({ orders: [], total: 0 }, { status: 200 });
+    // Ensure we only fetch orders for users matching the demo environment
+    if (!userIdFilter) {
+      const allowedUserIds = (profiles ?? []).map((p: any) => p.id);
+      if (allowedUserIds.length > 0) {
+        query = query.in('user_id', allowedUserIds);
+      } else {
+        return Response.json({ orders: [], total: 0 }, { status: 200 });
+      }
     }
 
     if (dateFrom) {

@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { WatchlistItem, TabLabel, getTabForItem, getDefaultWatchlistItems } from '@/app/watchlist/page';
+import { WatchlistItem, TabLabel, getTabForItem, getDefaultWatchlistItems } from '@/lib/watchlistClassification';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { api } from '@/lib/api';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';

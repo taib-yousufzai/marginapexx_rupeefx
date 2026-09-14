@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { getRedisClient } from '@/lib/redis';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,10 +17,23 @@ export async function GET() {
   const now = new Date();
   const todayStr = now.toISOString().split('T')[0];
 
-  // Return cached expiries if fresh and for the current calendar date
+  // 1. Process memory cache
   if (cachedExpiries && cachedExpiries.dateStr === todayStr && cachedExpiries.expiresAt > Date.now()) {
     return NextResponse.json({ success: true, expiries: cachedExpiries.data });
   }
+
+  // 2. Redis cache check across server instances
+  const redis = getRedisClient();
+  const redisKey = `market:expiries:${todayStr}`;
+
+  try {
+    const raw = await redis.get(redisKey);
+    if (raw) {
+      const data = JSON.parse(raw);
+      cachedExpiries = { data, expiresAt: Date.now() + 3600 * 1000, dateStr: todayStr };
+      return NextResponse.json({ success: true, expiries: data });
+    }
+  } catch (_) {}
 
   const supabase = getSupabase();
   try {
@@ -55,12 +69,16 @@ export async function GET() {
       }
     }));
 
-    // Cache for 1 hour
+    // Cache in process memory & Redis (1 hour)
     cachedExpiries = {
       data: earliest,
       expiresAt: Date.now() + 3600 * 1000,
       dateStr: todayStr,
     };
+
+    try {
+      await redis.setex(redisKey, 3600, JSON.stringify(earliest));
+    } catch (_) {}
 
     return NextResponse.json({ success: true, expiries: earliest });
   } catch (err: any) {

@@ -7,7 +7,7 @@ import { useActivePositions } from '@/hooks/useActivePositions';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
 import OptionChainTable from './OptionChainTable';
 import TradingSegmentsDrawer from '@/components/TradingSegmentsDrawer';
-import { WatchlistItem, getTabForItem } from '@/app/watchlist/page';
+import { WatchlistItem, getTabForItem } from '@/lib/watchlistClassification';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
 import { api, ApiError } from '@/lib/api';

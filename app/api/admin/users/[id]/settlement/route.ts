@@ -21,8 +21,6 @@
  */
 
 import { requireAdmin } from '../../../_auth';
-import { getRole } from '@/lib/auth';
-import { assertUserInHierarchy } from '@/lib/hierarchy';
 
 export async function POST(
   request: Request,
@@ -33,14 +31,10 @@ export async function POST(
     const authResult = await requireAdmin(request);
     if (authResult instanceof Response) return authResult;
     const { adminClient, callerUser } = authResult;
-    const callerRole = getRole(callerUser);
 
     // Step 2: Params
     const resolvedParams = await Promise.resolve(params);
     const userId = resolvedParams.id;
-
-    const denied = await assertUserInHierarchy(adminClient, callerUser.id, userId, callerRole);
-    if (denied) return denied;
 
     // Step 3: Parse body
     let body: { reason?: string } = {};

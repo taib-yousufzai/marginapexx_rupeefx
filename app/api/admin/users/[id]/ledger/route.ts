@@ -74,7 +74,7 @@ export async function POST(
     const newBalance = type === 'Credit' ? currentBalance + adjustment : currentBalance - adjustment;
 
     // 2. Create pay_request (always, for Deposit/Withdrawal History)
-    let payRequestId = null;
+    let payRequestId: string | null = null;
     const prType = type === 'Credit' ? 'DEPOSIT' : 'WITHDRAWAL';
     
     const { data: pr, error: prError } = await adminClient

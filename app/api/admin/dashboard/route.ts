@@ -63,9 +63,9 @@ export async function GET(request: Request): Promise<Response> {
     }
 
     if (!targetUserIds) {
-      // If no specific hierarchy or client is requested, filter by demo_user globally (if demo) or within descendant tree (if live)
+      // If no specific hierarchy or client is requested, filter by demo_user globally or within descendant tree
       let query = adminClient.from('profiles').select('id').eq('demo_user', isDemo);
-      if (!isDemo && descendantIds !== null) {
+      if (descendantIds !== null) {
         if (descendantIds.length === 0) {
           return Response.json({
             payin: 0, payout: 0, netDeposit: 0, brokerage: 0,
@@ -79,9 +79,9 @@ export async function GET(request: Request): Promise<Response> {
         targetUserIds = allProfiles.map(p => p.id);
       }
     } else {
-      // If targetUserIds exist, filter them to ensure they match demo mode AND caller's hierarchy (if live)
+      // If targetUserIds exist, filter them to ensure they match demo mode AND caller's hierarchy
       let query = adminClient.from('profiles').select('id').in('id', targetUserIds).eq('demo_user', isDemo);
-      if (!isDemo && descendantIds !== null) {
+      if (descendantIds !== null) {
         query = query.in('id', descendantIds);
       }
       const { data: matchingProfiles } = await query;

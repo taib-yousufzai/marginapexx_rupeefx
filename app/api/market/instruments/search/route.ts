@@ -10,6 +10,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getUserFromRequest, getAdminClient } from '@/lib/adminClient';
 import { fetchKiteQuotes } from '@/lib/datafeed/MarketDataService';
 import { getRedisClient, isRedisMock } from '@/lib/redis';
+import { getCachedTemplateScripts } from '@/lib/redisSettingsCache';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import {
   applyForexFilter,
@@ -472,9 +473,9 @@ export async function GET(request: NextRequest) {
       const { data: profile } = await adminClient.from('profiles').select('template_id, parent_id, trading_mode').eq('id', user.id).single();
       if (profile) {
         if (profile.template_id) {
-          const { data: scripts } = await adminClient.from('template_scripts').select('symbol').eq('template_id', profile.template_id);
+          const scripts = await getCachedTemplateScripts(profile.template_id, getAdminClient);
           if (scripts && scripts.length > 0) {
-            allowedSymbols = scripts.map(s => s.symbol);
+            allowedSymbols = scripts;
           }
         }
         const lookupId = profile.parent_id ?? user.id;

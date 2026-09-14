@@ -22,12 +22,19 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const statusParam = searchParams.get('status');
 
-    // Fetch profile for history_reset_at filter
-    const { data: userProfile } = await admin
-      .from('profiles')
-      .select('history_reset_at')
-      .eq('id', user.id)
-      .maybeSingle();
+    // Fetch profile for history_reset_at — 2s timeout to avoid hanging on Supabase 522s
+    let userProfile: { history_reset_at?: string } | null = null;
+    try {
+      const { data } = await admin
+        .from('profiles')
+        .select('history_reset_at')
+        .eq('id', user.id)
+        .maybeSingle()
+        .abortSignal(AbortSignal.timeout(2000));
+      userProfile = data;
+    } catch {
+      // Timeout or connection error — proceed with no history_reset_at filter
+    }
 
     const historyResetAt = userProfile?.history_reset_at;
 

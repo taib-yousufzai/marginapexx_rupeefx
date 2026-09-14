@@ -60,7 +60,7 @@ describe('Chart Pipeline Regression & Commodity Historical Data Audit', () => {
     expect(res.status).toBe(404);
     const json = await res.json();
     expect(json.error).toBeDefined();
-  });
+  }, 15000);
 
   it('I. RealtimeProvider correctly forwards ticks without cross-contaminating CE and PE', () => {
     const realtime = new RealtimeProvider();

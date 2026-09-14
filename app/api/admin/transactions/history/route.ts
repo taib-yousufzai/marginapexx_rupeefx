@@ -17,17 +17,15 @@ export async function GET(request: Request): Promise<Response> {
 
     // Fetch allowed profiles based on hierarchy
     let pQuery = adminClient.from('profiles').select('id, email, full_name, client_id').eq('demo_user', isDemo);
-    if (!isDemo) {
-      if (callerRole === 'broker') {
-        pQuery = pQuery.eq('parent_id', callerId);
-      } else if (callerRole === 'admin') {
-        const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
-        if (descendantIds !== null) {
-          if (descendantIds.length === 0) {
-            return Response.json([], { status: 200 });
-          }
-          pQuery = pQuery.in('id', descendantIds);
+    if (callerRole === 'broker') {
+      pQuery = pQuery.eq('parent_id', callerId);
+    } else if (callerRole === 'admin') {
+      const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
+      if (descendantIds !== null) {
+        if (descendantIds.length === 0) {
+          return Response.json([], { status: 200 });
         }
+        pQuery = pQuery.in('id', descendantIds);
       }
     }
 

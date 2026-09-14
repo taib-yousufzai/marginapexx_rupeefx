@@ -1530,6 +1530,7 @@
 
 .toast-message.toast-show {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .toast-message.neg {

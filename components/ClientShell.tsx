@@ -15,7 +15,8 @@ export default function ClientShell({ children }: { children: React.ReactNode })
     '/register',
     '/forgot-password',
     '/reset-password',
-    '/accept-invite'
+    '/accept-invite',
+    '/ourcalculation'
   ];
   
   const isNoShellRoute = noShellRoutes.includes(pathname) || pathname.startsWith('/admin');
@@ -41,7 +42,12 @@ export default function ClientShell({ children }: { children: React.ReactNode })
   // ── Global toast for async order errors ──────────────────────────────
   const [toastMsg, setToastMsg] = React.useState('');
   const [toastVisible, setToastVisible] = React.useState(false);
-  const toastTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  React.useEffect(() => {
+    if (!toastVisible) return;
+    const timer = setTimeout(() => setToastVisible(false), 1000);
+    return () => clearTimeout(timer);
+  }, [toastVisible, toastMsg]);
 
   React.useEffect(() => {
     const onStart = (e: any) => {
@@ -56,14 +62,11 @@ export default function ClientShell({ children }: { children: React.ReactNode })
     };
     const onExitEnd = () => setIsGlobalLoading(false);
 
-
     const onToast = (e: any) => {
       const msg = (e as CustomEvent).detail;
       if (!msg) return;
       setToastMsg(String(msg));
       setToastVisible(true);
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-      toastTimerRef.current = setTimeout(() => setToastVisible(false), 1800);
     };
 
     const onOrderError = (e: Event) => {
@@ -84,7 +87,6 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       window.removeEventListener('exit-overlay-end', onExitEnd);
       window.removeEventListener('toast_msg', onToast);
       window.removeEventListener('order_error', onOrderError);
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, []);
 

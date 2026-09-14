@@ -64,11 +64,13 @@ export function getRole(user: User | null): AppRole {
 export async function signIn(email: string, password: string): Promise<SignInResult> {
   let targetEmail = email.trim();
 
-  // Try standard Supabase Auth with a 3.5s fast timeout
+  // Try standard Supabase Auth with an 8s timeout.
+  // On localhost → Supabase Cloud round-trips can take 2-6s; 8s gives enough headroom
+  // without blocking forever when the network is degraded.
   try {
     const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password });
     const timeoutAuth = new Promise<any>((resolve) =>
-      setTimeout(() => resolve({ timeout: true }), 3500)
+      setTimeout(() => resolve({ timeout: true }), 8000)
     );
 
     const res = await Promise.race([authPromise, timeoutAuth]);
@@ -87,7 +89,18 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     console.warn('Supabase Auth SDK call failed/timed out, attempting server auth fallback:', e);
   }
 
-  // Fallback: Direct DB server auth via /api/auth/login (handles identifier lookup & fast Postgres verification)
+  // Fallback: Direct server auth via /api/auth/login
+  // Only useful for: (a) non-email identifiers (client_id/phone) needing email resolution,
+  //                  (b) demo credentials that work offline without Supabase.
+  // For all other email logins, hitting the route would just call Supabase again — same latency, no benefit.
+  const isEmailLogin = targetEmail.includes('@');
+  const isDemoCredentials = (
+    targetEmail.toLowerCase() === 'demo@gmail.com' && password === 'demo123'
+  );
+  if (isEmailLogin && !isDemoCredentials) {
+    return { error: 'Authentication failed. Please check credentials or network connection.' };
+  }
+
   try {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
@@ -260,7 +273,13 @@ export async function getSession(): Promise<Session | null> {
         return _cachedSession;
       }
 
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
+      // getSession() reads from localStorage — normally instant.
+      // But with a stale/invalid token it may make a network refresh call; cap at 6s.
+      const getSessionPromise = supabase.auth.getSession();
+      const getSessionTimeout = new Promise<{ data: { session: null }; error: Error }>((resolve) =>
+        setTimeout(() => resolve({ data: { session: null }, error: new Error('getSession timeout') }), 6000)
+      );
+      const { data: sessionData, error: sessionError } = await Promise.race([getSessionPromise, getSessionTimeout]);
       
       if (sessionError || !sessionData?.session) {
         if (_cachedSession) {
@@ -272,8 +291,14 @@ export async function getSession(): Promise<Session | null> {
 
       let user = sessionData.session.user;
 
+      // getUser() makes a live network call to Supabase Auth API.
+      // Guard it with a 5s timeout so a slow connection doesn't hang the page.
       try {
-        const { data: userData, error: userError } = await supabase.auth.getUser();
+        const getUserPromise = supabase.auth.getUser();
+        const getUserTimeout = new Promise<{ data: null; error: Error }>((resolve) =>
+          setTimeout(() => resolve({ data: null, error: new Error('getUser timeout') }), 5000)
+        );
+        const { data: userData, error: userError } = await Promise.race([getUserPromise, getUserTimeout]);
         if (!userError && userData?.user) {
           user = userData.user;
         }

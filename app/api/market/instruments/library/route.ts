@@ -172,7 +172,7 @@ export async function GET(request: Request) {
     try {
       const cached = await Promise.race([
         redis.get(cacheKey),
-        new Promise((_, r) => setTimeout(() => r(null), 300))
+        new Promise<string | null>((resolve) => setTimeout(() => resolve(null), 300))
       ]);
       if (cached) {
         const parsed = JSON.parse(cached as string);

@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import { getRedisClient, isRedisMock } from '@/lib/redis';
 import { isContractExpired } from '@/lib/contractExpiry';
+import { isContractExpiredRedis, setRedisInstrumentMeta } from '@/lib/redisInstrumentCache';
 
 function getSupabase() {
   return createClient(
@@ -29,6 +30,7 @@ interface ResolvedInstrument {
  * After the first hit this map returns in < 1ms.
  */
 const memCache = new Map<string, ResolvedInstrument>();
+const nullCache = new Map<string, number>();
 
 /**
  * Process-lifetime in-memory cache for historical candle responses.
@@ -77,6 +79,8 @@ const STATIC_TOKENS: Record<string, ResolvedInstrument> = {
   'SILVER':             { token: 126774791, canonicalId: 'MCX:SILVER26DECFUT' },
   'MCX:SILVER':         { token: 126774791, canonicalId: 'MCX:SILVER26DECFUT' },
   'MCX:SILVER26DECFUT': { token: 126774791, canonicalId: 'MCX:SILVER26DECFUT' },
+  'SILVER26SEPFUT':     { token: 126774791, canonicalId: 'MCX:SILVER26DECFUT' },
+  'MCX:SILVER26SEPFUT': { token: 126774791, canonicalId: 'MCX:SILVER26DECFUT' },
   'SILVERM':            { token: 123668487, canonicalId: 'MCX:SILVERM26NOVFUT' },
   'MCX:SILVERM':        { token: 123668487, canonicalId: 'MCX:SILVERM26NOVFUT' },
   'MCX:SILVERM26NOVFUT':{ token: 123668487, canonicalId: 'MCX:SILVERM26NOVFUT' },
@@ -86,6 +90,10 @@ const STATIC_TOKENS: Record<string, ResolvedInstrument> = {
   'NATURALGAS':         { token: 145470727, canonicalId: 'MCX:NATURALGAS26SEPFUT' },
   'MCX:NATURALGAS':     { token: 145470727, canonicalId: 'MCX:NATURALGAS26SEPFUT' },
   'MCX:NATURALGAS26SEPFUT': { token: 145470727, canonicalId: 'MCX:NATURALGAS26SEPFUT' },
+  'GOLD26AUG162000CE':  { token: 142419719, canonicalId: 'MCX:GOLD26AUG162000CE' },
+  'MCX:GOLD26AUG162000CE': { token: 142419719, canonicalId: 'MCX:GOLD26AUG162000CE' },
+  'GOLD26AUG162000PE':  { token: 142573319, canonicalId: 'MCX:GOLD26AUG162000PE' },
+  'MCX:GOLD26AUG162000PE': { token: 142573319, canonicalId: 'MCX:GOLD26AUG162000PE' },
   // Currency Futures (CDS) — eliminates any DB round-trip and instantly routes to active front-month
   'GBPINR':             { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
   'CDS:GBPINR':         { token: 451843,  canonicalId: 'CDS:GBPINR26SEPFUT' },
@@ -138,6 +146,12 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
     return memHit;
   }
 
+  // 1b. Check negative cache for unresolvable symbols
+  const nullExpiry = nullCache.get(symbol);
+  if (nullExpiry && nullExpiry > Date.now()) {
+    return null;
+  }
+
   const redis = getRedisClient();
   const cacheKey = `instrument_token:${symbol}`;
   
@@ -171,6 +185,11 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
     return result;
   };
 
+  const saveNull = () => {
+    nullCache.set(symbol, Date.now() + 60000); // negative cache for 60 seconds
+    return null;
+  };
+
   const rawSymbol = symbol;
   let normalizedSymbol = symbol;
   if (normalizedSymbol.startsWith('NCO:')) {
@@ -188,7 +207,9 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
   }
 
   // Fast path: symbol contains ':' (e.g. "MCX:GOLD26AUG161500CE") — exact id match
+  let exactMatchChecked = false;
   if (normalizedSymbol.includes(':')) {
+    exactMatchChecked = true;
     const { data } = await getSupabase()
       .from('instruments')
       .select('instrument_token, expiry')
@@ -197,9 +218,9 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
     if (data?.instrument_token) {
       const isOption = normalizedSymbol.endsWith('CE') || normalizedSymbol.endsWith('PE');
       const todayIso = new Date().toISOString().split('T')[0];
-      // Only auto-roll futures contracts that have expired; options stay on their exact contract token
-      const isExpiredFuture = !isOption && (isContractExpired(normalizedSymbol) || (data.expiry && data.expiry < todayIso));
+      const isExpiredFuture = !isOption && (await isContractExpiredRedis(normalizedSymbol, data.expiry));
       if (!isExpiredFuture) {
+        await setRedisInstrumentMeta(normalizedSymbol, { token: data.instrument_token, canonicalId: normalizedSymbol, expiry: data.expiry });
         return save(data.instrument_token, normalizedSymbol);
       }
       console.log(`[API PERF] resolveInstrument: Future ${normalizedSymbol} is EXPIRED (expiry=${data.expiry}). Auto-resolving to active contract.`);
@@ -232,7 +253,7 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
   }
 
   // Handle base commodity and currency shortcuts or expired contracts to resolve to active front-month contracts
-  const baseCommodities = ['GOLD', 'CRUDEOIL', 'SILVER', 'NATURALGAS', 'USDINR', 'EURINR', 'GBPINR', 'JPYINR'];
+  const baseCommodities = ['GOLD', 'CRUDEOIL', 'SILVERM', 'SILVER', 'NATURALGAS', 'USDINR', 'EURINR', 'GBPINR', 'JPYINR'];
   const isOption = upperSymbol.endsWith('CE') || upperSymbol.endsWith('PE');
   if (!isOption) {
     const matchedCommodity = baseCommodities.find(c => upperSymbol.includes(c));
@@ -240,11 +261,12 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
       const isCurrency = ['USDINR', 'EURINR', 'GBPINR', 'JPYINR'].includes(matchedCommodity);
       const exchange = isCurrency ? 'CDS' : 'MCX';
       const instrumentTypes = isCurrency ? ['FUT', 'MAPPED_FUT'] : ['FUTCOM', 'FUT', 'MAPPED_FUT'];
+      const dbName = matchedCommodity === 'SILVERM' ? 'SILVERM' : matchedCommodity;
       
       const { data } = await getSupabase()
         .from('instruments')
         .select('instrument_token, tradingsymbol')
-        .eq('name', matchedCommodity)
+        .eq('name', dbName)
         .eq('exchange', exchange)
         .in('instrument_type', instrumentTypes)
         .gte('expiry', new Date().toISOString().split('T')[0])
@@ -280,7 +302,13 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
     }
   }
 
-  // Slow path: short symbol — run ALL strategies in parallel
+  // If symbol was already prefixed (e.g. "NSE:INVALID_SYMBOL" or "MCX:GOLD26AUG162000CE")
+  // and failed exact ID lookup & base commodity/index checks, skip redundant multi-exchange and ilike scans.
+  if (exactMatchChecked) {
+    return saveNull();
+  }
+
+  // Slow path: short un-prefixed symbol — run ALL strategies in parallel
   const exchanges = ['NSE', 'NFO', 'MCX', 'BSE', 'BFO', 'CDS'];
   const hasUnderscore = symbol.includes('_');
   const baseName = hasUnderscore ? symbol.split('_')[0] : symbol;
@@ -339,7 +367,7 @@ async function resolveInstrument(symbol: string): Promise<ResolvedInstrument | n
   const results = await Promise.all(queries);
   const resolved = results.find(r => r !== null) ?? null;
   if (resolved) return save(resolved.token, resolved.canonicalId);
-  return null;
+  return saveNull();
 }
 
 export async function GET(request: Request) {

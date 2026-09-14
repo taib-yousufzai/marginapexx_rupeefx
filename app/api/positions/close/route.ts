@@ -46,7 +46,7 @@ async function fetchQuoteBatch(
   try {
     const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
     const params = new URLSearchParams({ symbols: Array.from(missing).join(',') });
-    const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+    const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
     if (resTicker.ok) {
       const json = await resTicker.json();
       if (json.success && json.data) {
@@ -81,7 +81,7 @@ async function fetchQuoteBatch(
         missingKite.forEach(i => params.append('i', i));
         const res = await fetch(`https://api.kite.trade/quote?${params}`, {
           headers: { 'X-Kite-Version': '3', Authorization: `token ${apiKey}:${session.accessToken}` },
-          cache: 'no-store', signal: AbortSignal.timeout(2500),
+          cache: 'no-store', signal: AbortSignal.timeout(200),
         });
         if (res && res.ok) {
           const data = await res.json() as { data?: Record<string, any> };
@@ -109,7 +109,7 @@ async function fetchQuoteBatch(
   if (missingCrypto.length > 0) {
     await Promise.all(missingCrypto.map(async (sym) => {
       try {
-        const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+        const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
         if (res.ok) {
           const data = await res.json();
           const bid = parseFloat(data.bidPrice);
@@ -121,7 +121,7 @@ async function fetchQuoteBatch(
           }
         } else {
           // Fallback to /ticker/price if bookTicker fails
-          const resPrice = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(2500) });
+          const resPrice = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
           if (resPrice.ok) {
             const pData = await resPrice.json();
             const ltp = parseFloat(pData.price);
@@ -242,35 +242,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     for (const { pos, lookupKey } of posSymbols) {
       try {
-        // Check market hours
-        const symbol = pos.symbol || '';
-        const dbSegment = pos.settlement || '';
-        const segUpper = dbSegment.toUpperCase();
+        // Note: Position exits (closing open positions) are allowed off-hours so users/system are never trapped in open positions.
 
-        if (!segUpper.includes('CRYPTO')) {
-          const segmentId = RiskValidation.resolveTradingHoursSegmentId(symbol, dbSegment);
-
-          const segmentHour = tradingHoursMap.get(segmentId);
-          if (segmentHour) {
-            if (!segmentHour.is_active) {
-              results.push({ positionId: pos.id, success: false, error: 'market is closed' });
-              continue;
-            }
-
-            const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-            const dayOfWeek = nowIST.getDay();
-            if (dayOfWeek === 0 || dayOfWeek === 6) {
-              results.push({ positionId: pos.id, success: false, error: 'market is closed' });
-              continue;
-            }
-
-            const currentHHMM = `${String(nowIST.getHours()).padStart(2, '0')}:${String(nowIST.getMinutes()).padStart(2, '0')}`;
-            if (currentHHMM < segmentHour.start_time || currentHHMM >= segmentHour.end_time) {
-              results.push({ positionId: pos.id, success: false, error: 'market is closed' });
-              continue;
-            }
-          }
-        }
 
         // Get settings and price parameters
         const segSetting = segSettingsMap.get(`${pos.settlement ?? ''}|${pos.side}`);
