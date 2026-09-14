@@ -245,8 +245,14 @@ const COMMODITY_ALIAS_MAP: Record<string, string> = {
   'MCX:CRUDEOIL': 'MCX:CRUDEOIL26SEPFUT',
   'CRUDEOIL': 'MCX:CRUDEOIL26SEPFUT',
   'CRUDEOIL_FUT': 'MCX:CRUDEOIL26SEPFUT',
+  'MCX:CRUDE OIL': 'MCX:CRUDEOIL26SEPFUT',
+  'CRUDE OIL': 'MCX:CRUDEOIL26SEPFUT',
+  'MCX:CRUDE': 'MCX:CRUDEOIL26SEPFUT',
+  'CRUDE': 'MCX:CRUDEOIL26SEPFUT',
   'MCX:NATURALGAS': 'MCX:NATURALGAS26SEPFUT',
   'NATURALGAS': 'MCX:NATURALGAS26SEPFUT',
+  'MCX:NATGAS': 'MCX:NATURALGAS26SEPFUT',
+  'NATGAS': 'MCX:NATURALGAS26SEPFUT',
   'MCX:COPPER': 'MCX:COPPER26SEPFUT',
   'COPPER': 'MCX:COPPER26SEPFUT',
   'MCX:ZINC': 'MCX:ZINC26SEPFUT',
@@ -382,11 +388,12 @@ async function handleQuotesRequest(instruments: string[], request: NextRequest):
             realToRequestedMap[id] = id;
           } else {
             const clean = id.trim().toUpperCase();
+            const unspaced = clean.replace(/[\/\s\_]/g, '');
             let kiteId = clean;
             if (!clean.includes(':')) {
-              if (clean.endsWith('CE') || clean.endsWith('PE') || clean.endsWith('FUT')) {
+              if (clean.endsWith('CE') || clean.endsWith('PE') || clean.endsWith('FUT') || unspaced.endsWith('CE') || unspaced.endsWith('PE') || unspaced.endsWith('FUT')) {
                 kiteId = `NFO:${clean}`;
-              } else if (['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM'].some(c => clean.includes(c))) {
+              } else if (['GOLD', 'SILVER', 'CRUDE', 'NATURALGAS', 'NATGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => unspaced.includes(c))) {
                 kiteId = `MCX:${clean}`;
               } else {
                 kiteId = `NSE:${clean}`;

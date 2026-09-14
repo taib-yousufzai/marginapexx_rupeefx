@@ -70,6 +70,17 @@ const mapSegmentToDbSegment = (s: string): string => {
   return trimmed;
 };
 
+export const resolveComexSymbol = (sym?: string | null): string => {
+  if (!sym) return '';
+  const upper = sym.toUpperCase().replace(/[\/\s\_]/g, '');
+  if (upper === 'GOLD' || upper === 'XAUUSD' || upper === 'GC=F' || upper === 'GC') return 'XAUUSD';
+  if (upper === 'SILVER' || upper === 'XAGUSD' || upper === 'SI=F' || upper === 'SI') return 'XAGUSD';
+  if (upper === 'CRUDE' || upper === 'CRUDEOIL' || upper === 'XTIUSD' || upper === 'CL=F' || upper === 'CL') return 'XTIUSD';
+  if (upper === 'COPPER' || upper === 'XCUUSD' || upper === 'HG=F' || upper === 'HG') return 'XCUUSD';
+  if (upper === 'NATGAS' || upper === 'NATURALGAS' || upper === 'XNGUSD' || upper === 'NG=F' || upper === 'NG') return 'XNGUSD';
+  return sym;
+};
+
 const resolveKitePrefix = (key: string, settlement: string) => {
   if (!key) return '';
   if (key.startsWith('US:')) return key;
@@ -80,29 +91,22 @@ const resolveKitePrefix = (key: string, settlement: string) => {
   const seg = (settlement || '').toUpperCase();
   if (seg.includes('US')) return `US:${baseKey}`;
   let prefix = 'NSE:';
-  if (baseKey.startsWith('SENSEX') || baseKey.startsWith('BANKEX')) {
+  const cleanUpper = baseKey.toUpperCase().replace(/[\/\s\_]/g, '');
+  if (cleanUpper.startsWith('SENSEX') || cleanUpper.startsWith('BANKEX')) {
     prefix = 'BFO:';
   } else if (
     seg.includes('MCX') ||
     seg.includes('NCO') ||
-    baseKey.startsWith('CRUDEOIL') ||
-    baseKey.startsWith('NATGAS') ||
-    baseKey.startsWith('SILVER') ||
-    baseKey.startsWith('GOLD') ||
-    baseKey.startsWith('COPPER') ||
-    baseKey.startsWith('ZINC') ||
-    baseKey.startsWith('ALUMINIUM') ||
-    baseKey.startsWith('LEAD') ||
-    baseKey.startsWith('MENTHAOIL')
+    ['CRUDE', 'CRUDEOIL', 'NATGAS', 'NATURALGAS', 'SILVER', 'GOLD', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD', 'MENTHAOIL', 'NICKEL'].some(c => cleanUpper.startsWith(c))
   ) {
     prefix = (seg === 'NCO' || seg === 'NCO-OPT') ? 'NCO:' : 'MCX:';
   } else if (
     seg.includes('CDS') ||
     seg.includes('FOREX') ||
-    baseKey.startsWith('USDINR') ||
-    baseKey.startsWith('EURINR') ||
-    baseKey.startsWith('GBPINR') ||
-    baseKey.startsWith('JPYINR')
+    cleanUpper.startsWith('USDINR') ||
+    cleanUpper.startsWith('EURINR') ||
+    cleanUpper.startsWith('GBPINR') ||
+    cleanUpper.startsWith('JPYINR')
   ) {
     prefix = 'CDS:';
   } else if (seg.includes('BSE') || seg.includes('BFO')) {
@@ -524,25 +528,25 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
 
     rawPositions.filter(p => p.status === 'open' || p.status === 'active').forEach(p => {
       const cached = props[p.id];
-      if (cached) {
-        if (cached.isCrypto) {
-          binance.push(cached.binanceSymbol);
-        } else if (cached.isComex) {
-          comex.push(p.symbol);
-        } else {
-          kite.push(cached.resolvedKiteSymbol);
-        }
+      const dbSeg = cached ? cached.dbSeg : mapSegmentWithSymbol(p.settlement || '', p.symbol);
+      const segUpper = dbSeg.toUpperCase();
+      const isCrypto = cached ? cached.isCrypto : (segUpper.includes('CRYPTO') || !!(p.symbol && (p.symbol.endsWith('USDT') || p.symbol.endsWith('USD'))));
+      const isComex = cached ? cached.isComex : ((p as any).preferredView === 'comex' || segUpper.includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || p.symbol.startsWith('XAU') || p.symbol.startsWith('XAG') || p.symbol.startsWith('XTI') || p.symbol.startsWith('XCU') || p.symbol.startsWith('XNG'))));
+
+      if (isCrypto) {
+        let sym = cached ? cached.binanceSymbol : (p.symbol || '').replace('/', '').toUpperCase();
+        if (!sym.endsWith('USDT')) sym += 'USDT';
+        binance.push(sym);
+      } else if (isComex) {
+        const comexSym = resolveComexSymbol(p.symbol);
+        comex.push(comexSym);
+        if (p.symbol && p.symbol !== comexSym) comex.push(p.symbol);
       } else {
-        const seg = (p.settlement || '').toUpperCase();
-        if (seg.includes('CRYPTO') || seg === 'USDT' || (p.symbol && p.symbol.endsWith('USDT'))) {
-          let sym = (p.symbol || '').replace('/', '');
-          if (!sym.endsWith('USDT')) sym += 'USDT';
-          binance.push(sym);
-        } else if (seg.includes('COMEX') || (p.symbol && p.symbol.endsWith('=F'))) {
-          comex.push(p.symbol);
-        } else {
-          kite.push(resolveKitePrefix(p.kite_instrument || p.symbol, p.settlement || ''));
-        }
+        const resolvedKite = cached ? cached.resolvedKiteSymbol : resolveKitePrefix(p.kite_instrument || p.symbol, p.settlement || '');
+        kite.push(resolvedKite);
+        if (p.symbol && p.symbol !== resolvedKite) kite.push(p.symbol);
+        const cleanUnspaced = (p.symbol || '').replace(/\s+/g, '').toUpperCase();
+        if (cleanUnspaced && !kite.includes(cleanUnspaced)) kite.push(cleanUnspaced);
       }
     });
 
@@ -571,7 +575,7 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
       const cached = props[p.id];
       const dbSeg = cached ? cached.dbSeg : mapSegmentWithSymbol(p.settlement || '', p.symbol);
       const isCrypto = cached ? cached.isCrypto : (p.settlement || '').toUpperCase().includes('CRYPTO');
-      const isComex = cached ? cached.isComex : (p.settlement || '').toUpperCase().includes('COMEX');
+      const isComex = cached ? cached.isComex : ((p.settlement || '').toUpperCase().includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || p.symbol.startsWith('XAU') || p.symbol.startsWith('XAG') || p.symbol.startsWith('XTI') || p.symbol.startsWith('XCU') || p.symbol.startsWith('XNG'))));
       const entryTimeMs = cached ? cached.entryTimeMs : new Date(p.entry_time).getTime();
 
       const avgPrice = p.avg_price || p.entry_price;
@@ -580,8 +584,8 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
       let rawQuote: any = null;
       if (!contractExpired) {
         if (isCrypto) {
-          const binanceKey = cached ? cached.binanceSymbol : (p.symbol || '').replace('/', '') + (p.symbol?.endsWith('USDT') ? '' : 'USDT');
-          const shortSymbol = (p.symbol || '').replace('/', '').replace('USDT', '');
+          const binanceKey = cached ? cached.binanceSymbol : (p.symbol || '').replace('/', '').toUpperCase() + (p.symbol?.endsWith('USDT') ? '' : 'USDT');
+          const shortSymbol = (p.symbol || '').replace('/', '').replace('USDT', '').toUpperCase();
           const quote = marketQuotes[binanceKey] || marketQuotes[shortSymbol] || marketQuotes[p.symbol] || marketQuotes[`CRYPTO:${shortSymbol}`] || binanceQuotes[binanceKey] || binanceQuotes[shortSymbol];
           if (quote) {
             rawQuote = quote;
@@ -590,7 +594,8 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
             ask = (quote as any).ask ?? ltp;
           }
         } else if (isComex) {
-          const quote = comexQuotes[p.symbol];
+          const comexSym = resolveComexSymbol(p.symbol);
+          const quote = comexQuotes[comexSym] || comexQuotes[p.symbol] || marketQuotes[comexSym] || marketQuotes[p.symbol];
           if (quote) {
             rawQuote = quote;
             ltp = quote.lastPrice ?? ltp;
@@ -601,7 +606,19 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
           const kiteKey = cached ? cached.resolvedKiteSymbol : resolveKitePrefix(p.kite_instrument || p.symbol, p.settlement || '');
           const rawSymbol = p.kite_instrument || p.symbol || '';
           const symbolWithoutPrefix = rawSymbol.includes(':') ? rawSymbol.split(':')[1] : rawSymbol;
-          const quote = marketQuotes[kiteKey] || marketQuotes[`NCO:${symbolWithoutPrefix}`] || marketQuotes[`MCX:${symbolWithoutPrefix}`] || marketQuotes[rawSymbol] || marketQuotes[symbolWithoutPrefix] || marketQuotes[`NFO:${symbolWithoutPrefix}`] || marketQuotes[`NSE:${symbolWithoutPrefix}`];
+          const cleanUnspaced = symbolWithoutPrefix.replace(/\s+/g, '').toUpperCase();
+          const rawUnspaced = rawSymbol.replace(/\s+/g, '').toUpperCase();
+          const quote = marketQuotes[kiteKey] ||
+                        marketQuotes[`MCX:${cleanUnspaced}`] ||
+                        marketQuotes[`MCX:${symbolWithoutPrefix}`] ||
+                        marketQuotes[`NCO:${cleanUnspaced}`] ||
+                        marketQuotes[`NCO:${symbolWithoutPrefix}`] ||
+                        marketQuotes[`NFO:${cleanUnspaced}`] ||
+                        marketQuotes[`NSE:${cleanUnspaced}`] ||
+                        marketQuotes[rawSymbol] ||
+                        marketQuotes[symbolWithoutPrefix] ||
+                        marketQuotes[cleanUnspaced] ||
+                        marketQuotes[rawUnspaced];
           if (quote) {
             rawQuote = quote;
             ltp = quote.lastPrice ?? ltp;

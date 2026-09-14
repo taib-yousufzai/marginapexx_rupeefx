@@ -661,10 +661,14 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const normalized = normalizeQuote(quote as any, key);
             mapped[key] = normalized;
             if (key.includes(':')) {
-              const clean = key.split(':')[1];
+              const [prefix, clean] = key.split(':');
               mapped[clean] = normalized;
               const unspaced = clean.replace(/\s+/g, '');
               mapped[unspaced] = normalized;
+              mapped[`${prefix}:${unspaced}`] = normalized;
+            } else {
+              const unspaced = key.replace(/\s+/g, '');
+              if (unspaced !== key) mapped[unspaced] = normalized;
             }
           }
         }
@@ -675,10 +679,14 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const normalized = normalizeQuote(q, symbol);
         pendingUpdatesRef.current[symbol] = normalized;
         if (symbol && symbol.includes(':')) {
-          const clean = symbol.split(':')[1];
+          const [prefix, clean] = symbol.split(':');
           pendingUpdatesRef.current[clean] = normalized;
           const unspaced = clean.replace(/\s+/g, '');
           pendingUpdatesRef.current[unspaced] = normalized;
+          pendingUpdatesRef.current[`${prefix}:${unspaced}`] = normalized;
+        } else if (symbol) {
+          const unspaced = symbol.replace(/\s+/g, '');
+          if (unspaced !== symbol) pendingUpdatesRef.current[unspaced] = normalized;
         }
       }
     };

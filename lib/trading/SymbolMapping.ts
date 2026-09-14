@@ -117,7 +117,7 @@ export function mapSegmentWithSymbol(segment: string, symbol: string = ''): Segm
     if (sym.endsWith('USDT')) return 'CRYPTO';
 
     // MCX commodities
-    if (sym.includes('GOLD') || sym.includes('SILVER') || sym.includes('CRUDEOIL') || sym.includes('NATURALGAS') || sym.includes('NATGAS')) {
+    if (sym.includes('GOLD') || sym.includes('SILVER') || sym.includes('CRUDE') || sym.includes('NATURALGAS') || sym.includes('NATGAS') || sym.includes('COPPER') || sym.includes('ZINC') || sym.includes('LEAD') || sym.includes('ALUMINIUM') || sym.includes('NICKEL')) {
       if (sym.endsWith('CE') || sym.endsWith('PE')) return 'MCX-OPT';
       return 'MCX-FUT';
     }
