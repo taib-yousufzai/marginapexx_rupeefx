@@ -219,6 +219,14 @@ export async function GET(req: NextRequest) {
 
     // 3. Fallback Candles for historical pagination or offline data
     if (!candles || candles.length === 0) {
+      const isFirstDataRequest = searchParams.get('firstDataRequest') === 'true';
+      if (!isFirstDataRequest && searchParams.get('from')) {
+        return NextResponse.json({ candles: [] }, {
+          headers: {
+            'Cache-Control': 'no-store, no-cache, must-revalidate',
+          },
+        });
+      }
       candles = generateFallbackCandles(rawSymbol, rawInterval, period1, period2);
     }
 
