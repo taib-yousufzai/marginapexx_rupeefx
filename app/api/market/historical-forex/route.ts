@@ -7,7 +7,16 @@ export const dynamic = 'force-dynamic';
 
 function generateFallbackCandles(symbol: string, interval: string, fromSec: number, toSec: number, anchorClosePrice?: number): any[][] {
   const basePrice = anchorClosePrice && anchorClosePrice > 0 ? anchorClosePrice : getUSStockBasePrice(symbol);
-  const stepSec = interval === '1m' ? 60 : (interval === '1d' || interval === 'd') ? 86400 : 300;
+  const normInt = (interval || '').toLowerCase().trim();
+  const stepSec = (normInt === '1m' || normInt === '1') ? 60 :
+                  (normInt === '2m' || normInt === '2') ? 120 :
+                  (normInt === '3m' || normInt === '3') ? 180 :
+                  (normInt === '5m' || normInt === '5') ? 300 :
+                  (normInt === '10m' || normInt === '10') ? 600 :
+                  (normInt === '15m' || normInt === '15') ? 900 :
+                  (normInt === '30m' || normInt === '30') ? 1800 :
+                  (normInt === '60m' || normInt === '60' || normInt === '1h') ? 3600 :
+                  (normInt === '1d' || normInt === 'd' || normInt === 'D') ? 86400 : 300;
   
   const rawCandles: any[][] = [];
   const maxBars = 300;
