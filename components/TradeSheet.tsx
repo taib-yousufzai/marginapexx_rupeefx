@@ -1351,7 +1351,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         body.dark .ts2-ba-ask { color: #EF4444; }
         .ts2-ba-divider { width: 1px; height: 20px; background: var(--border-light, #E5E7EB); margin: 0 8px; }
 
-        .ts2-scroll { flex: 1; overflow-y: auto; padding-bottom: 90px; }
+        .ts2-scroll { flex: 1; overflow-y: auto; padding-bottom: 120px; -webkit-overflow-scrolling: touch; }
         .ts2-scroll::-webkit-scrollbar { display: none; }
         .ts2-body { padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 
@@ -1471,10 +1471,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
 
         .ts2-footer {
-          position: absolute; bottom: 0; left: 0; right: 0;
-          max-width: 500px; margin: 0 auto; z-index: 10001;
-          background: var(--card-bg, #fff); padding: 12px 14px 24px;
+          position: sticky; bottom: 0; left: 0; right: 0;
+          width: 100%; max-width: 500px; margin: 0 auto; z-index: 10001;
+          background: var(--card-bg, #fff);
+          padding: 12px 14px calc(28px + env(safe-area-inset-bottom, 0px));
           display: flex; flex-direction: column; gap: 8px;
+          border-top: 1px solid var(--border-light, #EEF2F8);
+          box-shadow: 0 -4px 16px rgba(0,0,0,0.12);
+          flex-shrink: 0;
         }
         @media (max-width: 500px) { .ts2-footer { max-width: 100%; } }
         .ts2-btn-row { display: flex; gap: 8px; width: 100%; }
