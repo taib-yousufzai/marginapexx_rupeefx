@@ -258,6 +258,8 @@ export function useOrderEntry() {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
         window.dispatchEvent(new Event('position-closed')); // Backward compatibility for some components
+        window.dispatchEvent(new Event('position_closed'));
+        window.dispatchEvent(new Event('history_updated'));
       }
 
       return { success: true, ...result };
@@ -301,6 +303,8 @@ export function useOrderEntry() {
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
         window.dispatchEvent(new Event('position-closed'));
+        window.dispatchEvent(new Event('position_closed'));
+        window.dispatchEvent(new Event('history_updated'));
       }
 
       return { success: true, ...result };

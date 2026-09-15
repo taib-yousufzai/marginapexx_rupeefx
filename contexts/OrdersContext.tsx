@@ -190,6 +190,11 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
     try {
       await api.patch(`/api/orders/${id}`, { status: 'CANCELLED' });
       await fetchOrders(); // Reconcile list
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('order_placed'));
+        window.dispatchEvent(new Event('order_cancelled'));
+        window.dispatchEvent(new Event('history_updated'));
+      }
       return { success: true };
     } catch (err) {
       // 2. Rollback to original order snapshot on failure

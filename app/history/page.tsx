@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
@@ -80,113 +80,165 @@ export default function HistoryPage() {
     return () => window.removeEventListener('themeChanged', syncTheme);
   }, []);
 
+  const fetchHistory = useCallback(async (silent = false) => {
+    try {
+      if (!silent && historyData.length === 0 && !(typeof window !== 'undefined' && window.__historyCache)) {
+        setLoading(true);
+      }
+      // Fetch both orders and positions history — last 30 days by default
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      const now = Date.now();
+      const [ordersData, posData] = await Promise.all([
+        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500&_t=${now}`).catch(() => ({ orders: [] })),
+        api.get<{ positions: any[] }>(`/api/positions?status=closed&from=${thirtyDaysAgo}&_t=${now}`).catch(() => ({ positions: [] })),
+      ]);
+
+      const formattedOrders = (ordersData.orders || []).map((o: any) => ({
+        id: o.id,
+        scriptName: o.symbol,
+        type: o.side,
+        orderType: o.order_type,
+        qty: o.qty,
+        price: o.fill_price || 0,
+        pnl: 0,
+        date: new Date(o.created_at).toLocaleString(),
+        status: o.status,
+        brokerage: o.brokerage || 0,
+        intraday_brokerage: o.intraday_brokerage || 0,
+        carry_brokerage: o.carry_brokerage || 0,
+        gtt_brokerage: o.gtt_brokerage || 0,
+        timestamp: new Date(o.created_at).getTime()
+      }));
+
+      const formattedPos = (posData.positions || []).map((p: any) => {
+        // Derive settlement label, falling back for old positions with none stored
+        const rawSettlement = p.settlement || '';
+        let settlement = rawSettlement;
+        if (!settlement) {
+          const sym: string = (p.symbol || '').toUpperCase();
+          if (sym.endsWith('USDT') || sym.includes('CRYPTO')) settlement = 'Crypto';
+          else if (sym.endsWith('=F') || sym.includes('COMEX')) settlement = 'COMEX';
+          else if (sym.includes('MCX')) settlement = 'MCX';
+          else settlement = 'NSE';
+        }
+        return {
+          id: p.id,
+          scriptName: p.symbol,
+          type: p.side,
+          orderType: p.product_type || 'INTRADAY',
+          qty: p.qty_total,
+          price: p.exit_price || 0,
+          entryPrice: p.entry_price || p.avg_price || 0,
+          exitPrice: p.exit_price || 0,
+          pnl: p.pnl || 0,
+          date: new Date(p.created_at).toLocaleString(),
+          exitDate: p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '---',
+          status: 'closed',
+          brokerage: p.brokerage || 0,
+          entry_intraday_brokerage: p.entry_intraday_brokerage || 0,
+          entry_carry_brokerage: p.entry_carry_brokerage || 0,
+          entry_gtt_brokerage: p.entry_gtt_brokerage || 0,
+          exit_intraday_brokerage: p.exit_intraday_brokerage || 0,
+          exit_carry_brokerage: p.exit_carry_brokerage || 0,
+          exit_gtt_brokerage: p.exit_gtt_brokerage || 0,
+          closedBy: p.closed_by || 'USER_ACTION',
+          productType: p.product_type || 'INTRADAY',
+          settlement,
+          settlementAmount: Math.abs(Number(p.settlement_amount || 0)),
+          entry_brokerage: p.entry_brokerage || 0,
+          timestamp: p.updated_at ? new Date(p.updated_at).getTime() : new Date(p.created_at).getTime(),
+        };
+      });
+
+      const merged = [...formattedOrders, ...formattedPos];
+      // Always apply the fresh result — even if empty (e.g. after admin clears
+      // history via history_reset_at). Preserving stale cache here was the
+      // root cause of pre-reset records remaining visible after Clear History.
+      if (typeof window !== 'undefined') window.__historyCache = merged;
+      setHistoryData(merged);
+    } catch (err) {
+      console.warn('Failed to fetch history:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [historyData.length]);
+
   useEffect(() => {
-    // Serve stale cache immediately for perceived performance, but ALWAYS
-    // replace it once the fresh fetch completes (even if fresh result is empty,
-    // e.g. after admin clears history via history_reset_at).
+    // Serve stale cache immediately for perceived performance
     if (typeof window !== 'undefined' && window.__historyCache && window.__historyCache.length > 0) {
       setHistoryData(window.__historyCache);
-      // Do NOT set loading=false here — let the fresh fetch run and overwrite
     }
 
-    async function fetchHistory() {
-      try {
-        // Fetch both orders and positions history — last 30 days by default
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-        const [ordersData, posData] = await Promise.all([
-          api.get<{ orders: any[] }>('/api/orders?status=executed,rejected,cancelled&limit=500').catch(() => ({ orders: [] })),
-          api.get<{ positions: any[] }>(`/api/positions?status=closed&from=${thirtyDaysAgo}`).catch(() => ({ positions: [] })),
-        ]);
-
-        const formattedOrders = (ordersData.orders || []).map((o: any) => ({
-          id: o.id,
-          scriptName: o.symbol,
-          type: o.side,
-          orderType: o.order_type,
-          qty: o.qty,
-          price: o.fill_price || 0,
-          pnl: 0,
-          date: new Date(o.created_at).toLocaleString(),
-          status: o.status,
-          brokerage: o.brokerage || 0,
-          intraday_brokerage: o.intraday_brokerage || 0,
-          carry_brokerage: o.carry_brokerage || 0,
-          gtt_brokerage: o.gtt_brokerage || 0,
-          timestamp: new Date(o.created_at).getTime()
-        }));
-
-        const formattedPos = (posData.positions || []).map((p: any) => {
-          // Derive settlement label, falling back for old positions with none stored
-          const rawSettlement = p.settlement || '';
-          let settlement = rawSettlement;
-          if (!settlement) {
-            const sym: string = (p.symbol || '').toUpperCase();
-            if (sym.endsWith('USDT') || sym.includes('CRYPTO')) settlement = 'Crypto';
-            else if (sym.endsWith('=F') || sym.includes('COMEX')) settlement = 'COMEX';
-            else if (sym.includes('MCX')) settlement = 'MCX';
-            else settlement = 'NSE';
-          }
-          return {
-            id: p.id,
-            scriptName: p.symbol,
-            type: p.side,
-            orderType: p.product_type || 'INTRADAY',
-            qty: p.qty_total,
-            price: p.exit_price || 0,
-            entryPrice: p.entry_price || p.avg_price || 0,
-            exitPrice: p.exit_price || 0,
-            pnl: p.pnl || 0,
-            date: new Date(p.created_at).toLocaleString(),
-            exitDate: p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '---',
-            status: 'closed',
-            brokerage: p.brokerage || 0,
-            entry_intraday_brokerage: p.entry_intraday_brokerage || 0,
-            entry_carry_brokerage: p.entry_carry_brokerage || 0,
-            entry_gtt_brokerage: p.entry_gtt_brokerage || 0,
-            exit_intraday_brokerage: p.exit_intraday_brokerage || 0,
-            exit_carry_brokerage: p.exit_carry_brokerage || 0,
-            exit_gtt_brokerage: p.exit_gtt_brokerage || 0,
-            closedBy: p.closed_by || 'USER_ACTION',
-            productType: p.product_type || 'INTRADAY',
-            settlement,
-            settlementAmount: Math.abs(Number(p.settlement_amount || 0)),
-            entry_brokerage: p.entry_brokerage || 0,
-            timestamp: p.updated_at ? new Date(p.updated_at).getTime() : new Date(p.created_at).getTime(),
-          };
-        });
-
-        const merged = [...formattedOrders, ...formattedPos];
-        // Always apply the fresh result — even if empty (e.g. after admin clears
-        // history via history_reset_at). Preserving stale cache here was the
-        // root cause of pre-reset records remaining visible after Clear History.
-        if (typeof window !== 'undefined') window.__historyCache = merged;
-        setHistoryData(merged);
-      } catch (err) {
-        console.warn('Failed to fetch history:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
     fetchHistory();
 
-    // Auto-refresh when positions or orders change via Realtime (debounced)
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    const debouncedFetch = () => {
+    let followUpTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const triggerRefresh = (delay = 100) => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => fetchHistory(), 1000);
+      debounceTimer = setTimeout(() => {
+        fetchHistory(true);
+      }, delay);
+
+      // Follow-up fetch to ensure backend DB commits/state transitions settle
+      if (followUpTimer) clearTimeout(followUpTimer);
+      followUpTimer = setTimeout(() => {
+        fetchHistory(true);
+      }, 1000);
     };
 
+    // Listen for all order and position lifecycle events
+    const eventList = [
+      'order_placed',
+      'order_placed_with_data',
+      'position-closed',
+      'position_closed',
+      'position_updated',
+      'order_executed',
+      'order_cancelled',
+      'order_failed',
+      'history_updated',
+      'balance_updated',
+    ];
+
+    const handleEvent = () => triggerRefresh(100);
+    eventList.forEach(evt => window.addEventListener(evt, handleEvent));
+
+    // Instant sync when tab/app becomes visible or focused
+    const handleVisibility = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        triggerRefresh(50);
+      }
+    };
+    const handleFocus = () => triggerRefresh(50);
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('focus', handleFocus);
+
+    // Active polling fallback every 5 seconds when visible
+    const pollInterval = setInterval(() => {
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        fetchHistory(true);
+      }
+    }, 5000);
+
+    // Supabase Realtime channel
     const channel = supabase
       .channel(`history-realtime-${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, debouncedFetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, () => triggerRefresh(100))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => triggerRefresh(100))
       .subscribe();
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      if (followUpTimer) clearTimeout(followUpTimer);
+      clearInterval(pollInterval);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('focus', handleFocus);
+      eventList.forEach(evt => window.removeEventListener(evt, handleEvent));
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [fetchHistory]);
 
   const handleApplyFilter = () => {
     setAppliedFromDate(fromDate);
