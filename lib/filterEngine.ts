@@ -262,25 +262,60 @@ export function applyMcxStrikeRangeFilter(
 }
 
 // ---------------------------------------------------------------------------
+/**
+ * Checks whether an expiry date string 'YYYY-MM-DD' has already expired based on current IST time.
+ * For daytime markets (NSE/BSE/NFO/BFO), contracts expire at 15:30 IST on expiry day.
+ * For MCX commodity options, contracts expire at 23:30 IST on expiry day.
+ */
+export function isExpiryDateExpired(expiryDateStr: string, isMcx: boolean = false): boolean {
+  if (!expiryDateStr) return true;
+
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(new Date());
+  const year = parts.find(p => p.type === 'year')?.value;
+  const month = parts.find(p => p.type === 'month')?.value;
+  const day = parts.find(p => p.type === 'day')?.value;
+  const hour = parts.find(p => p.type === 'hour')?.value;
+  const minute = parts.find(p => p.type === 'minute')?.value;
+
+  if (!year || !month || !day || !hour || !minute) return false;
+
+  const todayStr = `${year}-${month}-${day}`;
+  if (expiryDateStr < todayStr) return true;
+  if (expiryDateStr > todayStr) return false;
+
+  // It is today! Check market close cutoff time (15:30 for NSE/BSE, 23:30 for MCX)
+  const currentMinutes = parseInt(hour, 10) * 60 + parseInt(minute, 10);
+  const cutoffMinutes = isMcx ? (23 * 60 + 30) : (15 * 60 + 30);
+
+  return currentMinutes >= cutoffMinutes;
+}
+
+// ---------------------------------------------------------------------------
 // applyExpiryFilter
 // ---------------------------------------------------------------------------
 
 /**
- * Returns a single-element array containing the earliest expiry date >= today.
- * Returns [] when no active expiries exist.
+ * Returns active expiry dates that have not expired.
+ * Filters out today's expiry if current time is past market close (15:30 IST).
  * Dates must be ISO strings 'YYYY-MM-DD'.
- *
- * Requirements: 4.1, 4.2
  */
-export function applyExpiryFilter(expiries: string[], today: string): string[] {
-  const active = expiries.filter((expiry) => expiry >= today);
+export function applyExpiryFilter(expiries: string[], today?: string, isMcx: boolean = false): string[] {
+  const active = expiries.filter((expiry) => !isExpiryDateExpired(expiry, isMcx));
 
   if (active.length === 0) {
     return [];
   }
 
-  const minExpiry = active.reduce((min, e) => (e < min ? e : min), active[0]);
-  return [minExpiry];
+  return Array.from(new Set(active)).sort();
 }
 
 // ---------------------------------------------------------------------------

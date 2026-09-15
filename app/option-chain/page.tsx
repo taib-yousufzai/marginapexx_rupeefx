@@ -271,7 +271,7 @@ function OptionChainContent() {
           setLocalCache(cacheKey, json);
           setLocalCache(`${normalizedSymbol}_${json.expiry}`, json);
           setData(json);
-          if (!selectedExpiry) setSelectedExpiry(json.expiry);
+          if (!selectedExpiry || (json.expiries && !json.expiries.includes(selectedExpiry))) setSelectedExpiry(json.expiry);
         } else {
           setLoadingError(json.error || 'Failed to fetch option chain');
         }

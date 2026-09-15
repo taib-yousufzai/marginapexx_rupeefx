@@ -8,6 +8,7 @@ import {
   applyExpiryFilter,
   applyStrikeRangeFilter,
   applyMcxStrikeRangeFilter,
+  isExpiryDateExpired,
   type Instrument,
 } from '@/lib/filterEngine';
 
@@ -120,7 +121,7 @@ export async function GET(request: Request) {
       if (error) throw error;
       const expiries = Array.from(new Set(data.map((e: any) => e.expiry))) as string[];
       if (expiries.length > 0)
-        redis.setex(k, 86400, JSON.stringify(expiries)).catch(() => {}); // 24h — expiries rarely change
+        redis.setex(k, 300, JSON.stringify(expiries)).catch(() => {}); // 5m cache to allow expiry transition
       return expiries;
     }
 
@@ -167,8 +168,8 @@ export async function GET(request: Request) {
 
     if (isMcx) underlyingKiteId = resolvedMcxId;
 
-    const activeExpiries  = applyExpiryFilter(allExpiries, today);
-    const selectedExpiry  = expiry || activeExpiries[0];
+    const activeExpiries  = applyExpiryFilter(allExpiries, today, isMcx);
+    const selectedExpiry  = (expiry && !isExpiryDateExpired(expiry, isMcx)) ? expiry : activeExpiries[0];
 
     if (!selectedExpiry) {
       return NextResponse.json({
