@@ -22,6 +22,7 @@ import { generateRealisticFallbackQuote, FallbackQuote } from '@/lib/quoteFallba
 import type { TradingInstrument } from '@/lib/types/instrument';
 import { useMyOrders } from '@/hooks/useMyOrders';
 import { fmtSymbolName } from '@/lib/format';
+import TickFlash from '@/components/TickFlash';
 
 /**
  * @deprecated Import `TradingInstrument` from `@/lib/types/instrument` instead.
@@ -121,7 +122,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const { positions: activePositions, refreshPositions } = useActivePositions();
 
   const isOpen = !!item;
-  const rawLotSize = item ? Number((item as any).lot_size || (item as any).lotSize || 0) : 0;
+  const rawLotSize = Number((item as any)?.lot_size ?? (item as any)?.lotSize ?? 0);
   const lotSize = (item && rawLotSize > 0)
     ? rawLotSize
     : (item ? getLotSize(item.symbol || item.name || '') : 1);
@@ -133,9 +134,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].includes(item?.symbol || '');
   const isComex = item && (item as any).preferredView
     ? (item as any).preferredView === 'comex'
-    : (dbSeg.toUpperCase().includes('COMEX') || !!item?.comexSymbol);
+    : (dbSeg.toUpperCase().includes('COMEX') || !!item?.comexSymbol || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (item?.symbol || '').toUpperCase().includes(c)));
 
+  const symCheck = ((item?.symbol || '') + ' ' + (item?.name || '') + ' ' + (item?.kiteSymbol || '')).toUpperCase();
+  const isForexUsd = symCheck.includes('GBPUSD') || symCheck.includes('EURUSD') || symCheck.includes('GBP/USD') || symCheck.includes('EUR/USD');
+  const isUsdItem = false;
   const currencySymbol = '₹';
+  const priceLocale = 'en-IN';
 
   let bSymbol = item?.binanceSymbol || (item && isCrypto && item.symbol ? item.symbol.replace('/', '') : '');
   if (bSymbol && !bSymbol.endsWith('USDT')) {
@@ -144,6 +149,15 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const computedKiteSymbol = useMemo(() => {
     let k = item?.kiteSymbol || item?.symbol;
     if (k) {
+      if (isComex || dbSeg === 'COMEX' || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (item?.symbol || '').toUpperCase().includes(c))) {
+        return k.startsWith('COMEX:') ? k : `COMEX:${k.replace(/^COMEX:/i, '')}`;
+      }
+      if (isCrypto || dbSeg === 'CRYPTO') {
+        return k.startsWith('CRYPTO:') ? k : `CRYPTO:${k.replace(/^CRYPTO:/i, '')}`;
+      }
+      if ((item?.segment || '').toUpperCase().includes('US-EQ') || (item?.symbol || '').toUpperCase().startsWith('US:')) {
+        return k.startsWith('US:') ? k : `US:${k.replace(/^US:/i, '')}`;
+      }
       if (!k.includes(':')) {
         const cleanSym = k.toUpperCase();
         const isOption = (cleanSym.endsWith('CE') || cleanSym.endsWith('PE')) && /\d/.test(cleanSym);
@@ -160,7 +174,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
     }
     return k;
-  }, [item?.kiteSymbol, item?.symbol]);
+  }, [item?.kiteSymbol, item?.symbol, isComex, isCrypto, dbSeg]);
 
   const marketSymbols = useMemo(() => {
     const list: string[] = [];
@@ -200,10 +214,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     : (item?.price ?? 0);
   let currentChangePercent = parseFloat(item?.change?.replace(/[%+]/g, '') || '0') || 0;
 
-  const symCheck = ((item?.symbol || '') + ' ' + (item?.name || '') + ' ' + (item?.kiteSymbol || '')).toUpperCase();
-  const isForexUsd = symCheck.includes('GBPUSD') || symCheck.includes('EURUSD') || symCheck.includes('GBP/USD') || symCheck.includes('EUR/USD');
-  const usdInrRate = 1;
-
   const cryptoQuote = isCrypto && bSymbol ? (marketQuotes[bSymbol] || marketQuotes[item?.symbol?.replace('/', '') || '']) : null;
   const cleanSymUpper = item?.symbol ? item.symbol.replace(/^US:/i, '').trim().toUpperCase() : '';
   const activeKiteQuote = (computedKiteSymbol && marketQuotes[computedKiteSymbol]) ||
@@ -219,9 +229,16 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     currentLtp = cryptoQuote.lastPrice || currentLtp;
     const prevClose = (cryptoQuote as any).prevClosePrice ?? (cryptoQuote as any).close ?? currentLtp;
     currentChangePercent = (cryptoQuote as any).changePercent ?? (prevClose > 0 ? ((currentLtp - prevClose) / prevClose) * 100 : 0);
-  } else if (isComex && comexSymbolKey && comexQuotes[comexSymbolKey]) {
-    currentLtp = comexQuotes[comexSymbolKey].lastPrice;
-    currentChangePercent = comexQuotes[comexSymbolKey].changePercent;
+  } else if (isComex && (comexSymbolKey || item?.symbol || item?.comexSymbol)) {
+    const q = (comexSymbolKey && comexQuotes[comexSymbolKey]) ||
+              (item?.comexSymbol && comexQuotes[item.comexSymbol]) ||
+              (comexSymbolKey && marketQuotes[comexSymbolKey]) ||
+              (item?.symbol && marketQuotes[item.symbol]) ||
+              activeKiteQuote;
+    if (q) {
+      currentLtp = q.lastPrice || (q as any).price || currentLtp;
+      currentChangePercent = q.changePercent || 0;
+    }
   } else if (activeKiteQuote) {
     currentLtp = activeKiteQuote.lastPrice;
     currentChangePercent = activeKiteQuote.changePercent;
@@ -807,14 +824,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         if (pTopLimit > 0) {
           const maxAllowed = currentLtp * (1 + pTopLimit / 100);
           if (trigVal > maxAllowed) {
-            showOrderError(`Maximum price allowed is ₹${maxAllowed.toFixed(2)}`);
+            showOrderError(`Maximum price allowed is ${currencySymbol}${maxAllowed.toFixed(2)}`);
             return;
           }
         }
         if (pMinLimit > 0) {
           const minAllowed = currentLtp * (1 - pMinLimit / 100);
           if (trigVal < minAllowed) {
-            showOrderError(`Minimum price allowed is ₹${minAllowed.toFixed(2)}`);
+            showOrderError(`Minimum price allowed is ${currencySymbol}${minAllowed.toFixed(2)}`);
             return;
           }
         }
@@ -1065,11 +1082,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             ...diagnosticFields,
           };
 
-          showToast(`${placeSide} order sent for ${item.symbol}`);
           handleCloseAnimation();
 
           placeOrder(orderPayload).then(res => {
-            if (res.success) {
+            if (res.success || (res as any).isProcessing) {
+              const isProcessing = Boolean((res as any).isProcessing);
+              showToast(isProcessing ? `Order submitted for ${item.symbol}` : `${placeSide} order executed for ${item.symbol}`);
               window.dispatchEvent(new Event('order_placed'));
               window.dispatchEvent(new Event('position-closed'));
               if (onSuccess) {
@@ -1537,7 +1555,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 {/* Row 1: Name + Price */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <div className="ts2-instr-name">{fmtSymbolName(item.symbol, item.name)}</div>
-                  <div className="ts2-price-value" style={{ flexShrink: 0, marginLeft: '12px' }}>{fmt(currentLtp)}</div>
+                  <div className="ts2-price-value" style={{ flexShrink: 0, marginLeft: '12px' }}>
+                    <TickFlash value={currentLtp}>{fmt(currentLtp)}</TickFlash>
+                  </div>
                 </div>
                 {/* Row 2: Badge + Change% */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '3px' }}>
@@ -1561,7 +1581,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               <div className="ts2-ba-col">
                 <span className="ts2-ba-label">BID</span>
                 <span className="ts2-ba-bid">
-                  {currentLtp > 0 ? fmt(bidPrice) : '--'}
+                  {currentLtp > 0 ? <TickFlash value={bidPrice}>{fmt(bidPrice)}</TickFlash> : '--'}
                 </span>
               </div>
               <div className="ts2-ba-divider" />

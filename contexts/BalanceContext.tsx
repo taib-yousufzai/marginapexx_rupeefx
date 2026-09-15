@@ -8,10 +8,13 @@ import { getSharedSessionSync } from '@/lib/sharedSession';
 
 export interface BalanceContextType {
   balance: number;
+  rawBalance?: number;
   settlementAmount: number;
   loading: boolean;
   refresh: () => Promise<void>;
   validatePreflight: (requiredMargin: number) => { valid: boolean; reason?: string };
+  lockOptimisticMargin: (amount: number, lockId: string) => void;
+  releaseOptimisticMargin: (lockId: string) => void;
 }
 
 const BalanceDataContext = createContext<BalanceContextType | null>(null);
@@ -20,13 +23,45 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
   const [balance, setBalance] = useState(0);
   const [settlementAmount, setSettlementAmount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [optimisticLockedMargins, setOptimisticLockedMargins] = useState<Record<string, { amount: number; addedAt: number }>>({});
+
+  const lockOptimisticMargin = useCallback((amount: number, lockId: string) => {
+    if (amount <= 0 || !lockId) return;
+    setOptimisticLockedMargins(prev => ({
+      ...prev,
+      [lockId]: { amount, addedAt: Date.now() }
+    }));
+  }, []);
+
+  const releaseOptimisticMargin = useCallback((lockId: string) => {
+    if (!lockId) return;
+    setOptimisticLockedMargins(prev => {
+      if (!prev[lockId]) return prev;
+      const next = { ...prev };
+      delete next[lockId];
+      return next;
+    });
+  }, []);
+
+  // Compute active locked margin (filtering out any >10s stale locks)
+  const now = Date.now();
+  const activeLockedMargin = Object.values(optimisticLockedMargins).reduce((sum, item) => {
+    if (now - item.addedAt > 10000) return sum;
+    return sum + item.amount;
+  }, 0);
+
+  const effectiveBalance = Math.max(0, balance - activeLockedMargin);
 
   // Guard against concurrent in-flight fetches
   const fetchingRef = useRef(false);
 
   const fetchBalance = useCallback(async () => {
     if (fetchingRef.current) return;
-    const { token } = getSharedSessionSync();
+    let { token } = getSharedSessionSync();
+    if (!token) {
+      const session = await getSharedSession();
+      token = session?.token || null;
+    }
     if (!token) return;
 
     fetchingRef.current = true;
@@ -49,12 +84,14 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
 
     const init = async (session?: any) => {
       if (cancelled) return;
-      if (!session) {
-        const { token } = getSharedSessionSync();
-        if (!token) {
-          if (!cancelled) setLoading(false);
-          return;
-        }
+      let token = session?.access_token || getSharedSessionSync().token;
+      if (!token) {
+        const s = await getSharedSession();
+        token = s?.token || null;
+      }
+      if (!token) {
+        if (!cancelled) setLoading(false);
+        return;
       }
 
       // Initial fetch
@@ -154,17 +191,26 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
   }, [fetchBalance]);
 
   const validatePreflight = useCallback((requiredMargin: number): { valid: boolean; reason?: string } => {
-    if (balance > 0 && requiredMargin > balance) {
+    if (effectiveBalance > 0 && requiredMargin > effectiveBalance) {
       return {
         valid: false,
-        reason: `Insufficient margin. Required: ₹${requiredMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}, Available: ₹${balance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+        reason: `Insufficient margin. Required: ₹${requiredMargin.toLocaleString('en-IN', { maximumFractionDigits: 2 })}, Available: ₹${effectiveBalance.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
       };
     }
     return { valid: true };
-  }, [balance]);
+  }, [effectiveBalance]);
 
   return (
-    <BalanceDataContext.Provider value={{ balance, settlementAmount, loading, refresh: fetchBalance, validatePreflight }}>
+    <BalanceDataContext.Provider value={{
+      balance: effectiveBalance,
+      rawBalance: balance,
+      settlementAmount,
+      loading,
+      refresh: fetchBalance,
+      validatePreflight,
+      lockOptimisticMargin,
+      releaseOptimisticMargin
+    }}>
       {children}
     </BalanceDataContext.Provider>
   );

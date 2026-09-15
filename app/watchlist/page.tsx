@@ -1,8 +1,9 @@
 'use client';
-import { useState, useEffect, useRef, Suspense, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, Suspense, useMemo, useCallback } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
+import { getSharedSessionSync } from '@/lib/sharedSession';
 import { useMarketQuotes, QuoteData } from '@/hooks/useMarketQuotes';
 import { useComexQuotes } from '@/hooks/useComexQuotes';
 import { ComexQuoteData } from '@/contexts/ComexDataContext';
@@ -20,6 +21,7 @@ import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { isInstrumentInWatchlist } from '@/lib/watchlistUtils';
 import { generateRealisticFallbackQuote } from '@/lib/quoteFallback';
+import TickFlash from '@/components/TickFlash';
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
@@ -44,6 +46,7 @@ import {
   filterBySearch,
   getExchangeBadge,
   getDefaultWatchlistItems,
+  getComexSymbolKey,
 } from '@/lib/watchlistClassification';
 
 export type { WatchlistItem, TabLabel };
@@ -65,6 +68,18 @@ export {
 /** Returns the CSS class for a percentage change value. */
 export function getPctClass(pct: number): 'pct-positive' | 'pct-negative' {
   return pct < 0 ? 'pct-negative' : 'pct-positive';
+}
+
+function saveWatchlistToStorage(items: WatchlistItem[], userId?: string) {
+  try {
+    const key = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
+    localStorage.setItem(key, JSON.stringify(items));
+    if (typeof (window as any).__syncWatchlistSymbols === 'function') {
+      (window as any).__syncWatchlistSymbols(items.map(i => i.symbol));
+    }
+  } catch (e) {
+    console.error('Error saving watchlist to storage:', e);
+  }
 }
 
 // ── SegmentTabBar Component ──────────────────────────────────────────────────
@@ -106,7 +121,7 @@ interface InstrumentRowProps {
   onChart?: (item: WatchlistItem) => void;
 }
 
-function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetail, basketMode, onBasketBuy, onBasketSell, onChart }: InstrumentRowProps) {
+const InstrumentRow = React.memo(function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetail, basketMode, onBasketBuy, onBasketSell, onChart }: InstrumentRowProps) {
   const [priceView, setPriceView] = useState<'kite' | 'comex'>('kite');
 
   const symCheck = ((item.symbol || '') + ' ' + (item.name || '') + ' ' + (item.kiteSymbol || '')).toUpperCase();
@@ -124,11 +139,13 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
     symUp.endsWith('USDT') ||
     CRYPTO_BASES.some(c => symUp === c || symUp.startsWith(`${c}USDT`) || symUp.startsWith(`${c}/`))
   );
-  const isPureComex = segUpper.includes('COMEX') || catUpper.includes('COMEX') || symUp.endsWith('=F') || (!!item.comexSymbol && !item.kiteSymbol);
+  const isPureComex = segUpper.includes('COMEX') || catUpper.includes('COMEX') || symUp.endsWith('=F') || (!!item.comexSymbol && !item.kiteSymbol) || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].includes(symUp);
   const hasDualView = false;
   const showComex = isPureComex || (isForex && !!item.comexSymbol);
 
+  const isGoldSymbol = symUp.includes('XAU') || symUp.includes('GOLD') || symUp === 'GC=F';
   const activeCryptoQuote = binanceQuote || quote;
+  const activeComexQuote = (comexQuote && ((comexQuote.lastPrice || 0) > 0 || ((comexQuote as any)?.price || 0) > 0)) ? comexQuote : (quote || comexQuote);
 
   let ltp = 0;
   let prevClose = 0;
@@ -143,10 +160,21 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
     absoluteChange = ltp - prevClose;
     percentChange = prevClose !== 0 ? ((ltp - prevClose) / prevClose) * 100 : 0;
   } else if (showComex) {
-    ltp = comexQuote?.lastPrice ?? item.price ?? 0;
-    prevClose = comexQuote?.close ?? (item.close || ltp);
-    absoluteChange = ltp - prevClose;
-    percentChange = prevClose !== 0 ? ((ltp - prevClose) / prevClose) * 100 : 0;
+    const rawQLtp = (isGoldSymbol && quote && quote.lastPrice > 0) ? quote.lastPrice : (activeComexQuote?.lastPrice ?? (activeComexQuote as any)?.price);
+    const rawQClose = activeComexQuote?.close ?? (activeComexQuote as any)?.open ?? quote?.close ?? quote?.open;
+    const rawQChange = (activeComexQuote as any)?.change ?? quote?.change;
+    const rawQChangePct = (activeComexQuote as any)?.changePercent ?? quote?.changePercent;
+
+    ltp = (rawQLtp && rawQLtp > 0) ? rawQLtp : (item.price ?? 0);
+    prevClose = (rawQClose && rawQClose > 0) ? rawQClose : (item.close || ltp);
+
+    if (typeof rawQChangePct === 'number' && !isNaN(rawQChangePct) && rawQChangePct !== 0) {
+      percentChange = rawQChangePct;
+      absoluteChange = typeof rawQChange === 'number' && !isNaN(rawQChange) ? rawQChange : (ltp - prevClose);
+    } else {
+      absoluteChange = ltp - prevClose;
+      percentChange = prevClose !== 0 ? ((ltp - prevClose) / prevClose) * 100 : 0;
+    }
   } else {
     ltp = quote?.lastPrice ?? item.price ?? 0;
     if (quote && quote.lastPrice > 0) {
@@ -169,9 +197,6 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
     absoluteChange = fallback.net_change;
     percentChange = fallback.changePercent;
   }
-
-  const isForexUsd = symCheck.includes('GBPUSD') || symCheck.includes('EURUSD') || symCheck.includes('GBP/USD') || symCheck.includes('EUR/USD');
-  // Raw currency prices maintained for Forex/Crypto/COMEX
 
   const isLoading = ltp === 0;
 
@@ -242,7 +267,7 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
               onClick={(e) => { e.stopPropagation(); setPriceView(v => v === 'kite' ? 'comex' : 'kite'); }}
               style={{ fontSize: '0.62rem', fontWeight: '700', color: showComex ? '#4A148C' : '#2C8E5A', background: showComex ? '#EDE7F6' : '#E9F6EF', padding: '2px 8px', borderRadius: '20px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '3px', userSelect: 'none' }}
             >
-              {showComex ? '₹ COMEX ⇄ ₹ MCX' : '₹ MCX ⇄ ₹ COMEX'}
+              {showComex ? 'COMEX ⇄ MCX' : 'MCX ⇄ COMEX'}
             </div>
           )}
         </div>
@@ -252,7 +277,12 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
           ) : (
             <>
               <div className="instr-row__ltp">
-                {`₹${ltp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                {(() => {
+                  const currencySym = '₹';
+                  const locale = 'en-IN';
+                  const numDigits = (symUp.includes('CU') || symUp.includes('NG') || symUp.includes('DOGE') || (ltp > 0 && ltp < 10)) ? 4 : 2;
+                  return `${currencySym}${ltp.toLocaleString(locale, { minimumFractionDigits: numDigits, maximumFractionDigits: numDigits })}`;
+                })()}
               </div>
               <div className="instr-row__abs-change">{absoluteChange >= 0 ? '+' : ''}{absoluteChange.toFixed(2)}</div>
               <div className={`instr-row__pct-change ${getPctClass(percentChange)}`}>
@@ -278,7 +308,18 @@ function InstrumentRow({ item, quote, binanceQuote, comexQuote, onTrade, onDetai
       </div>
     </div>
   );
-}
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.item.symbol === nextProps.item.symbol &&
+    prevProps.item.price === nextProps.item.price &&
+    prevProps.basketMode === nextProps.basketMode &&
+    prevProps.quote?.lastPrice === nextProps.quote?.lastPrice &&
+    prevProps.quote?.changePercent === nextProps.quote?.changePercent &&
+    prevProps.binanceQuote?.lastPrice === nextProps.binanceQuote?.lastPrice &&
+    prevProps.comexQuote?.lastPrice === nextProps.comexQuote?.lastPrice &&
+    (prevProps.comexQuote as any)?.price === (nextProps.comexQuote as any)?.price
+  );
+});
 
 // ── EmptyState Component ────────────────────────────────────────────────────
 
@@ -364,18 +405,64 @@ function WatchlistContent() {
     };
   }, []);
 
-  const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>([]);
+  const [watchlistItems, setWatchlistItems] = useState<WatchlistItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const syncSession = getSharedSessionSync();
+        const syncId = syncSession.user?.id;
+        const userKey = syncId ? `${WATCHLIST_KEY}_${syncId}` : WATCHLIST_KEY;
+        const stored = localStorage.getItem(userKey) || localStorage.getItem(WATCHLIST_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+      return getDefaultWatchlistItems();
+    }
+    return [];
+  });
   const [hasLoaded, setHasLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState<TabLabel>('All');
   const [searchText, setSearchText] = useState<string>('');
   const [isFolderDrawerOpen, setIsFolderDrawerOpen] = useState(false);
   const [expandedSegments, setExpandedSegments] = useState<Record<string, boolean>>({});
-  const [allowedSegments, setAllowedSegments] = useState<string[] | null>(null);
+  const [allowedSegments, setAllowedSegments] = useState<string[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = sessionStorage.getItem('cached_allowed_segments');
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
   // segmentSettings, getSegment, and getLotSize come from the shared TradeConfigProvider
   const { segmentSettings, getSegment, getLotSize } = useTradeConfig();
-  const [blockedSymbols, setBlockedSymbols] = useState<Set<string>>(new Set());
-  const [userId, setUserId] = useState<string>('');
-  const [tradingHours, setTradingHours] = useState<any[]>([]);
+  const [blockedSymbols, setBlockedSymbols] = useState<Set<string>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = sessionStorage.getItem('cached_blocked_symbols');
+        if (cached) return new Set(JSON.parse(cached));
+      } catch {}
+    }
+    return new Set();
+  });
+  const [userId, setUserId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        return getSharedSessionSync().user?.id || '';
+      } catch {}
+    }
+    return '';
+  });
+  const [tradingHours, setTradingHours] = useState<any[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = sessionStorage.getItem('cached_trading_hours');
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return [];
+  });
   const [errorModalMsg, setErrorModalMsg] = useState<string | null>(null);
 
   // Fetch Binance quotes directly for crypto symbols
@@ -569,21 +656,32 @@ function WatchlistContent() {
 
   const marketSymbols = useMemo(() => {
     const list: string[] = [];
+    const seen = new Set<string>();
+
+    const addSym = (sym?: string | null) => {
+      if (!sym) return;
+      const clean = sym.trim();
+      if (clean && !seen.has(clean)) {
+        seen.add(clean);
+        list.push(clean);
+      }
+    };
+
     watchlistItems.forEach(i => {
-      const candidates = [i.kiteSymbol, i.symbol, i.name, i.symbol?.replace(/\s+/g, '')].filter(Boolean) as string[];
-      candidates.forEach(sym => {
-        if (!i.binanceSymbol && !list.includes(sym)) list.push(sym);
-      });
-      if (i.binanceSymbol && !list.includes(i.binanceSymbol)) list.push(i.binanceSymbol);
+      if (i.kiteSymbol) addSym(i.kiteSymbol);
+      if (i.binanceSymbol) addSym(i.binanceSymbol);
+      if (i.comexSymbol) addSym(i.comexSymbol);
+      if (i.symbol) addSym(i.symbol);
     });
+
     if (selectedItem) {
-      const selCandidates = [selectedItem.kiteSymbol, selectedItem.symbol, selectedItem.name, selectedItem.symbol?.replace(/\s+/g, '')].filter(Boolean) as string[];
-      selCandidates.forEach(sym => {
-        if (!list.includes(sym)) list.push(sym);
-      });
+      addSym(selectedItem.kiteSymbol);
+      addSym(selectedItem.binanceSymbol);
+      addSym(selectedItem.comexSymbol);
+      addSym(selectedItem.symbol);
     }
     return list;
-  }, [watchlistItems, selectedItem?.kiteSymbol, selectedItem?.symbol, selectedItem?.name]);
+  }, [watchlistItems, selectedItem]);
 
   const { quotes: marketQuotes } = useMarketQuotes(marketSymbols);
 
@@ -604,24 +702,11 @@ function WatchlistContent() {
   }, [binanceQuotesAsQuoteData]);
 
   const comexSymbols = Array.from(new Set([
-    ...watchlistItems.map(i => i.comexSymbol || (i.symbol.endsWith('=F') ? i.symbol : (
-      (i.segment || '').toUpperCase().includes('COMEX') ? (
-        (i.name || i.symbol || '').toUpperCase().includes('SILVER') ? 'XAGUSD' :
-        (i.name || i.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
-        (i.name || i.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
-        (i.name || i.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
-        (i.name || i.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
-      ) : ''
-    ))).filter((s): s is string => !!s),
-    ...(selectedItem?.comexSymbol ? [selectedItem.comexSymbol] : []),
-    ...(selectedItem && (selectedItem.segment || '').toUpperCase().includes('COMEX') ? [
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('SILVER') ? 'XAGUSD' :
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
-      (selectedItem.name || selectedItem.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
-    ].filter(Boolean) : [])
-  ]));
+    ...watchlistItems.map(i => getComexSymbolKey(i)),
+    ...watchlistItems.map(i => i.comexSymbol),
+    ...watchlistItems.map(i => i.symbol),
+    ...(selectedItem ? [getComexSymbolKey(selectedItem), selectedItem.comexSymbol, selectedItem.symbol] : [])
+  ].filter((s): s is string => !!s)));
   const { quotes: comexQuotes } = useComexQuotes(comexSymbols, 1000);
 
   // ── Detail sheet: resolve live quote from correct source ─────────────────
@@ -633,13 +718,7 @@ function WatchlistContent() {
     (!!selectedItem.comexSymbol && (!(selectedItem.kiteSymbol) || (selectedItem as any).preferredView === 'comex'))
   );
 
-  const comexSymbolKey = selectedItem?.comexSymbol || (selectedItem?.symbol?.endsWith('=F') ? selectedItem.symbol : (
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('SILVER') ? 'XAGUSD' :
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
-    (selectedItem?.name || selectedItem?.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
-  ));
+  const comexSymbolKey = getComexSymbolKey(selectedItem);
 
   const currentKiteQuote = selectedItem ? (
     (selectedItem.kiteSymbol ? marketQuotes[selectedItem.kiteSymbol] : null) ||
@@ -649,24 +728,38 @@ function WatchlistContent() {
     null
   ) : null;
   const currentBinanceQuote = selectedItem?.binanceSymbol ? (marketQuotes[selectedItem.binanceSymbol] || binanceQuotesAsQuoteData[selectedItem.binanceSymbol]) : null;
-  const currentComexQuote = comexSymbolKey ? comexQuotes[comexSymbolKey] : null;
+  const isSelectedGold = comexSymbolKey === 'XAUUSD' || comexSymbolKey === 'GOLD' || selectedItem?.symbol === 'XAUUSD' || selectedItem?.symbol === 'GOLD';
+  const currentComexQuote = comexSymbolKey ? (
+    (isSelectedGold ? (marketQuotes[comexSymbolKey] as any) : null) ||
+    comexQuotes[comexSymbolKey] ||
+    (selectedItem?.comexSymbol ? comexQuotes[selectedItem.comexSymbol] : null) ||
+    (selectedItem?.symbol ? comexQuotes[selectedItem.symbol] : null) ||
+    (marketQuotes[comexSymbolKey] as any) ||
+    (selectedItem?.comexSymbol ? (marketQuotes[selectedItem.comexSymbol] as any) : null) ||
+    (marketQuotes['COMEX:' + comexSymbolKey] as any) ||
+    null
+  ) : null;
 
   let currentLtp = 0;
   let currentChangePercent = 0;
-  let detailOpen = (isCrypto && currentBinanceQuote?.open) || (isComex && currentComexQuote?.open) || currentKiteQuote?.open || selectedItem?.open;
-  let detailHigh = (isCrypto && currentBinanceQuote?.high) || (isComex && currentComexQuote?.high) || currentKiteQuote?.high || selectedItem?.high;
-  let detailLow = (isCrypto && currentBinanceQuote?.low) || (isComex && currentComexQuote?.low) || currentKiteQuote?.low || selectedItem?.low;
-  let detailClose = (isCrypto && currentBinanceQuote?.close) || (isComex && currentComexQuote?.close) || currentKiteQuote?.close || selectedItem?.close;
+  let detailOpen = (isCrypto && currentBinanceQuote?.open) || (isComex && (currentComexQuote?.open || currentKiteQuote?.open)) || currentKiteQuote?.open || currentComexQuote?.open || selectedItem?.open;
+  let detailHigh = (isCrypto && currentBinanceQuote?.high) || (isComex && (currentComexQuote?.high || currentKiteQuote?.high)) || currentKiteQuote?.high || currentComexQuote?.high || selectedItem?.high;
+  let detailLow = (isCrypto && currentBinanceQuote?.low) || (isComex && (currentComexQuote?.low || currentKiteQuote?.low)) || currentKiteQuote?.low || currentComexQuote?.low || selectedItem?.low;
+  let detailClose = (isCrypto && currentBinanceQuote?.close) || (isComex && (currentComexQuote?.close || currentKiteQuote?.close)) || currentKiteQuote?.close || currentComexQuote?.close || selectedItem?.close;
 
   if (isCrypto && currentBinanceQuote) {
     currentLtp = currentBinanceQuote.lastPrice;
     currentChangePercent = currentBinanceQuote.changePercent;
-  } else if (isComex && currentComexQuote) {
-    currentLtp = currentComexQuote.lastPrice;
-    currentChangePercent = currentComexQuote.changePercent;
+  } else if (isComex && (currentComexQuote || currentKiteQuote)) {
+    const activeQ = (currentComexQuote?.lastPrice ? currentComexQuote : currentKiteQuote) || currentComexQuote || currentKiteQuote;
+    currentLtp = activeQ?.lastPrice || (activeQ as any)?.price || 0;
+    currentChangePercent = activeQ?.changePercent || 0;
   } else if (currentKiteQuote) {
     currentLtp = currentKiteQuote.lastPrice;
     currentChangePercent = currentKiteQuote.changePercent;
+  } else if (currentComexQuote) {
+    currentLtp = currentComexQuote.lastPrice || (currentComexQuote as any)?.price || 0;
+    currentChangePercent = currentComexQuote.changePercent || 0;
   } else {
     currentLtp = typeof selectedItem?.price === 'string'
       ? parseFloat((selectedItem.price as string).replace(/,/g, ''))
@@ -687,18 +780,16 @@ function WatchlistContent() {
   }
 
   const detailSymCheck = ((selectedItem?.symbol || '') + ' ' + (selectedItem?.name || '') + ' ' + (selectedItem?.kiteSymbol || '')).toUpperCase();
-  const isDetailForexUsd = detailSymCheck.includes('GBPUSD') || detailSymCheck.includes('EURUSD') || detailSymCheck.includes('GBP/USD') || detailSymCheck.includes('EUR/USD');
-
-  if (isDetailForexUsd && currentLtp > 0 && currentLtp < 20) {
-    // Keep raw price
-  }
+  const isDetailForex = !!selectedItem && ((selectedItem.segment || '').toUpperCase().includes('FOREX') || (selectedItem.segment || '').toUpperCase().includes('CDS'));
+  const isDetailUsd = isCrypto || isComex || (selectedItem?.segment || '').toUpperCase().includes('US-EQ') || ((selectedItem?.symbol || '').toUpperCase().startsWith('US:')) || (isDetailForex && !detailSymCheck.includes('INR'));
 
   const formatPrice = (price: number | undefined | null) => {
     if (price === undefined || price === null || isNaN(price as number)) return '--';
     let p = price;
     const sym = '₹';
     const locale = 'en-IN';
-    return `${sym}${p.toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const numDigits = (p > 0 && p < 10) ? 4 : 2;
+    return `${sym}${p.toLocaleString(locale, { minimumFractionDigits: numDigits, maximumFractionDigits: numDigits })}`;
   };
 
   const dbSeg = selectedItem ? mapSegmentWithSymbol(selectedItem.segment, selectedItem.symbol || selectedItem.name || '') : '';
@@ -730,10 +821,6 @@ function WatchlistContent() {
   if (currentLtp > 0) {
     if (!rawBid || rawBid <= 0) rawBid = currentLtp;
     if (!rawAsk || rawAsk <= 0) rawAsk = currentLtp;
-  }
-
-  if (isDetailForexUsd) {
-    // Keep raw bid/ask
   }
 
 
@@ -1043,9 +1130,9 @@ function WatchlistContent() {
     } else {
       try {
         itemsToLoad = JSON.parse(rawUser) as WatchlistItem[];
-        if (!Array.isArray(itemsToLoad)) itemsToLoad = [];
+        if (!Array.isArray(itemsToLoad) || itemsToLoad.length === 0) itemsToLoad = getDefaultWatchlistItems();
       } catch {
-        itemsToLoad = [];
+        itemsToLoad = getDefaultWatchlistItems();
       }
     }
 
@@ -1064,20 +1151,23 @@ function WatchlistContent() {
         if (match) { migrated = true; return { ...match }; }
       }
       // Ensure COMEX items are pure MT5 symbols (XAUUSD, XAGUSD, XTIUSD, XCUUSD)
-      if (item.category === 'COMEX' || item.category === 'COI' || item.segment === 'COMEX - Futures' || item.segment === 'COMEX' || (item.symbol || '').endsWith('=F') || (item.comexSymbol || '').endsWith('=F')) {
-        const itemNameUpper = (item.name || '').toUpperCase();
-        const itemSymUpper = (item.symbol || '').toUpperCase();
+      const itemNameUpper = (item.name || '').toUpperCase();
+      const itemSymUpper = (item.symbol || '').toUpperCase();
+      const itemComexUpper = (item.comexSymbol || '').toUpperCase();
+      const isComexCandidate = item.category === 'COMEX' || item.category === 'COI' || item.segment === 'COMEX - Futures' || item.segment === 'COMEX' || itemSymUpper.endsWith('=F') || itemComexUpper.endsWith('=F') || itemSymUpper === 'XAUUSD' || itemSymUpper === 'XAGUSD' || itemSymUpper === 'XTIUSD' || itemSymUpper === 'XCUUSD';
+
+      if (isComexCandidate) {
         let targetSymbol = '';
-        if (itemNameUpper.includes('GOLD') || itemSymUpper.includes('GOLD') || itemSymUpper.includes('GC')) targetSymbol = 'XAUUSD';
-        else if (itemNameUpper.includes('SILVER') || itemSymUpper.includes('SILVER') || itemSymUpper.includes('SI')) targetSymbol = 'XAGUSD';
-        else if (itemNameUpper.includes('CRUDE') || itemSymUpper.includes('CRUDE') || itemSymUpper.includes('CL')) targetSymbol = 'XTIUSD';
-        else if (itemNameUpper.includes('COPPER') || itemSymUpper.includes('COPPER') || itemSymUpper.includes('HG')) targetSymbol = 'XCUUSD';
+        if (itemNameUpper.includes('GOLD') || itemSymUpper.includes('GOLD') || itemSymUpper.includes('GC') || itemSymUpper === 'XAUUSD') targetSymbol = 'XAUUSD';
+        else if (itemNameUpper.includes('SILVER') || itemSymUpper.includes('SILVER') || itemSymUpper.includes('SI') || itemSymUpper === 'XAGUSD') targetSymbol = 'XAGUSD';
+        else if (itemNameUpper.includes('CRUDE') || itemSymUpper.includes('CRUDE') || itemSymUpper.includes('CL') || itemSymUpper === 'XTIUSD') targetSymbol = 'XTIUSD';
+        else if (itemNameUpper.includes('COPPER') || itemSymUpper.includes('COPPER') || itemSymUpper.includes('HG') || itemSymUpper === 'XCUUSD') targetSymbol = 'XCUUSD';
         
         if (targetSymbol) {
           const match = DEFAULT_COMEX_ITEMS.find(d => d.symbol === targetSymbol || d.comexSymbol === targetSymbol);
           if (match) {
             migrated = true;
-            return { ...match };
+            return { ...match, price: 0, open: 0, close: 0, high: 0, low: 0 };
           } else {
             migrated = true;
             return {
@@ -1086,7 +1176,8 @@ function WatchlistContent() {
               kiteSymbol: '',
               comexSymbol: targetSymbol,
               category: 'COMEX',
-              segment: 'COMEX - Futures'
+              segment: 'COMEX - Futures',
+              price: 0, open: 0, close: 0, high: 0, low: 0
             };
           }
         }
@@ -1636,10 +1727,28 @@ function WatchlistContent() {
                         (item.symbol && marketQuotes[item.symbol]) ||
                         (item.symbol && marketQuotes[item.symbol.replace(/\s+/g, '')]) ||
                         (item.name && marketQuotes[item.name]) ||
-                        (item.binanceSymbol ? marketQuotes[item.binanceSymbol] : undefined)
+                        (item.binanceSymbol ? marketQuotes[item.binanceSymbol] : undefined) ||
+                        (getComexSymbolKey(item) ? marketQuotes[getComexSymbolKey(item)] : undefined) ||
+                        (item.comexSymbol ? marketQuotes[item.comexSymbol] : undefined)
                       }
                       binanceQuote={item.binanceSymbol ? (marketQuotes[item.binanceSymbol] || binanceQuotesAsQuoteData[item.binanceSymbol]) : undefined}
-                      comexQuote={item.comexSymbol ? comexQuotes[item.comexSymbol] : undefined}
+                      comexQuote={(() => {
+                        const cKey = getComexSymbolKey(item);
+                        const symUp = (item.symbol || '').toUpperCase();
+                        const nameUp = (item.name || '').toUpperCase();
+                        return (cKey ? comexQuotes[cKey] : undefined) ||
+                               (cKey ? comexQuotes[cKey.toUpperCase()] : undefined) ||
+                               (item.comexSymbol ? comexQuotes[item.comexSymbol] : undefined) ||
+                               (item.comexSymbol ? comexQuotes[item.comexSymbol.toUpperCase()] : undefined) ||
+                               (item.symbol ? comexQuotes[item.symbol] : undefined) ||
+                               (symUp ? comexQuotes[symUp] : undefined) ||
+                               (item.name ? comexQuotes[item.name] : undefined) ||
+                               (nameUp ? comexQuotes[nameUp] : undefined) ||
+                               (cKey ? (marketQuotes[cKey] as any) : undefined) ||
+                               (cKey ? (marketQuotes[`COMEX:${cKey}`] as any) : undefined) ||
+                               (symUp ? (marketQuotes[symUp] as any) : undefined) ||
+                               (symUp ? (marketQuotes[`COMEX:${symUp}`] as any) : undefined);
+                      })()}
                       onTrade={(it: WatchlistItem, type?: 'BUY' | 'SELL' | 'BOTH') => {
                         if (!isMarketOpen(it)) { showToast('Market is closed', true); return; }
                         openTradeSheet(it, type);
@@ -1794,7 +1903,9 @@ function WatchlistContent() {
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '2px', textAlign: 'right' }}>
                         <span style={{ fontSize: '0.65rem', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: '1px', lineHeight: '1' }}>CMP</span>
-                        <div style={{ fontSize: '1.3rem', fontWeight: '800', color: 'var(--text-primary)', lineHeight: '1.1', letterSpacing: '-0.3px' }}>{fmt(ltp)}</div>
+                        <div style={{ fontSize: '1.3rem', fontWeight: '800', color: 'var(--text-primary)', lineHeight: '1.1', letterSpacing: '-0.3px' }}>
+                          <TickFlash value={ltp}>{fmt(ltp)}</TickFlash>
+                        </div>
                         <span className="sheet-change" style={{ fontSize: '0.78rem', fontWeight: '700', padding: '0', lineHeight: '1', color: chgPct >= 0 ? '#059669' : '#DC2626' }}>{chgPct >= 0 ? '+' : ''}{chgPct.toFixed(2)}%</span>
                       </div>
                     </div>
@@ -1867,12 +1978,16 @@ function WatchlistContent() {
                       <div style={{ background: 'var(--card-alt-bg)', border: '1px solid var(--border-card)', borderRadius: '14px', padding: '8px 12px', display: 'flex', alignItems: 'center', marginBottom: '8px' }}>
                         <div style={{ flex: 1, textAlign: 'center' }}>
                           <div style={{ fontSize: '0.58rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>BID</div>
-                          <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#059669' }}>{fmt(bid)}</div>
+                          <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#059669' }}>
+                            <TickFlash value={bid}>{fmt(bid)}</TickFlash>
+                          </div>
                         </div>
                         <div style={{ width: '1px', background: 'var(--border-card)', height: '24px' }}></div>
                         <div style={{ flex: 1, textAlign: 'center' }}>
                           <div style={{ fontSize: '0.58rem', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '3px' }}>ASK</div>
-                          <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#DC2626' }}>{fmt(ask)}</div>
+                          <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#DC2626' }}>
+                            <TickFlash value={ask}>{fmt(ask)}</TickFlash>
+                          </div>
                         </div>
                       </div>
                       <div style={{ marginBottom: '8px' }}>
@@ -2344,32 +2459,34 @@ function WatchlistContent() {
                           <div className="children-container" style={{ display: 'block' }}>
                             {filteredSeg.instruments?.map((inst) => {
                               const isAdded = isInstrumentInWatchlist(inst, watchlistItems);
+                              const handleToggle = (e: React.MouseEvent) => {
+                                e.stopPropagation();
+                                if (isAdded) {
+                                  setWatchlistItems(prev => {
+                                    const next = prev.filter(i => !isInstrumentInWatchlist(inst, [i]));
+                                    saveWatchlistToStorage(next, userId);
+                                    if (typeof (window as any).__syncWatchlistSymbols === 'function') {
+                                      (window as any).__syncWatchlistSymbols(next.map((i: WatchlistItem) => i.symbol));
+                                    }
+                                    return next;
+                                  });
+                                  showToast('Removed from watchlist', false);
+                                } else {
+                                  if (typeof window.__addToWatchlistCallback === 'function') {
+                                    window.__addToWatchlistCallback(inst as WatchlistItem);
+                                    showToast('Added to watchlist', false);
+                                  }
+                                }
+                              };
                               return (
-                                <div key={inst.symbol} className="script-item">
+                                <div key={inst.symbol} className="script-item" onClick={handleToggle} style={{ cursor: 'pointer' }}>
                                   <span>{inst.name}</span>
                                   <button
                                     className="add-script-btn"
                                     data-watch-symbol={inst.symbol}
                                     data-watch-item={JSON.stringify(inst)}
                                     style={isAdded ? { background: '#2C8E5A', color: '#fff', border: 'none', opacity: 0.9, cursor: 'pointer' } : undefined}
-                                    onClick={() => {
-                                      if (isAdded) {
-                                        setWatchlistItems(prev => {
-                                          const next = prev.filter(i => !isInstrumentInWatchlist(inst, [i]));
-                                          saveWatchlistToStorage(next, userId);
-                                          if (typeof (window as any).__syncWatchlistSymbols === 'function') {
-                                            (window as any).__syncWatchlistSymbols(next.map((i: WatchlistItem) => i.symbol));
-                                          }
-                                          return next;
-                                        });
-                                        showToast('Removed from watchlist', false);
-                                      } else {
-                                        if (typeof window.__addToWatchlistCallback === 'function') {
-                                          window.__addToWatchlistCallback(inst as WatchlistItem);
-                                          showToast('Added to watchlist', false);
-                                        }
-                                      }
-                                    }}
+                                    onClick={handleToggle}
                                   >
                                     {isAdded ? 'Added ✓' : '+ Add'}
                                   </button>
@@ -2394,32 +2511,34 @@ function WatchlistContent() {
                                     <div className="children-container" style={{ display: 'block' }}>
                                       {sub.instruments.map((inst: any) => {
                                         const isAdded = isInstrumentInWatchlist(inst, watchlistItems);
+                                        const handleSubToggle = (e: React.MouseEvent) => {
+                                          e.stopPropagation();
+                                          if (isAdded) {
+                                            setWatchlistItems(prev => {
+                                              const next = prev.filter(i => !isInstrumentInWatchlist(inst, [i]));
+                                              saveWatchlistToStorage(next, userId);
+                                              if (typeof (window as any).__syncWatchlistSymbols === 'function') {
+                                                (window as any).__syncWatchlistSymbols(next.map((i: WatchlistItem) => i.symbol));
+                                              }
+                                              return next;
+                                            });
+                                            showToast('Removed from watchlist', false);
+                                          } else {
+                                            if (typeof window.__addToWatchlistCallback === 'function') {
+                                              window.__addToWatchlistCallback(inst as WatchlistItem);
+                                              showToast('Added to watchlist', false);
+                                            }
+                                          }
+                                        };
                                         return (
-                                          <div key={inst.symbol} className="script-item">
+                                          <div key={inst.symbol} className="script-item" onClick={handleSubToggle} style={{ cursor: 'pointer' }}>
                                             <span>{inst.name}</span>
                                             <button
                                               className="add-script-btn"
                                               data-watch-symbol={inst.symbol}
                                               data-watch-item={JSON.stringify(inst)}
                                               style={isAdded ? { background: '#2C8E5A', color: '#fff', border: 'none', opacity: 0.9, cursor: 'pointer' } : undefined}
-                                              onClick={() => {
-                                                if (isAdded) {
-                                                  setWatchlistItems(prev => {
-                                                    const next = prev.filter(i => !isInstrumentInWatchlist(inst, [i]));
-                                                    saveWatchlistToStorage(next, userId);
-                                                    if (typeof (window as any).__syncWatchlistSymbols === 'function') {
-                                                      (window as any).__syncWatchlistSymbols(next.map((i: WatchlistItem) => i.symbol));
-                                                    }
-                                                    return next;
-                                                  });
-                                                  showToast('Removed from watchlist', false);
-                                                } else {
-                                                  if (typeof window.__addToWatchlistCallback === 'function') {
-                                                    window.__addToWatchlistCallback(inst as WatchlistItem);
-                                                    showToast('Added to watchlist', false);
-                                                  }
-                                                }
-                                              }}
+                                              onClick={handleSubToggle}
                                             >
                                               {isAdded ? 'Added ✓' : '+ Add'}
                                             </button>
@@ -2633,10 +2752,10 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           name: 'COMEX',
           icon: 'fa-gem',
           instruments: [
-            { name: 'GOLD', comexName: 'Gold', symbol: 'XAUUSD', kiteSymbol: '', comexSymbol: 'XAUUSD', price: 4349.42, change: '+0.75%', segment: 'COMEX - Futures', contractDate: '', open: 4349.42, high: 4360, low: 4330, close: 4349.42, category: 'COMEX' },
-            { name: 'SILVER', comexName: 'Silver', symbol: 'XAGUSD', kiteSymbol: '', comexSymbol: 'XAGUSD', price: 64.21, change: '+1.26%', segment: 'COMEX - Futures', contractDate: '', open: 64.21, high: 64.50, low: 63.90, close: 64.21, category: 'COMEX' },
-            { name: 'CRUDE OIL', comexName: 'Crude Oil', symbol: 'XTIUSD', kiteSymbol: '', comexSymbol: 'XTIUSD', price: 69.50, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 69.50, high: 70.00, low: 69.00, close: 69.50, category: 'COMEX' },
-            { name: 'COPPER', comexName: 'Copper', symbol: 'XCUUSD', kiteSymbol: '', comexSymbol: 'XCUUSD', price: 4.15, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 4.15, high: 4.20, low: 4.10, close: 4.15, category: 'COMEX' }
+            { name: 'XAUUSD', comexName: 'XAUUSD', symbol: 'XAUUSD', kiteSymbol: '', comexSymbol: 'XAUUSD', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+            { name: 'XAGUSD', comexName: 'XAGUSD', symbol: 'XAGUSD', kiteSymbol: '', comexSymbol: 'XAGUSD', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+            { name: 'XTIUSD', comexName: 'XTIUSD', symbol: 'XTIUSD', kiteSymbol: '', comexSymbol: 'XTIUSD', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' },
+            { name: 'XCUUSD', comexName: 'XCUUSD', symbol: 'XCUUSD', kiteSymbol: '', comexSymbol: 'XCUUSD', price: 0, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'COMEX' }
           ]
         },
         {
@@ -2774,7 +2893,10 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
         
         var symbol = btn.getAttribute('data-watch-symbol');
         if (symbol) {
-          btn.setAttribute('onclick', 'removeFromWatchlist("' + symbol.replace(/"/g, '&quot;') + '")');
+          btn.onclick = function(e) {
+            if (e) e.stopPropagation();
+            removeFromWatchlist(symbol);
+          };
         }
       }
 
@@ -2798,9 +2920,16 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
         btn.style.cursor = 'pointer';
         
         var itemJsonEscaped = btn.getAttribute('data-watch-item');
-        if (itemJsonEscaped) {
-           btn.setAttribute('onclick', 'addToWatchlist(' + itemJsonEscaped + ')');
-        }
+        btn.onclick = function(e) {
+          if (e) e.stopPropagation();
+          try {
+            var parsed = JSON.parse(itemJsonEscaped || '{}');
+            addToWatchlist(parsed);
+          } catch (_) {
+            var sym = btn.getAttribute('data-watch-symbol');
+            if (sym) addToWatchlist({ symbol: sym, name: sym });
+          }
+        };
       }
 
       function addToWatchlist(item) {
@@ -3328,16 +3457,6 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
 }
 
 export default function WatchlistPage() {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  if (!mounted) {
-    return <AnimatedLoader text="Loading watchlist..." />;
-  }
-
   return (
     <Suspense fallback={<AnimatedLoader text="Loading watchlist..." />}>
       <WatchlistContent />

@@ -22,49 +22,77 @@ export interface WatchlistItem {
   lotSize?: number;
 }
 
+export function getComexSymbolKey(item: Partial<WatchlistItem> | null | undefined): string {
+  if (!item) return '';
+  if (item.comexSymbol) return item.comexSymbol.toUpperCase();
+  if (item.symbol?.endsWith('=F')) return item.symbol.toUpperCase();
+
+  const symUp = (item.symbol || '').toUpperCase().trim();
+  const segUp = (item.segment || '').toUpperCase();
+  const catUp = (item.category || '').toUpperCase();
+  const isComexContext = segUp.includes('COMEX') || catUp.includes('COMEX');
+
+  if (isComexContext) {
+    if (symUp === 'XAUUSD' || symUp === 'GOLD' || symUp === 'GC=F' || symUp === 'GC') return 'XAUUSD';
+    if (symUp === 'XAGUSD' || symUp === 'SILVER' || symUp === 'SI=F' || symUp === 'SI') return 'XAGUSD';
+    if (symUp === 'XTIUSD' || symUp === 'CRUDE' || symUp === 'CRUDE OIL' || symUp === 'WTI' || symUp === 'CL=F') return 'XTIUSD';
+    if (symUp === 'XCUUSD' || symUp === 'COPPER' || symUp === 'HG=F' || symUp === 'HG') return 'XCUUSD';
+    if (symUp === 'XNGUSD' || symUp === 'NATGAS' || symUp === 'NATURAL GAS' || symUp === 'NG=F') return 'XNGUSD';
+  } else {
+    // If not in COMEX segment, only return if the symbol itself is an explicit COMEX ticker
+    if (symUp.startsWith('XAU')) return 'XAUUSD';
+    if (symUp.startsWith('XAG')) return 'XAGUSD';
+    if (symUp.startsWith('XTI')) return 'XTIUSD';
+    if (symUp.startsWith('XCU')) return 'XCUUSD';
+    if (symUp.startsWith('XNG')) return 'XNGUSD';
+  }
+
+  return '';
+}
+
 // ── Default Crypto Items (Binance) ──────────────────────────────────────────
 
 export const DEFAULT_CRYPTO_ITEMS: WatchlistItem[] = [
-  { name: 'Bitcoin', symbol: 'BTC', kiteSymbol: '', binanceSymbol: 'BTCUSDT', price: 0, change: '0%', segment: 'CRYPTO', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'CRYPTO' },
-  { name: 'Ethereum', symbol: 'ETH', kiteSymbol: '', binanceSymbol: 'ETHUSDT', price: 0, change: '0%', segment: 'CRYPTO', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'CRYPTO' },
-  { name: 'Dogecoin', symbol: 'DOGE', kiteSymbol: '', binanceSymbol: 'DOGEUSDT', price: 0, change: '0%', segment: 'CRYPTO', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'CRYPTO' },
+  { name: 'Bitcoin', symbol: 'BTC', kiteSymbol: '', binanceSymbol: 'BTCUSDT', price: 95000, change: '0%', segment: 'CRYPTO', contractDate: '', open: 95000, high: 96000, low: 94000, close: 95000, category: 'CRYPTO' },
+  { name: 'Ethereum', symbol: 'ETH', kiteSymbol: '', binanceSymbol: 'ETHUSDT', price: 3400, change: '0%', segment: 'CRYPTO', contractDate: '', open: 3400, high: 3450, low: 3350, close: 3400, category: 'CRYPTO' },
+  { name: 'Dogecoin', symbol: 'DOGE', kiteSymbol: '', binanceSymbol: 'DOGEUSDT', price: 0.15, change: '0%', segment: 'CRYPTO', contractDate: '', open: 0.15, high: 0.155, low: 0.145, close: 0.15, category: 'CRYPTO' },
 ];
 
 // ── Default Forex Items (Zerodha CDS segment — INR pairs) ──────────────────
 
 export const DEFAULT_FOREX_ITEMS: WatchlistItem[] = [
-  { name: 'GBP/USD', symbol: 'GBPUSD', kiteSymbol: '', comexSymbol: 'GBPUSD=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'EUR/USD', symbol: 'EURUSD', kiteSymbol: '', comexSymbol: 'EURUSD=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'USD/JPY', symbol: 'USDJPY', kiteSymbol: '', comexSymbol: 'USDJPY=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'USD/CHF', symbol: 'USDCHF', kiteSymbol: '', comexSymbol: 'USDCHF=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'USD/CAD', symbol: 'USDCAD', kiteSymbol: '', comexSymbol: 'USDCAD=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'AUD/USD', symbol: 'AUDUSD', kiteSymbol: '', comexSymbol: 'AUDUSD=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'NZD/USD', symbol: 'NZDUSD', kiteSymbol: '', comexSymbol: 'NZDUSD=X', price: 0, change: '0%', segment: 'Forex', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'USD/INR', symbol: getCurrentFuturesSymbol('CDS', 'USDINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'USDINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'EUR/INR', symbol: getCurrentFuturesSymbol('CDS', 'EURINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'EURINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'GBP/INR', symbol: getCurrentFuturesSymbol('CDS', 'GBPINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'GBPINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
-  { name: 'JPY/INR', symbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), price: 0, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0, high: 0, low: 0, close: 0, category: 'FOREX' },
+  { name: 'GBP/USD', symbol: 'GBPUSD', kiteSymbol: '', comexSymbol: 'GBPUSD=X', price: 1.3485, change: '0%', segment: 'Forex', contractDate: '', open: 1.3485, high: 1.3505, low: 1.3480, close: 1.3485, category: 'FOREX' },
+  { name: 'EUR/USD', symbol: 'EURUSD', kiteSymbol: '', comexSymbol: 'EURUSD=X', price: 1.1537, change: '0%', segment: 'Forex', contractDate: '', open: 1.1537, high: 1.1555, low: 1.1530, close: 1.1537, category: 'FOREX' },
+  { name: 'USD/JPY', symbol: 'USDJPY', kiteSymbol: '', comexSymbol: 'USDJPY=X', price: 154.64, change: '0%', segment: 'Forex', contractDate: '', open: 154.64, high: 155.00, low: 154.20, close: 154.64, category: 'FOREX' },
+  { name: 'USD/CHF', symbol: 'USDCHF', kiteSymbol: '', comexSymbol: 'USDCHF=X', price: 0.8181, change: '0%', segment: 'Forex', contractDate: '', open: 0.8181, high: 0.8200, low: 0.8160, close: 0.8181, category: 'FOREX' },
+  { name: 'USD/CAD', symbol: 'USDCAD', kiteSymbol: '', comexSymbol: 'USDCAD=X', price: 1.3914, change: '0%', segment: 'Forex', contractDate: '', open: 1.3914, high: 1.3950, low: 1.3880, close: 1.3914, category: 'FOREX' },
+  { name: 'AUD/USD', symbol: 'AUDUSD', kiteSymbol: '', comexSymbol: 'AUDUSD=X', price: 0.7123, change: '0%', segment: 'Forex', contractDate: '', open: 0.7123, high: 0.7150, low: 0.7100, close: 0.7123, category: 'FOREX' },
+  { name: 'NZD/USD', symbol: 'NZDUSD', kiteSymbol: '', comexSymbol: 'NZDUSD=X', price: 0.5753, change: '0%', segment: 'Forex', contractDate: '', open: 0.5753, high: 0.5780, low: 0.5730, close: 0.5753, category: 'FOREX' },
+  { name: 'USD/INR', symbol: getCurrentFuturesSymbol('CDS', 'USDINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'USDINR'), price: 95.80, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 95.80, high: 96.00, low: 95.50, close: 95.80, category: 'FOREX' },
+  { name: 'EUR/INR', symbol: getCurrentFuturesSymbol('CDS', 'EURINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'EURINR'), price: 110.53, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 110.53, high: 110.80, low: 110.20, close: 110.53, category: 'FOREX' },
+  { name: 'GBP/INR', symbol: getCurrentFuturesSymbol('CDS', 'GBPINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'GBPINR'), price: 129.20, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 129.20, high: 129.80, low: 128.80, close: 129.20, category: 'FOREX' },
+  { name: 'JPY/INR', symbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'JPYINR'), price: 0.6190, change: '0%', segment: 'CDS - Futures', contractDate: '', open: 0.6190, high: 0.6220, low: 0.6170, close: 0.6190, category: 'FOREX' },
 ];
 
-// ── Default COMEX Items (MCX ₹ via Kite + COMEX $ via Direct feed) ──────────────
+// ── Default COMEX Items (COMEX $ via Direct feed) ──────────────────────────────
 
 export const DEFAULT_COMEX_ITEMS: WatchlistItem[] = [
-  { name: 'GOLD', symbol: 'XAUUSD', kiteSymbol: '', comexSymbol: 'XAUUSD', price: 4349.42, change: '+0.75%', segment: 'COMEX - Futures', contractDate: '', open: 4349.42, high: 4360, low: 4330, close: 4349.42, category: 'COMEX' },
-  { name: 'SILVER', symbol: 'XAGUSD', kiteSymbol: '', comexSymbol: 'XAGUSD', price: 64.21, change: '+1.26%', segment: 'COMEX - Futures', contractDate: '', open: 64.21, high: 64.50, low: 63.90, close: 64.21, category: 'COMEX' },
-  { name: 'CRUDE OIL', symbol: 'XTIUSD', kiteSymbol: '', comexSymbol: 'XTIUSD', price: 69.50, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 69.50, high: 70.00, low: 69.00, close: 69.50, category: 'COMEX' },
-  { name: 'COPPER', symbol: 'XCUUSD', kiteSymbol: '', comexSymbol: 'XCUUSD', price: 4.15, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 4.15, high: 4.20, low: 4.10, close: 4.15, category: 'COMEX' },
+  { name: 'XAUUSD', symbol: 'XAUUSD', kiteSymbol: '', comexSymbol: 'XAUUSD', price: 4306.00, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 4306.00, high: 4320.00, low: 4290.00, close: 4306.00, category: 'COMEX' },
+  { name: 'XAGUSD', symbol: 'XAGUSD', kiteSymbol: '', comexSymbol: 'XAGUSD', price: 63.30, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 63.30, high: 63.80, low: 62.80, close: 63.30, category: 'COMEX' },
+  { name: 'XTIUSD', symbol: 'XTIUSD', kiteSymbol: '', comexSymbol: 'XTIUSD', price: 103.00, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 103.00, high: 104.00, low: 102.00, close: 103.00, category: 'COMEX' },
+  { name: 'XCUUSD', symbol: 'XCUUSD', kiteSymbol: '', comexSymbol: 'XCUUSD', price: 6.28, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 6.28, high: 6.35, low: 6.20, close: 6.28, category: 'COMEX' },
 ];
 
 export const DEFAULT_US_ITEMS: WatchlistItem[] = [
-  { name: 'Apple Inc.', symbol: 'US:AAPL', kiteSymbol: 'US:AAPL', price: 220, change: '0%', segment: 'US - Equity', contractDate: '', open: 220, high: 222.20, low: 217.80, close: 220, category: 'US-EQ' },
-  { name: 'Tesla Inc.', symbol: 'US:TSLA', kiteSymbol: 'US:TSLA', price: 210, change: '0%', segment: 'US - Equity', contractDate: '', open: 210, high: 212.10, low: 207.90, close: 210, category: 'US-EQ' },
-  { name: 'Nvidia Corp.', symbol: 'US:NVDA', kiteSymbol: 'US:NVDA', price: 120, change: '0%', segment: 'US - Equity', contractDate: '', open: 120, high: 121.20, low: 118.80, close: 120, category: 'US-EQ' },
-  { name: 'Microsoft Corp.', symbol: 'US:MSFT', kiteSymbol: 'US:MSFT', price: 420, change: '0%', segment: 'US - Equity', contractDate: '', open: 420, high: 424.20, low: 415.80, close: 420, category: 'US-EQ' },
-  { name: 'Amazon.com Inc.', symbol: 'US:AMZN', kiteSymbol: 'US:AMZN', price: 180, change: '0%', segment: 'US - Equity', contractDate: '', open: 180, high: 181.80, low: 178.20, close: 180, category: 'US-EQ' },
-  { name: 'Netflix Inc.', symbol: 'US:NFLX', kiteSymbol: 'US:NFLX', price: 600, change: '0%', segment: 'US - Equity', contractDate: '', open: 600, high: 606.00, low: 594.00, close: 600, category: 'US-EQ' },
-  { name: 'S&P 500 E-mini Futures', symbol: 'ES=F', kiteSymbol: '', comexSymbol: 'ES=F', price: 5500, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 5500, high: 5555, low: 5445, close: 5500, category: 'COMEX' },
-  { name: 'Nasdaq 100 E-mini Futures', symbol: 'NQ=F', kiteSymbol: '', comexSymbol: 'NQ=F', price: 19500, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 19500, high: 19695, low: 19305, close: 19500, category: 'COMEX' },
-  { name: 'Dow Jones E-mini Futures', symbol: 'YM=F', kiteSymbol: '', comexSymbol: 'YM=F', price: 41000, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 41000, high: 41410, low: 40590, close: 41000, category: 'COMEX' },
+  { name: 'Apple Inc.', symbol: 'US:AAPL', kiteSymbol: 'US:AAPL', price: 228.00, change: '0%', segment: 'US - Equity', contractDate: '', open: 228.00, high: 230.20, low: 226.80, close: 228.00, category: 'US-EQ' },
+  { name: 'Tesla Inc.', symbol: 'US:TSLA', kiteSymbol: 'US:TSLA', price: 215.00, change: '0%', segment: 'US - Equity', contractDate: '', open: 215.00, high: 218.10, low: 212.90, close: 215.00, category: 'US-EQ' },
+  { name: 'Nvidia Corp.', symbol: 'US:NVDA', kiteSymbol: 'US:NVDA', price: 125.00, change: '0%', segment: 'US - Equity', contractDate: '', open: 125.00, high: 126.20, low: 123.80, close: 125.00, category: 'US-EQ' },
+  { name: 'Microsoft Corp.', symbol: 'US:MSFT', kiteSymbol: 'US:MSFT', price: 425.00, change: '0%', segment: 'US - Equity', contractDate: '', open: 425.00, high: 428.20, low: 421.80, close: 425.00, category: 'US-EQ' },
+  { name: 'Amazon.com Inc.', symbol: 'US:AMZN', kiteSymbol: 'US:AMZN', price: 185.00, change: '0%', segment: 'US - Equity', contractDate: '', open: 185.00, high: 187.80, low: 183.20, close: 185.00, category: 'US-EQ' },
+  { name: 'Netflix Inc.', symbol: 'US:NFLX', kiteSymbol: 'US:NFLX', price: 680.00, change: '0%', segment: 'US - Equity', contractDate: '', open: 680.00, high: 686.00, low: 674.00, close: 680.00, category: 'US-EQ' },
+  { name: 'S&P 500 E-mini Futures', symbol: 'ES=F', kiteSymbol: '', comexSymbol: 'ES=F', price: 5650.00, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 5650.00, high: 5680.00, low: 5620.00, close: 5650.00, category: 'COMEX' },
+  { name: 'Nasdaq 100 E-mini Futures', symbol: 'NQ=F', kiteSymbol: '', comexSymbol: 'NQ=F', price: 19800.00, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 19800.00, high: 19950.00, low: 19650.00, close: 19800.00, category: 'COMEX' },
+  { name: 'Dow Jones E-mini Futures', symbol: 'YM=F', kiteSymbol: '', comexSymbol: 'YM=F', price: 41500.00, change: '0%', segment: 'COMEX - Futures', contractDate: '', open: 41500.00, high: 41750.00, low: 41250.00, close: 41500.00, category: 'COMEX' },
 ];
 
 export function getDefaultWatchlistItems(): WatchlistItem[] {
@@ -199,10 +227,26 @@ export const SEGMENT_TAB_MAP: Record<string, TabLabel> = {
 
 /** Maps a WatchlistItem to its TabLabel. Checks category first, then segment. */
 export function getTabForItem(item: WatchlistItem): TabLabel {
+  const symUp = (item.symbol || '').toUpperCase();
+  const comexUp = (item.comexSymbol || '').toUpperCase();
+  const segUp = (item.segment || '').toUpperCase();
+  const catUp = (item.category || '').toUpperCase();
+
+  // COMEX spot & futures symbols
+  if (
+    catUp === 'COMEX' || catUp === 'COI' ||
+    segUp.includes('COMEX') ||
+    symUp.endsWith('=F') || comexUp.endsWith('=F') ||
+    ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].includes(symUp) ||
+    (!!item.comexSymbol && !item.kiteSymbol)
+  ) {
+    return 'COMEX';
+  }
+
   const comb = `${item.name || ''} ${item.symbol || ''} ${item.segment || ''} ${item.category || ''}`.toUpperCase();
   if (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUM'].some(c => comb.includes(c))) {
     if (comb.includes(' CE') || comb.includes(' PE') || comb.endsWith('CE') || comb.endsWith('PE') || comb.includes('OPT')) return 'MCX-OPT';
-    if (comb.includes('COMEX') || (item.symbol || '').endsWith('=F')) return 'COMEX';
+    if (comb.includes('COMEX') || symUp.endsWith('=F')) return 'COMEX';
     return 'MCX-FUT';
   }
 
@@ -273,12 +317,17 @@ export function filterBySearch(items: WatchlistItem[], query: string): Watchlist
 
 export function getExchangeBadge(segment: string, name?: string, symbol?: string): string {
   const segUpper = (segment || '').toUpperCase();
+  const symUpper = (symbol || '').toUpperCase();
   const comb = `${name || ''} ${symbol || ''} ${segment || ''}`.toUpperCase();
+
+  if (segUpper.includes('COMEX') || symUpper.endsWith('=F') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].includes(symUpper)) {
+    return 'COMEX';
+  }
 
   const isCommodity = ['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'LEAD', 'ALUM'].some(c => comb.includes(c));
   if (isCommodity) {
     if (comb.includes(' CE') || comb.includes(' PE') || comb.endsWith('CE') || comb.endsWith('PE') || comb.includes('OPT')) return 'MCX-OPT';
-    if (segUpper.includes('COMEX') || (symbol || '').endsWith('=F')) return 'COMEX';
+    if (segUpper.includes('COMEX') || symUpper.endsWith('=F')) return 'COMEX';
     return 'MCX-FUT';
   }
 

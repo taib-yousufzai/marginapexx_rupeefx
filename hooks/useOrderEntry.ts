@@ -9,7 +9,7 @@ import { api, ApiError } from '@/lib/api';
 import { soundEngine } from '@/lib/audio';
 import { useOrdersData } from '@/contexts/OrdersContext';
 import { useBalanceData } from '@/contexts/BalanceContext';
-import { usePositionsData } from '@/contexts/PositionsContext';
+import { usePositionsData, cleanSym } from '@/contexts/PositionsContext';
 import type { MyOrder } from '@/lib/types/order';
 
 export type OrderSide = 'BUY' | 'SELL';
@@ -91,28 +91,70 @@ export function useOrderEntry() {
       ordersContext.addOptimisticOrder(optimisticOrder);
     }
 
-    // Optimistically add position if entry order, or remove if exit order
-    if (!state.is_exit && positionsContext?.addOptimisticPosition) {
-      positionsContext.addOptimisticPosition({
-        symbol: state.symbol,
-        settlement: state.segment,
-        side: state.side,
-        qty_open: state.qty,
-        entry_price: state.client_price,
-        ltp: state.client_price,
-        product_type: state.product_type,
-        kite_instrument: state.kite_instrument,
-        opt_id: tempId,
-      } as any);
-    } else if (state.is_exit && positionsContext?.removePositionLocally && state.linked_position_id) {
-      positionsContext.removePositionLocally(state.linked_position_id);
+    // Auto-detect if user has an existing opposite-side position for this symbol
+    const oppositeSide = state.side === 'BUY' ? 'SELL' : 'BUY';
+    const targetClean = cleanSym(state.symbol || state.kite_instrument || '');
+    const matchingOppositePos = positionsContext?.positions?.find(
+      p => cleanSym(p.symbol || p.kite_instrument) === targetClean &&
+           p.side === oppositeSide &&
+           (p.status === 'open' || p.status === 'active' || !p.status)
+    );
+    const effectiveIsExit = Boolean(state.is_exit || matchingOppositePos);
+    const effectiveLinkedPosId = state.linked_position_id || matchingOppositePos?.id || undefined;
+
+    // Optimistically add position if entry order, or remove/reduce if exit order
+    const estimatedMargin = (state.client_price && state.qty) ? state.client_price * state.qty : 0;
+    if (!effectiveIsExit) {
+      if (estimatedMargin > 0 && balanceContext?.lockOptimisticMargin) {
+        balanceContext.lockOptimisticMargin(estimatedMargin, tempId);
+      }
+      if (positionsContext?.addOptimisticPosition) {
+        positionsContext.addOptimisticPosition({
+          symbol: state.symbol,
+          settlement: state.segment,
+          side: state.side,
+          qty_open: state.qty,
+          entry_price: state.client_price,
+          ltp: state.client_price,
+          product_type: state.product_type,
+          kite_instrument: state.kite_instrument,
+          opt_id: tempId,
+        } as any);
+      }
+    } else if (effectiveIsExit) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('order_placed_with_data', {
+          detail: {
+            symbol: state.symbol,
+            settlement: state.segment,
+            side: state.side,
+            qty: state.qty,
+            qty_open: state.qty,
+            entry_price: state.client_price,
+            ltp: state.client_price,
+            product_type: state.product_type,
+            is_exit: true,
+            linked_position_id: effectiveLinkedPosId,
+            opt_id: tempId,
+          }
+        }));
+      }
     }
 
     soundEngine.playOrderSubmitted();
 
     try {
       // Direct fast API dispatch (25000ms max timeout to prevent premature abort race conditions)
-      const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>('/api/orders', state, { timeout: 25000 });
+      const submitPayload = {
+        ...state,
+        is_exit: effectiveIsExit,
+        linked_position_id: effectiveLinkedPosId,
+      };
+      const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>('/api/orders', submitPayload, { timeout: 25000 });
+
+      if (balanceContext?.releaseOptimisticMargin) {
+        balanceContext.releaseOptimisticMargin(tempId);
+      }
 
       // Create confirmed order representation
       const confirmedOrder: MyOrder = {
@@ -137,8 +179,8 @@ export function useOrderEntry() {
             entry_price: result.fill_price || state.client_price,
             ltp: result.fill_price || state.client_price,
             product_type: state.product_type,
-            is_exit: state.is_exit,
-            linked_position_id: state.linked_position_id,
+            is_exit: effectiveIsExit,
+            linked_position_id: effectiveLinkedPosId,
             opt_id: tempId,
           }
         }));
@@ -147,6 +189,10 @@ export function useOrderEntry() {
 
       return { success: true, order: result, fill_price: result.fill_price };
     } catch (err) {
+      if (balanceContext?.releaseOptimisticMargin) {
+        balanceContext.releaseOptimisticMargin(tempId);
+      }
+
       let message = 'Unknown error';
       if (err instanceof ApiError) {
         if (typeof err.details === 'string' && err.details.trim()) {
@@ -169,18 +215,24 @@ export function useOrderEntry() {
         }
       }
 
-      // Rollback optimistic order on actual error
-      if (ordersContext?.removeOptimisticOrder) {
-        ordersContext.removeOptimisticOrder(tempId);
-      }
-      if (state.is_exit && state.linked_position_id && positionsContext?.restorePositionLocally) {
-        positionsContext.restorePositionLocally(state.linked_position_id);
-      }
-      soundEngine.playOrderRejected();
+      const isBackgroundProcessing = message.includes('processing in background') || message.includes('in progress') || (err instanceof ApiError && err.status === 409);
 
-      console.warn('[useOrderEntry] Order placement failed:', message);
+      if (!isBackgroundProcessing) {
+        // Rollback optimistic order on actual error
+        if (ordersContext?.removeOptimisticOrder) {
+          ordersContext.removeOptimisticOrder(tempId);
+        }
+        if (state.is_exit && positionsContext?.restorePositionLocally) {
+          positionsContext.restorePositionLocally(state.linked_position_id || '');
+        } else if (!state.is_exit && positionsContext?.removeOptimisticPosition) {
+          positionsContext.removeOptimisticPosition(tempId);
+        }
+        soundEngine.playOrderRejected();
+      }
+
+      console.warn('[useOrderEntry] Order placement status:', message);
       setError(message);
-      return { success: false, error: message };
+      return { success: !isBackgroundProcessing, isProcessing: isBackgroundProcessing, error: message };
     } finally {
       setLoading(false);
     }
@@ -253,6 +305,9 @@ export function useOrderEntry() {
 
       return { success: true, ...result };
     } catch (err) {
+      if (positionsContext?.restorePositionLocally) {
+        positionIds.forEach(id => positionsContext.restorePositionLocally(id));
+      }
       let message = 'Unknown error';
       if (err instanceof ApiError) {
         message = (err.details as { error?: string } | null)?.error ?? `ApiError ${err.status}`;
@@ -272,7 +327,7 @@ export function useOrderEntry() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [positionsContext]);
 
   return {
     placeOrder,

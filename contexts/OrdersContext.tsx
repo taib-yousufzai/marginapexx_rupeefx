@@ -176,11 +176,31 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
   }, []);
 
   const cancelOrder = useCallback(async (id: string) => {
+    let previousOrder: MyOrder | undefined;
+
+    // 1. Optimistically mark order as CANCELLED in 0ms
+    setOrders(prev => {
+      previousOrder = prev.find(o => o.id === id);
+      if (!previousOrder) return prev;
+      const newOrders = prev.map(o => (o.id === id ? { ...o, status: 'CANCELLED' as const } : o));
+      globalOrdersCache = newOrders;
+      return newOrders;
+    });
+
     try {
       await api.patch(`/api/orders/${id}`, { status: 'CANCELLED' });
-      await fetchOrders(); // Refresh list
+      await fetchOrders(); // Reconcile list
       return { success: true };
     } catch (err) {
+      // 2. Rollback to original order snapshot on failure
+      if (previousOrder) {
+        const snap = previousOrder;
+        setOrders(prev => {
+          const restored = prev.map(o => (o.id === id ? snap : o));
+          globalOrdersCache = restored;
+          return restored;
+        });
+      }
       const message = err instanceof Error ? err.message : 'Unknown error';
       return { success: false, error: message };
     }

@@ -71,7 +71,19 @@ export default function ClientShell({ children }: { children: React.ReactNode })
 
     const onOrderError = (e: Event) => {
       const msg = (e as CustomEvent).detail || 'Order failed.';
-      setOrderErrorMsg(String(msg));
+      const msgStr = String(msg);
+
+      // In-flight background processing / timeout messages should never block the user with a modal
+      if (
+        msgStr.includes('processing in background') ||
+        msgStr.includes('in progress')
+      ) {
+        setToastMsg(msgStr);
+        setToastVisible(true);
+        return;
+      }
+
+      setOrderErrorMsg(msgStr);
     };
 
     window.addEventListener('global-loader-start', onStart);
@@ -142,7 +154,12 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       <ErrorModal
         error={orderErrorMsg}
         onClose={() => setOrderErrorMsg(null)}
-        title="Order Failed"
+        title={
+          orderErrorMsg?.includes('processing in background') ||
+          orderErrorMsg?.includes('in progress')
+            ? 'Order Processing'
+            : 'Order Failed'
+        }
       />
     </div>
   );

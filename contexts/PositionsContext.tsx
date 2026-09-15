@@ -34,6 +34,7 @@ export interface PositionsContextType {
   startConversion: (posId: string, newType: string) => void;
   endConversion: (posId: string) => void;
   addOptimisticPosition: (pos: Partial<MyPosition>) => void;
+  removeOptimisticPosition: (optIdOrTempId: string) => void;
 }
 
 const PositionsContext = createContext<PositionsContextType | null>(null);
@@ -41,6 +42,11 @@ const PositionsContext = createContext<PositionsContextType | null>(null);
 export const cleanSym = (s?: string | null): string => {
   if (!s) return '';
   let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+  if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC'].includes(str)) return 'XAUUSD';
+  if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI'].includes(str)) return 'XAGUSD';
+  if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI'].includes(str)) return 'XTIUSD';
+  if (['XCUUSD', 'COMEX:XCUUSD', 'HG=F', 'HG'].includes(str)) return 'XCUUSD';
+  if (['XNGUSD', 'COMEX:XNGUSD', 'NG=F', 'NG'].includes(str)) return 'XNGUSD';
   const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD'];
   const knownBaseCrypto = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'];
   if (knownBaseCrypto.includes(str)) {
@@ -73,11 +79,11 @@ const mapSegmentToDbSegment = (s: string): string => {
 export const resolveComexSymbol = (sym?: string | null): string => {
   if (!sym) return '';
   const upper = sym.toUpperCase().replace(/[\/\s\_]/g, '');
-  if (upper === 'GOLD' || upper === 'XAUUSD' || upper === 'GC=F' || upper === 'GC') return 'XAUUSD';
-  if (upper === 'SILVER' || upper === 'XAGUSD' || upper === 'SI=F' || upper === 'SI') return 'XAGUSD';
-  if (upper === 'CRUDE' || upper === 'CRUDEOIL' || upper === 'XTIUSD' || upper === 'CL=F' || upper === 'CL') return 'XTIUSD';
-  if (upper === 'COPPER' || upper === 'XCUUSD' || upper === 'HG=F' || upper === 'HG') return 'XCUUSD';
-  if (upper === 'NATGAS' || upper === 'NATURALGAS' || upper === 'XNGUSD' || upper === 'NG=F' || upper === 'NG') return 'XNGUSD';
+  if (upper === 'XAUUSD' || upper === 'GC=F' || upper === 'GC') return 'XAUUSD';
+  if (upper === 'XAGUSD' || upper === 'SI=F' || upper === 'SI') return 'XAGUSD';
+  if (upper === 'XTIUSD' || upper === 'CL=F' || upper === 'CL' || upper === 'WTI') return 'XTIUSD';
+  if (upper === 'XCUUSD' || upper === 'HG=F' || upper === 'HG') return 'XCUUSD';
+  if (upper === 'XNGUSD' || upper === 'NG=F' || upper === 'NG') return 'XNGUSD';
   return sym;
 };
 
@@ -152,11 +158,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     setRawPositions(prev => prev.filter(p => p.id !== posId));
   }, []);
 
-  const restorePositionLocally = useCallback((posId: string) => {
-    optimisticallyRemovedIds.current.delete(posId);
-    fetchPositions();
-  }, []);
-
 const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { opt_id?: string }) => {
   const targetClean = cleanSym(partialPos.symbol || partialPos.kite_instrument || '');
   const normProdType = (partialPos.product_type || 'INTRADAY').toUpperCase();
@@ -206,7 +207,7 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
       return updated;
     }
 
-    const tempId = `__optimistic__${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const tempId = partialPos.opt_id ? `__optimistic__${partialPos.opt_id}` : `__optimistic__${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const now = new Date().toISOString();
     const optimisticPos: MyPosition = {
       id: tempId,
@@ -224,6 +225,7 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
       entry_time: now,
       locked_margin: partialPos.locked_margin || 0,
       brokerage: 0,
+      opt_id: partialPos.opt_id,
       ...partialPos,
       product_type: normProdType as any,
     } as MyPosition;
@@ -233,6 +235,22 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
     return [optimisticPos, ...prev];
   });
 }, []);
+
+  const removeOptimisticPosition = useCallback((optIdOrTempId: string) => {
+    if (!optIdOrTempId) return;
+    setRawPositions(prev => {
+      const target = prev.find(p => p.id === optIdOrTempId || p.id.includes(optIdOrTempId) || (p as any).opt_id === optIdOrTempId);
+      if (target) {
+        const targetClean = cleanSym(target.symbol || target.kite_instrument || '');
+        const normProdType = (target.product_type || 'INTRADAY').toUpperCase();
+        const deltaKey = `${targetClean}|${target.side}|${normProdType}`;
+        optimisticDeltasRef.current.delete(deltaKey);
+        optimisticPositionIds.current.delete(target.id);
+        return prev.filter(p => p.id !== target.id);
+      }
+      return prev;
+    });
+  }, []);
 
   const startConversion = useCallback((posId: string, newType: string) => {
     setInFlightConversions(prev => ({ ...prev, [posId]: newType }));
@@ -246,10 +264,16 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
     });
   }, []);
 
+const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD', 'XPTUSD', 'XPDUSD', 'GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF'];
+
   const fetchPositions = useCallback(async () => {
     try {
-      // Don't fetch if there's no active session (e.g. on the login page)
-      const { token } = getSharedSessionSync();
+      // Ensure we have an active session token before fetching
+      let { token } = getSharedSessionSync();
+      if (!token) {
+        const session = await getSharedSession();
+        token = session?.token || null;
+      }
       if (!token) return;
 
       if (abortControllerRef.current) {
@@ -263,19 +287,20 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
       });
 
       // The DB is the single source of truth. Apply the server snapshot directly.
-      // Filter out any IDs that are still in the optimistic-removal set (exit in flight).
-      let newPositions: MyPosition[] = (data.positions || []).filter(
-        p => !optimisticallyRemovedIds.current.has(p.id)
-      );
+      const rawPositionsFromServer: MyPosition[] = data.positions || [];
+      const serverRawIds = new Set(rawPositionsFromServer.map(p => p.id));
 
-      // Evict stale optimistic removals: if the server no longer returns the position
-      // it was already closed — clear the set so future fetches stay clean.
-      const serverIds = new Set(newPositions.map(p => p.id));
-      for (const id of [...optimisticallyRemovedIds.current]) {
-        if (!serverIds.has(id)) {
+      // Clean up optimisticallyRemovedIds for positions that the server DB no longer returns
+      for (const id of Array.from(optimisticallyRemovedIds.current)) {
+        if (!serverRawIds.has(id)) {
           optimisticallyRemovedIds.current.delete(id);
         }
       }
+
+      // Filter out any IDs that are still in the optimistic-removal set (exit in flight).
+      let newPositions: MyPosition[] = rawPositionsFromServer.filter(
+        p => !optimisticallyRemovedIds.current.has(p.id)
+      );
 
       // Precompute static properties for any newly loaded positions
       const staticProps = staticPositionPropsRef.current;
@@ -283,8 +308,9 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
         if (!staticProps[p.id]) {
           const dbSeg = mapSegmentWithSymbol(p.settlement || '', p.symbol);
           const segUpper = dbSeg.toUpperCase();
-          const isCrypto = segUpper.includes('CRYPTO') || !!(p.symbol && (p.symbol.endsWith('USDT') || p.symbol.endsWith('USD')));
-          const isComex = (p as any).preferredView === 'comex' || segUpper.includes('COMEX');
+          const cleanSymUpper = (p.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+          const isComex = (p as any).preferredView === 'comex' || segUpper.includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || NON_CRYPTO_USD_SYMBOLS.slice(0, 7).some(c => cleanSymUpper.includes(c))));
+          const isCrypto = !isComex && (segUpper.includes('CRYPTO') || (p.symbol && (p.symbol.endsWith('USDT') || (p.symbol.endsWith('USD') && !NON_CRYPTO_USD_SYMBOLS.includes(cleanSymUpper)))));
 
           let binanceSymbol = '';
           if (isCrypto) {
@@ -306,13 +332,6 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
           };
         }
       });
-
-      // Clean up optimisticallyRemovedIds for positions that the server no longer returns
-      for (const id of Array.from(optimisticallyRemovedIds.current)) {
-        if (!serverIds.has(id)) {
-          optimisticallyRemovedIds.current.delete(id);
-        }
-      }
 
       // Apply optimistic quantity overrides if server DB hasn't caught up yet
       const now = Date.now();
@@ -343,7 +362,7 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
         for (const id of prevOpenIds) {
           // Skip optimistic placeholders — they are not real DB IDs
           if (id.startsWith('__optimistic__')) continue;
-          if (!serverIds.has(id) && !optimisticallyRemovedIds.current.has(id)) {
+          if (!serverRawIds.has(id) && !optimisticallyRemovedIds.current.has(id)) {
             posClosedOnBackend = true;
             break;
           }
@@ -382,6 +401,16 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
       setLoading(false);
     }
   }, []);
+
+  const restorePositionLocally = useCallback((posId?: string) => {
+    if (posId) {
+      optimisticallyRemovedIds.current.delete(posId);
+    } else {
+      optimisticallyRemovedIds.current.clear();
+      optimisticDeltasRef.current.clear();
+    }
+    fetchPositions();
+  }, [fetchPositions]);
 
   useEffect(() => {
     // One-shot eviction: clear the legacy localStorage cache written by the old code.
@@ -439,22 +468,38 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
               return prev;
             });
           } else if (detail.symbol) {
-            const targetClean = cleanSym(detail.symbol);
+            const targetClean = cleanSym(detail.symbol || (detail as any).kite_instrument);
             const side = detail.side || 'BUY';
             const normProdType = (detail.product_type || 'INTRADAY').toUpperCase();
             setRawPositions(prev => {
-              const matching = prev.filter(p => cleanSym(p.symbol) === targetClean);
+              const matching = prev.filter(p => cleanSym(p.symbol || p.kite_instrument) === targetClean);
               if (matching.length > 0) {
                 const totalQty = matching.reduce((sum, p) => sum + (p.qty_open || 0), 0);
                 if (!exitQty || exitQty >= totalQty) {
                   matching.forEach(p => optimisticallyRemovedIds.current.add(p.id));
-                  return prev.filter(p => cleanSym(p.symbol) !== targetClean);
+                  return prev.filter(p => cleanSym(p.symbol || p.kite_instrument) !== targetClean);
                 } else {
-                  // Partial exit
+                  // Partial exit: FIFO consume matching lots
+                  let remExit = exitQty;
                   const deltaKey = `${targetClean}|${side}|${normProdType}`;
                   const newQty = Math.max(0, totalQty - exitQty);
                   optimisticDeltasRef.current.set(deltaKey, { expectedQty: newQty, addedAt: Date.now() });
-                  return prev.map(p => cleanSym(p.symbol) === targetClean ? { ...p, qty_open: Math.max(0, p.qty_open - exitQty) } : p);
+
+                  return prev.map(p => {
+                    if (cleanSym(p.symbol || p.kite_instrument) === targetClean && remExit > 0) {
+                      const curQty = p.qty_open || 0;
+                      if (curQty <= remExit) {
+                        remExit -= curQty;
+                        optimisticallyRemovedIds.current.add(p.id);
+                        return null;
+                      } else {
+                        const newQ = curQty - remExit;
+                        remExit = 0;
+                        return { ...p, qty_open: newQ };
+                      }
+                    }
+                    return p;
+                  }).filter((p): p is MyPosition => p !== null);
                 }
               }
               return prev;
@@ -506,10 +551,17 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
+    const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session) {
+        fetchPositions();
+      }
+    });
+
     return () => {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVisibility);
       supabase.removeChannel(channel);
+      authSub.unsubscribe();
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('order_placed_with_data', handleOrderPlacedWithData);
       window.removeEventListener('order_failed', handleOrderFailed);
@@ -526,12 +578,13 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
     const comex: string[] = [];
     const props = staticPositionPropsRef.current;
 
-    rawPositions.filter(p => p.status === 'open' || p.status === 'active').forEach(p => {
+    rawPositions.filter(p => !p.status || p.status === 'open' || p.status === 'active' || p.status.toLowerCase() === 'open' || p.status.toLowerCase() === 'active').forEach(p => {
       const cached = props[p.id];
       const dbSeg = cached ? cached.dbSeg : mapSegmentWithSymbol(p.settlement || '', p.symbol);
       const segUpper = dbSeg.toUpperCase();
-      const isCrypto = cached ? cached.isCrypto : (segUpper.includes('CRYPTO') || !!(p.symbol && (p.symbol.endsWith('USDT') || p.symbol.endsWith('USD'))));
-      const isComex = cached ? cached.isComex : ((p as any).preferredView === 'comex' || segUpper.includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || p.symbol.startsWith('XAU') || p.symbol.startsWith('XAG') || p.symbol.startsWith('XTI') || p.symbol.startsWith('XCU') || p.symbol.startsWith('XNG'))));
+      const cleanSymUpper = (p.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+      const isComex = cached ? cached.isComex : ((p as any).preferredView === 'comex' || segUpper.includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || NON_CRYPTO_USD_SYMBOLS.slice(0, 7).some(c => cleanSymUpper.includes(c)))));
+      const isCrypto = cached ? cached.isCrypto : (!isComex && (segUpper.includes('CRYPTO') || (p.symbol && (p.symbol.endsWith('USDT') || (p.symbol.endsWith('USD') && !NON_CRYPTO_USD_SYMBOLS.includes(cleanSymUpper))))));
 
       if (isCrypto) {
         let sym = cached ? cached.binanceSymbol : (p.symbol || '').replace('/', '').toUpperCase();
@@ -574,8 +627,10 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
 
       const cached = props[p.id];
       const dbSeg = cached ? cached.dbSeg : mapSegmentWithSymbol(p.settlement || '', p.symbol);
-      const isCrypto = cached ? cached.isCrypto : (p.settlement || '').toUpperCase().includes('CRYPTO');
-      const isComex = cached ? cached.isComex : ((p.settlement || '').toUpperCase().includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || p.symbol.startsWith('XAU') || p.symbol.startsWith('XAG') || p.symbol.startsWith('XTI') || p.symbol.startsWith('XCU') || p.symbol.startsWith('XNG'))));
+      const segUpper = dbSeg.toUpperCase();
+      const cleanSymUpper = (p.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+      const isComex = cached ? cached.isComex : ((p as any).preferredView === 'comex' || segUpper.includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || NON_CRYPTO_USD_SYMBOLS.slice(0, 7).some(c => cleanSymUpper.includes(c)))));
+      const isCrypto = cached ? cached.isCrypto : (!isComex && (segUpper.includes('CRYPTO') || (p.symbol && (p.symbol.endsWith('USDT') || (p.symbol.endsWith('USD') && !NON_CRYPTO_USD_SYMBOLS.includes(cleanSymUpper))))));
       const entryTimeMs = cached ? cached.entryTimeMs : new Date(p.entry_time).getTime();
 
       const avgPrice = p.avg_price || p.entry_price;
@@ -693,6 +748,7 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
       startConversion,
       endConversion,
       addOptimisticPosition,
+      removeOptimisticPosition,
     }}>
       {children}
     </PositionsContext.Provider>

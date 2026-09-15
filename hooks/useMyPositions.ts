@@ -24,6 +24,7 @@ interface UseMyPositionsResult {
   startConversion: (posId: string, newType: string) => void;
   endConversion: (posId: string) => void;
   addOptimisticPosition: (pos: Partial<MyPosition>) => void;
+  removeOptimisticPosition: (optIdOrTempId: string) => void;
 }
 
 export function useMyPositions(refreshInterval?: number): UseMyPositionsResult {
