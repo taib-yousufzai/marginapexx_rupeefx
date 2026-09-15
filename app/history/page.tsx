@@ -89,8 +89,8 @@ export default function HistoryPage() {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
       const now = Date.now();
       const [ordersData, posData] = await Promise.all([
-        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500&_t=${now}`).catch(() => ({ orders: [] })),
-        api.get<{ positions: any[] }>(`/api/positions?status=closed&from=${thirtyDaysAgo}&_t=${now}`).catch(() => ({ positions: [] })),
+        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500&fresh=true&_t=${now}`).catch(() => ({ orders: [] })),
+        api.get<{ positions: any[] }>(`/api/positions?status=closed&from=${thirtyDaysAgo}&fresh=true&_t=${now}`).catch(() => ({ positions: [] })),
       ]);
 
       const formattedOrders = (ordersData.orders || []).map((o: any) => ({
@@ -121,18 +121,19 @@ export default function HistoryPage() {
           else if (sym.includes('MCX')) settlement = 'MCX';
           else settlement = 'NSE';
         }
+        const exitTime = p.closed_at || p.exit_time || p.updated_at || p.created_at;
         return {
           id: p.id,
           scriptName: p.symbol,
           type: p.side,
           orderType: p.product_type || 'INTRADAY',
-          qty: p.qty_total,
+          qty: p.qty_total || p.qty_open || p.qty || 1,
           price: p.exit_price || 0,
           entryPrice: p.entry_price || p.avg_price || 0,
           exitPrice: p.exit_price || 0,
           pnl: p.pnl || 0,
           date: new Date(p.created_at).toLocaleString(),
-          exitDate: p.updated_at ? new Date(p.updated_at).toLocaleDateString() : '---',
+          exitDate: exitTime ? new Date(exitTime).toLocaleDateString() : '---',
           status: 'closed',
           brokerage: p.brokerage || 0,
           entry_intraday_brokerage: p.entry_intraday_brokerage || 0,
@@ -146,11 +147,11 @@ export default function HistoryPage() {
           settlement,
           settlementAmount: Math.abs(Number(p.settlement_amount || 0)),
           entry_brokerage: p.entry_brokerage || 0,
-          timestamp: p.updated_at ? new Date(p.updated_at).getTime() : new Date(p.created_at).getTime(),
+          timestamp: exitTime ? new Date(exitTime).getTime() : new Date(p.created_at).getTime(),
         };
       });
 
-      const merged = [...formattedOrders, ...formattedPos];
+      const merged = [...formattedOrders, ...formattedPos].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
       // Always apply the fresh result — even if empty (e.g. after admin clears
       // history via history_reset_at). Preserving stale cache here was the
       // root cause of pre-reset records remaining visible after Clear History.
@@ -268,6 +269,8 @@ export default function HistoryPage() {
       to.setHours(23, 59, 59, 999);
       base = base.filter(item => item.timestamp <= to.getTime());
     }
+
+    base.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     return base;
   }, [historyData, currentTab, appliedFromDate, appliedToDate]);

@@ -447,64 +447,69 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
       const detail = (e as CustomEvent).detail;
       if (detail) {
         if (detail.is_exit) {
-          const exitQty = detail.qty || detail.qty_open || 0;
-          if (detail.linked_position_id) {
-            setRawPositions(prev => {
-              const pos = prev.find(p => p.id === detail.linked_position_id);
-              if (pos) {
-                if (!exitQty || exitQty >= pos.qty_open) {
-                  optimisticallyRemovedIds.current.add(pos.id);
-                  return prev.filter(p => p.id !== pos.id);
-                } else {
-                  // Partial exit
-                  const targetClean = cleanSym(pos.symbol || pos.kite_instrument || '');
-                  const normProdType = (pos.product_type || 'INTRADAY').toUpperCase();
-                  const deltaKey = `${targetClean}|${pos.side}|${normProdType}`;
-                  const newQty = Math.max(0, pos.qty_open - exitQty);
-                  optimisticDeltasRef.current.set(deltaKey, { expectedQty: newQty, addedAt: Date.now() });
-                  return prev.map(p => p.id === pos.id ? { ...p, qty_open: newQty } : p);
-                }
-              }
-              return prev;
-            });
-          } else if (detail.symbol) {
-            const targetClean = cleanSym(detail.symbol || (detail as any).kite_instrument);
-            const side = detail.side || 'BUY';
-            const normProdType = (detail.product_type || 'INTRADAY').toUpperCase();
-            setRawPositions(prev => {
-              const matching = prev.filter(p => cleanSym(p.symbol || p.kite_instrument) === targetClean);
-              if (matching.length > 0) {
-                const totalQty = matching.reduce((sum, p) => sum + (p.qty_open || 0), 0);
-                if (!exitQty || exitQty >= totalQty) {
-                  matching.forEach(p => optimisticallyRemovedIds.current.add(p.id));
-                  return prev.filter(p => cleanSym(p.symbol || p.kite_instrument) !== targetClean);
-                } else {
-                  // Partial exit: FIFO consume matching lots
-                  let remExit = exitQty;
-                  const deltaKey = `${targetClean}|${side}|${normProdType}`;
-                  const newQty = Math.max(0, totalQty - exitQty);
-                  optimisticDeltasRef.current.set(deltaKey, { expectedQty: newQty, addedAt: Date.now() });
+          const exitQty = Number(detail.qty || detail.qty_open || 0);
+          const targetClean = cleanSym(detail.symbol || (detail as any).kite_instrument || '');
 
-                  return prev.map(p => {
-                    if (cleanSym(p.symbol || p.kite_instrument) === targetClean && remExit > 0) {
-                      const curQty = p.qty_open || 0;
-                      if (curQty <= remExit) {
-                        remExit -= curQty;
-                        optimisticallyRemovedIds.current.add(p.id);
-                        return null;
-                      } else {
-                        const newQ = curQty - remExit;
-                        remExit = 0;
-                        return { ...p, qty_open: newQ };
-                      }
-                    }
-                    return p;
-                  }).filter((p): p is MyPosition => p !== null);
+          setRawPositions(prev => {
+            // Find all candidate matching positions with matching symbol or linked position ID
+            const matchingPositions = prev.filter(p => {
+              if (detail.linked_position_id && p.id === detail.linked_position_id) return true;
+              if (targetClean && cleanSym(p.symbol || p.kite_instrument || '') === targetClean) return true;
+              return false;
+            });
+
+            if (matchingPositions.length === 0) return prev;
+
+            const totalQty = matchingPositions.reduce((sum, p) => sum + (p.qty_open || 0), 0);
+
+            if (!exitQty || exitQty >= totalQty) {
+              // Full exit: optimistically remove all matching positions immediately
+              matchingPositions.forEach(p => optimisticallyRemovedIds.current.add(p.id));
+              const removeIds = new Set(matchingPositions.map(p => p.id));
+              return prev.filter(p => !removeIds.has(p.id));
+            } else {
+              // Partial exit: FIFO consume matching positions starting with linked_position_id (if present)
+              let remExit = exitQty;
+              const side = matchingPositions[0]?.side || detail.side || 'BUY';
+              const normProdType = (matchingPositions[0]?.product_type || detail.product_type || 'INTRADAY').toUpperCase();
+              const deltaKey = `${targetClean}|${side}|${normProdType}`;
+              const newQty = Math.max(0, totalQty - exitQty);
+              optimisticDeltasRef.current.set(deltaKey, { expectedQty: newQty, addedAt: Date.now() });
+
+              // Sort so linked_position_id is prioritized first
+              const sortedMatching = [...matchingPositions].sort((a, b) => {
+                if (detail.linked_position_id) {
+                  if (a.id === detail.linked_position_id) return -1;
+                  if (b.id === detail.linked_position_id) return 1;
+                }
+                return 0;
+              });
+
+              const updatedMap = new Map<string, number | null>();
+              for (const p of sortedMatching) {
+                if (remExit <= 0) break;
+                const curQty = p.qty_open || 0;
+                if (curQty <= remExit) {
+                  remExit -= curQty;
+                  optimisticallyRemovedIds.current.add(p.id);
+                  updatedMap.set(p.id, null);
+                } else {
+                  const newQ = curQty - remExit;
+                  remExit = 0;
+                  updatedMap.set(p.id, newQ);
                 }
               }
-              return prev;
-            });
-          }
+
+              return prev.map(p => {
+                if (updatedMap.has(p.id)) {
+                  const newQ = updatedMap.get(p.id);
+                  if (newQ === null) return null;
+                  return { ...p, qty_open: newQ };
+                }
+                return p;
+              }).filter((p): p is MyPosition => p !== null);
+            }
+          });
         } else if (!detail.is_exit) {
           addOptimisticPosition(detail);
         }
