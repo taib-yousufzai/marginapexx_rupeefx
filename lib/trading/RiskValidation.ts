@@ -1,8 +1,20 @@
 export interface MarketHours {
+  id?: string;
+  name?: string;
   start_time: string;
   end_time: string;
   is_active: boolean;
 }
+
+export const DEFAULT_TRADING_HOURS: Record<string, MarketHours> = {
+  nse: { name: 'NSE Equity', start_time: '09:15', end_time: '15:30', is_active: true },
+  bse: { name: 'BSE Equity', start_time: '09:15', end_time: '15:30', is_active: true },
+  mcx: { name: 'MCX Commodities', start_time: '09:00', end_time: '23:30', is_active: true },
+  forex: { name: 'FOREX', start_time: '00:00', end_time: '23:59', is_active: true },
+  comex: { name: 'COMEX', start_time: '00:00', end_time: '23:59', is_active: true },
+  crypto: { name: 'Crypto', start_time: '00:00', end_time: '00:00', is_active: true },
+  'us-eq': { name: 'US Stocks', start_time: '00:00', end_time: '00:00', is_active: true },
+};
 
 export class RiskValidation {
   /**
@@ -14,17 +26,27 @@ export class RiskValidation {
     const segUpper = (dbSegment || '').toUpperCase();
     const exchangeName = symUpper.includes(':') ? symUpper.split(':')[0] : '';
 
-    if (segUpper.includes('CRYPTO')) return 'crypto';
+    if (segUpper.includes('CRYPTO') || symUpper.startsWith('CRYPTO:') || symUpper.endsWith('USDT')) return 'crypto';
+
+    if (
+      segUpper.includes('COMEX') ||
+      symUpper.startsWith('COMEX:') ||
+      ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => symUpper.includes(c)) ||
+      symUpper.endsWith('=F')
+    ) {
+      return 'comex';
+    }
 
     if (
       exchangeName === 'US-EQ' ||
       exchangeName === 'USEQ' ||
+      exchangeName === 'US' ||
       segUpper.includes('US-EQ') ||
       segUpper.includes('USEQ') ||
       segUpper.includes('US_EQ') ||
       segUpper.includes('US STOCKS') ||
       segUpper.includes('US_STOCKS') ||
-      segUpper.includes('STOCKS')
+      symUpper.startsWith('US:')
     ) {
       return 'us-eq';
     }
@@ -57,10 +79,14 @@ export class RiskValidation {
    * Note: If allowedSegments is empty, it implies all segments are allowed (default permissive).
    */
   static validateSegment(allowedSegments: string[], requestedSegment: string): boolean {
-    if (allowedSegments && allowedSegments.length > 0 && !allowedSegments.includes(requestedSegment)) {
-      return false;
+    if (!allowedSegments || allowedSegments.length === 0) {
+      return true;
     }
-    return true;
+    const reqUpper = (requestedSegment || '').toUpperCase().trim();
+    if (allowedSegments.includes(reqUpper) || allowedSegments.includes(requestedSegment)) {
+      return true;
+    }
+    return false;
   }
 
   /**
@@ -82,56 +108,66 @@ export class RiskValidation {
   }
 
   /**
-   * Validate if the market is currently open for the segment.
-   * Handles overnight sessions correctly (e.g. 22:00 to 02:00).
+   * Validate if the market is currently open for a given segment and hours config.
+   * Handles weekends, standard sessions, and overnight trading correctly.
    */
-  static validateTradingHours(marketHours: MarketHours | null | undefined): boolean {
-    // Local server pe hamesha open rakhne ke liye bypass
-    if (process.env.NODE_ENV === 'development') {
-      return true;
-    }
+  static isMarketOpenForSegment(segmentId: string, marketHours?: MarketHours | null): boolean {
+    const sId = (segmentId || '').toLowerCase().trim();
+    if (sId === 'crypto') return true;
 
-    if (!marketHours) return false; // No hours row = market is closed (fail-closed for safety)
-    if (!marketHours.is_active) return false;
+    const hours = marketHours || DEFAULT_TRADING_HOURS[sId] || DEFAULT_TRADING_HOURS['nse'];
+    if (!hours || !hours.is_active) return false;
 
     const formatter = new Intl.DateTimeFormat('en-US', {
       timeZone: 'Asia/Kolkata',
       hour: 'numeric',
       minute: 'numeric',
+      weekday: 'short',
       hour12: false
     });
     const parts = formatter.formatToParts(new Date());
-    const hourPart = parts.find(p => p.type === 'hour')?.value;
-    const minutePart = parts.find(p => p.type === 'minute')?.value;
-    if (!hourPart || !minutePart) return false;
-    const currentMins = Number(hourPart) * 60 + Number(minutePart);
-    
-    const [startH, startM] = (marketHours.start_time || '').split(':').map(Number);
-    const [endH, endM] = (marketHours.end_time || '').split(':').map(Number);
+    const weekday = parts.find(p => p.type === 'weekday')?.value;
+    const hourVal = parts.find(p => p.type === 'hour')?.value;
+    const minuteVal = parts.find(p => p.type === 'minute')?.value;
+    if (!hourVal || !minuteVal) return false;
+
+    // Weekend check for Indian markets & regular exchanges
+    const isIndianMarket = ['nse', 'bse', 'mcx'].includes(sId);
+    if ((isIndianMarket || sId === 'forex' || sId === 'comex') && (weekday === 'Sat' || weekday === 'Sun')) {
+      return false;
+    }
+
+    const currentMins = Number(hourVal) * 60 + Number(minuteVal);
+    const [startH, startM] = (hours.start_time || '09:15').split(':').map(Number);
+    const [endH, endM] = (hours.end_time || '15:30').split(':').map(Number);
 
     if (isNaN(startH) || isNaN(startM) || isNaN(endH) || isNaN(endM)) {
-      console.warn('[validateTradingHours] Invalid trading hours config:', marketHours);
-      return false; // Fail closed if DB config is broken
+      return false;
     }
 
     const startMins = startH * 60 + startM;
-    const endMins = endH * 60 + endM;
+    let endMins = endH * 60 + endM;
 
-    if (startMins === endMins) {
-      // Treat equal start/end as "no trading session" unless you want 24x7.
-      return false;
+    // 00:00 or 23:59 represents full day or 24/7 if start is 00:00
+    if (startMins === 0 && (endMins === 0 || endMins === 1439 || endMins === 1440)) {
+      return true;
     }
 
     if (startMins < endMins) {
       // Standard daytime session (e.g. 09:15 to 15:30)
-      if (currentMins < startMins || currentMins >= endMins) return false;
+      return currentMins >= startMins && currentMins < endMins;
     } else {
       // Overnight session (e.g. 22:00 to 02:00)
-      // It is CLOSED if the current time is after the end time AND before the start time
-      if (currentMins >= endMins && currentMins < startMins) return false;
+      return currentMins >= startMins || currentMins < endMins;
     }
+  }
 
-    return true;
+  /**
+   * Validate if the market is currently open for the segment.
+   * Handles overnight sessions correctly (e.g. 22:00 to 02:00).
+   */
+  static validateTradingHours(marketHours: MarketHours | null | undefined): boolean {
+    return this.isMarketOpenForSegment('nse', marketHours);
   }
 
   /**

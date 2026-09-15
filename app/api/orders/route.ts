@@ -568,7 +568,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           const res: any = await (admin
             .from('trading_hours') as any)
             .select('name, start_time, end_time, is_active')
-            .eq('id', segmentId)
+            .ilike('id', segmentId)
             .maybeSingle();
           segmentHour = res?.data;
           hrError = res?.error;
@@ -577,27 +577,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         }
 
-        if (!hrError && segmentHour) {
-          if (!segmentHour.is_active) {
-            return NextResponse.json({ error: 'market is closed' }, { status: 400 });
-          }
-
-          const nowIST = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
-          const dayOfWeek = nowIST.getDay();
-          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-
-          if (isWeekend) {
-            return NextResponse.json({ error: 'market is closed' }, { status: 400 });
-          }
-
-          const currentHHMM = `${String(nowIST.getHours()).padStart(2, '0')}:${String(nowIST.getMinutes()).padStart(2, '0')}`;
-          if (currentHHMM < segmentHour.start_time || currentHHMM >= segmentHour.end_time) {
-            return NextResponse.json({ error: 'market is closed' }, { status: 400 });
-          }
+        const effectiveHours = (!hrError && segmentHour) ? segmentHour : null;
+        if (!RiskValidation.isMarketOpenForSegment(segmentId, effectiveHours)) {
+          return NextResponse.json({ error: 'market is closed' }, { status: 400 });
         }
       }
     } catch (err) {
       console.error('[POST /api/orders] Market hours check error:', err);
+      // Fail closed for safety
+      return NextResponse.json({ error: 'market is closed' }, { status: 400 });
     }
 
     const kiteInst = kite_instrument || symbol;

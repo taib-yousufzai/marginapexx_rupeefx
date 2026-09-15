@@ -23,6 +23,7 @@ import type { TradingInstrument } from '@/lib/types/instrument';
 import { useMyOrders } from '@/hooks/useMyOrders';
 import { fmtSymbolName } from '@/lib/format';
 import TickFlash from '@/components/TickFlash';
+import { RiskValidation } from '@/lib/trading/RiskValidation';
 
 /**
  * @deprecated Import `TradingInstrument` from `@/lib/types/instrument` instead.
@@ -636,6 +637,15 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     let currentLinkedPosId = linkedPosId;
     try {
       if (!item) return;
+
+      const isExit = Boolean(currentExitMode || (placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos));
+      if (!isExit) {
+        const segId = RiskValidation.resolveTradingHoursSegmentId(item.symbol, item.segment || '');
+        if (!RiskValidation.isMarketOpenForSegment(segId)) {
+          showOrderError('Market is closed');
+          return;
+        }
+      }
 
       const parsedInputQty = parseFloat(qtyInput);
       if (isNaN(parsedInputQty) || parsedInputQty <= 0) {

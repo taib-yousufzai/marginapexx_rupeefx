@@ -16,6 +16,7 @@ import './option-chain.css';
 import dynamic from 'next/dynamic';
 const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false });
 import { ErrorModal } from '@/components/ErrorModal';
+import { RiskValidation } from '@/lib/trading/RiskValidation';
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
 
@@ -919,7 +920,19 @@ function OptionChainContent() {
                         alignItems: 'center', 
                         gap: '6px'
                       }} 
-                      onClick={() => { setSheetSide('BUY'); setSheetView('ORDER'); }}
+                      onClick={() => { 
+                        const isExitBuy = activePos?.side === 'SELL';
+                        const isMcxOpt = symbol.includes('GOLD') || symbol.includes('SILVER') || symbol.includes('CRUDE') || symbol.includes('NATGAS') || symbol.includes('NATURALGAS');
+                        const isBseOpt = symbol.includes('SENSEX') || symbol.includes('BANKEX');
+                        const optSegment = isMcxOpt ? 'MCX - Options' : (isBseOpt ? 'BSE - Options' : 'NSE - Options');
+                        const segmentId = RiskValidation.resolveTradingHoursSegmentId(selectedContract.symbol || symbol, optSegment);
+                        if (!isExitBuy && !RiskValidation.isMarketOpenForSegment(segmentId)) {
+                          showToast('Market is closed', true);
+                          return;
+                        }
+                        setSheetSide('BUY'); 
+                        setSheetView('ORDER'); 
+                      }}
                     >
                       {activePos?.side === 'SELL' ? 'EXIT SELL' : <><i className="fas fa-arrow-up"></i> BUY</>}
                     </button>
@@ -939,7 +952,19 @@ function OptionChainContent() {
                         alignItems: 'center', 
                         gap: '6px'
                       }} 
-                      onClick={() => { setSheetSide('SELL'); setSheetView('ORDER'); }}
+                      onClick={() => { 
+                        const isExitSell = activePos?.side === 'BUY';
+                        const isMcxOpt = symbol.includes('GOLD') || symbol.includes('SILVER') || symbol.includes('CRUDE') || symbol.includes('NATGAS') || symbol.includes('NATURALGAS');
+                        const isBseOpt = symbol.includes('SENSEX') || symbol.includes('BANKEX');
+                        const optSegment = isMcxOpt ? 'MCX - Options' : (isBseOpt ? 'BSE - Options' : 'NSE - Options');
+                        const segmentId = RiskValidation.resolveTradingHoursSegmentId(selectedContract.symbol || symbol, optSegment);
+                        if (!isExitSell && !RiskValidation.isMarketOpenForSegment(segmentId)) {
+                          showToast('Market is closed', true);
+                          return;
+                        }
+                        setSheetSide('SELL'); 
+                        setSheetView('ORDER'); 
+                      }}
                     >
                       {activePos?.side === 'BUY' ? 'EXIT BUY' : <><i className="fas fa-arrow-down"></i> SELL</>}
                     </button>
