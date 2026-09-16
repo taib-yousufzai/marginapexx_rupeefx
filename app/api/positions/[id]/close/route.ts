@@ -107,20 +107,37 @@ async function fetchKiteLtp(instrument: string): Promise<number | null> {
 import { getRedisClient } from '@/lib/redis';
 import { getCachedUserProfile, getCachedUserSegmentSettings, invalidateUserPositionsCache, invalidateUserOrdersCache } from '@/lib/redisSettingsCache';
 
+function mapSegmentToDbSegment(s: string): string {
+  if (!s) return 'NSE';
+  const u = s.toUpperCase().trim();
+  if (u.includes('CRYPTO')) return 'CRYPTO';
+  if (u.includes('COMEX')) return 'COMEX';
+  if (u.includes('MCX') || u.includes('COMMODITY')) return 'MCX';
+  if (u.includes('FOREX') || u.includes('CDS') || u.includes('CURRENCY')) return 'CDS';
+  if (u.includes('BSE')) return 'BSE';
+  if (u.includes('NFO') || u.includes('FNO') || u.includes('OPT') || u.includes('FUT')) return 'NFO';
+  return 'NSE';
+}
+
 async function fetchBinanceQuote(symbol: string): Promise<number | null> {
   try {
     let clean = cleanSym(symbol);
     if (!clean.endsWith('USDT')) {
       clean = clean + 'USDT';
     }
-    // 1. Check Redis in-memory cache first (0.5ms)
+    const baseClean = clean.replace('USDT', '');
+
+    // 1. Check Redis in-memory cache first (0.5ms) across all possible symbol keys
     try {
       const redis = getRedisClient();
-      const cached = await redis.hget('market:quotes', clean);
-      if (cached) {
-        const tick = JSON.parse(cached);
-        const ltp = Number(tick.last_price || tick.lastPrice || 0);
-        if (ltp > 0) return ltp;
+      const keysToTry = [clean, baseClean, `CRYPTO:${clean}`, `CRYPTO:${baseClean}`, `BINANCE:${clean}`];
+      for (const k of keysToTry) {
+        const cached = await redis.hget('market:quotes', k);
+        if (cached) {
+          const tick = JSON.parse(cached);
+          const ltp = Number(tick.last_price || tick.lastPrice || 0);
+          if (ltp > 0) return ltp;
+        }
       }
     } catch (_) {}
 
@@ -129,13 +146,14 @@ async function fetchBinanceQuote(symbol: string): Promise<number | null> {
       cache: 'no-store',
       signal: AbortSignal.timeout(1500),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.price ? parseFloat(data.price) : null;
+    if (res.ok) {
+      const data = await res.json();
+      if (data.price) return parseFloat(data.price);
+    }
   } catch (err) {
     console.error('[fetchBinanceQuote] Error:', err);
-    return null;
   }
+  return null;
 }
 
 export async function POST(
@@ -147,8 +165,13 @@ export async function POST(
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
+  let body: any = null;
+  try {
+    body = await request.json();
+  } catch (_) {}
+
   const { id: positionId } = await params;
-  if (!positionId) {
+  if (!positionId && !body?.symbol) {
     return NextResponse.json({ error: 'Missing position id' }, { status: 400 });
   }
 
@@ -165,21 +188,52 @@ export async function POST(
     getCachedUserProfile(user.id, () => admin),
   ]);
 
-  const { data: pos, error: posErr } = posResult;
-  if (posErr || !pos) {
+  let pos = posResult?.data;
+  let resolvedPositionId = positionId;
+
+  // Fallback: If position was not found by exact ID (e.g. optimistic placeholder or lot grouping), look up by symbol
+  if (!pos) {
+    const { data: userOpenPositions } = await admin
+      .from('positions')
+      .select('*')
+      .eq('user_id', user.id)
+      .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+      .order('created_at', { ascending: false });
+
+    if (userOpenPositions && userOpenPositions.length > 0) {
+      if (body?.symbol) {
+        const targetClean = cleanSym(body.symbol);
+        pos = userOpenPositions.find((p: any) => 
+          cleanSym(p.symbol || p.kite_instrument) === targetClean && 
+          (!body.side || p.side === body.side)
+        ) ?? userOpenPositions.find((p: any) => cleanSym(p.symbol || p.kite_instrument) === targetClean) ?? null;
+      }
+      if (!pos && positionId) {
+        pos = userOpenPositions.find((p: any) => p.id === positionId) ?? null;
+      }
+      if (pos) {
+        resolvedPositionId = pos.id;
+      }
+    }
+  }
+
+  if (!pos) {
     return NextResponse.json({ error: 'Position not found or already closed' }, { status: 404 });
   }
+
+  const dbSegment = mapSegmentToDbSegment(pos.settlement || pos.symbol || '');
 
   // 2. Parallel fetch segment settings and LTP
   const isScalper = cachedProfile?.trading_mode === 'scalper';
   const lookupId = cachedProfile?.parent_id ?? user.id;
   const [segSettingsList, kiteLtp] = await Promise.all([
-    getCachedUserSegmentSettings(lookupId, pos.settlement ?? '', isScalper, () => admin),
+    getCachedUserSegmentSettings(lookupId, dbSegment, isScalper, () => admin),
     (() => {
       const fetchPromise = (async () => {
         if (!pos.symbol) return null;
         const sym = (pos.symbol || '').toUpperCase();
-        const isCrypto = (pos.settlement || '').toUpperCase().includes('CRYPTO') ||
+        const isCrypto = dbSegment === 'CRYPTO' ||
+          (pos.settlement || '').toUpperCase().includes('CRYPTO') ||
           sym.endsWith('USDT') ||
           ['BTC', 'ETH', 'DOGE', 'DODGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'].some(c => sym === c || sym.startsWith(c) || sym.includes(c));
         if (isCrypto) {
@@ -224,7 +278,7 @@ export async function POST(
 
   let segSetting = Array.isArray(segSettingsList) ? segSettingsList.find((s: any) => s.side === pos.side) : null;
   if (!segSetting && lookupId !== user.id) {
-    const userSegSettings = await getCachedUserSegmentSettings(user.id, pos.settlement ?? '', isScalper, () => admin);
+    const userSegSettings = await getCachedUserSegmentSettings(user.id, dbSegment, isScalper, () => admin);
     segSetting = Array.isArray(userSegSettings) ? userSegSettings.find((s: any) => s.side === pos.side) : null;
   }
   const rawExitBuffer = segSetting?.exit_buffer;
@@ -235,7 +289,8 @@ export async function POST(
   const lossHoldSec = segSetting?.loss_hold_sec ?? 0;
 
   const quoteDetails = typeof kiteLtp === 'object' && kiteLtp !== null ? kiteLtp : (typeof kiteLtp === 'number' ? { ltp: kiteLtp, bid: null, ask: null } : null);
-  const baseLtp = quoteDetails?.ltp ?? Number(pos.ltp ?? pos.entry_price ?? 0);
+  const clientPriceNum = body?.client_price ? Number(body.client_price) : 0;
+  const baseLtp = quoteDetails?.ltp ?? (clientPriceNum > 0 ? clientPriceNum : Number(pos.ltp ?? pos.entry_price ?? 0));
   const rawBid = quoteDetails?.bid ?? null;
   const rawAsk = quoteDetails?.ask ?? null;
   const isCommodity = (pos.settlement || '').toUpperCase().includes('MCX') ||
@@ -294,9 +349,11 @@ export async function POST(
   let pnl: any;
   let rpcErr: any;
 
+  const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
+
   const resV2 = await admin.rpc('close_position_v2', {
-    p_position_id:        positionId,
-    p_close_qty:          Number(pos.qty_open || pos.qty_total || 1),
+    p_position_id:        resolvedPositionId,
+    p_close_qty:          closeQty,
     p_close_price:        exitPrice,
     p_closed_by:          'USER',
     p_expected_brokerage: 0,
@@ -305,7 +362,7 @@ export async function POST(
   if (resV2.error) {
     console.warn('[POST /api/positions/[id]/close] v2 RPC error, falling back to v1:', resV2.error);
     const resV1 = await admin.rpc('close_position', {
-      p_position_id: positionId,
+      p_position_id: resolvedPositionId,
       p_user_id:     user.id,
       p_ltp:         baseLtp,
       p_exit_price:  exitPrice,
