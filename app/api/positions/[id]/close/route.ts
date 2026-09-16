@@ -19,6 +19,7 @@ import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
+import { cleanSym } from '@/contexts/PositionsContext';
 import type { ClosePositionResponse } from '@/lib/types/order';
 
 
@@ -105,13 +106,13 @@ async function fetchKiteLtp(instrument: string): Promise<number | null> {
 
 async function fetchBinanceQuote(symbol: string): Promise<number | null> {
   try {
-    let cleanSym = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
-    if (!cleanSym.endsWith('USDT')) {
-      cleanSym = cleanSym + 'USDT';
+    let clean = cleanSym(symbol);
+    if (!clean.endsWith('USDT')) {
+      clean = clean + 'USDT';
     }
-    const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, {
+    const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${clean}`, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(2000),
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -157,9 +158,6 @@ export async function POST(
     return NextResponse.json({ error: 'Position not found or already closed' }, { status: 404 });
   }
 
-  // Note: Position exits (closing an open position) are allowed off-hours so users/system are never trapped in open positions.
-
-
   // 2. Parallel fetch segment settings and LTP
   const isScalper = profileResult.data?.trading_mode === 'scalper';
   const targetTable = isScalper ? 'scalper_segment_settings' : 'segment_settings';
@@ -174,7 +172,10 @@ export async function POST(
     (() => {
       const fetchPromise = (async () => {
         if (!pos.symbol) return null;
-        const isCrypto = (pos.settlement || '').toUpperCase().includes('CRYPTO');
+        const sym = (pos.symbol || '').toUpperCase();
+        const isCrypto = (pos.settlement || '').toUpperCase().includes('CRYPTO') ||
+          sym.endsWith('USDT') ||
+          ['BTC', 'ETH', 'DOGE', 'DODGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'].some(c => sym === c || sym.startsWith(c) || sym.includes(c));
         if (isCrypto) {
           return fetchBinanceQuote(pos.symbol);
         }
@@ -220,24 +221,23 @@ export async function POST(
   const exitBuffer = (rawExitBuffer !== undefined && rawExitBuffer !== null && !isNaN(Number(rawExitBuffer)))
     ? (Number(rawExitBuffer) > 0.005 ? Number(rawExitBuffer) / 100 : Number(rawExitBuffer))
     : 0;
-  const profitHoldSec = segSetting?.profit_hold_sec ?? 120;
+  const profitHoldSec = segSetting?.profit_hold_sec ?? 0;
   const lossHoldSec = segSetting?.loss_hold_sec ?? 0;
 
   const quoteDetails = typeof kiteLtp === 'object' && kiteLtp !== null ? kiteLtp : (typeof kiteLtp === 'number' ? { ltp: kiteLtp, bid: null, ask: null } : null);
-  const baseLtp = quoteDetails?.ltp ?? Number(pos.ltp ?? pos.entry_price);
+  const baseLtp = quoteDetails?.ltp ?? Number(pos.ltp ?? pos.entry_price ?? 0);
   const rawBid = quoteDetails?.bid ?? null;
   const rawAsk = quoteDetails?.ask ?? null;
   const isCommodity = (pos.settlement || '').toUpperCase().includes('MCX') ||
     ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => (pos.symbol || '').toUpperCase().includes(c));
-  const hasRealBidAsk = isCommodity ? false : Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
 
   const platformExitMode = await getPlatformSetting('EXIT_PRICE_MODE', 'BID_ASK');
   const execMode = platformExitMode || segSetting?.exit_price_mode || 'BID_ASK';
 
-  // Layer 1: displayed Bid/Ask using bid_buffer (same formula as TradeSheet/DetailSheet)
+  // Layer 1: displayed Bid/Ask using bid_buffer
   const bidBufRaw = Number(segSetting?.bid_buffer ?? 0);
   const bidBufDecimal = Math.abs(bidBufRaw) > 0.005 ? bidBufRaw / 100 : bidBufRaw;
-  const bidBufAmount = baseLtp * bidBufDecimal; // always LTP-based
+  const bidBufAmount = baseLtp * bidBufDecimal;
 
   const hasRealBidAskClose = Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
   const useLtpModeClose = execMode === 'LTP' || isCommodity || !hasRealBidAskClose;
@@ -251,12 +251,10 @@ export async function POST(
     displayedAsk = (rawAsk ?? baseLtp) + bidBufAmount;
     displayedBid = (rawBid ?? baseLtp) - bidBufAmount;
   }
-  if (displayedAsk <= 0) displayedAsk = baseLtp;
-  if (displayedBid <= 0) displayedBid = baseLtp;
+  if (displayedAsk <= 0) displayedAsk = baseLtp > 0 ? baseLtp : 1;
+  if (displayedBid <= 0) displayedBid = baseLtp > 0 ? baseLtp : 1;
 
-  // Layer 2: apply exit_buffer on top using LTP as the base amount (hidden from user)
-  //   Closing BUY  = SELLING  → Displayed Bid  - LTP * exit_buffer%
-  //   Closing SELL = BUYING   → Displayed Ask  + LTP * exit_buffer%
+  // Layer 2: apply exit_buffer
   let exitPrice: number;
   if (pos.side === 'BUY') {
     exitPrice = displayedBid - baseLtp * exitBuffer;
@@ -264,13 +262,16 @@ export async function POST(
     exitPrice = displayedAsk + baseLtp * exitBuffer;
   }
   exitPrice = Math.round(exitPrice * 100) / 100;
+  if (exitPrice <= 0) exitPrice = baseLtp > 0 ? baseLtp : Number(pos.entry_price || 1);
 
   // ─── Anti-Scalping Check ───
   const pnlValue = pos.side === 'BUY'
     ? (exitPrice - Number(pos.entry_price)) * Number(pos.qty_open)
     : (Number(pos.entry_price) - exitPrice) * Number(pos.qty_open);
 
-  const durationSec = Math.floor((Date.now() - new Date(pos.entry_time).getTime()) / 1000);
+  const entryDate = pos.entry_time || pos.created_at || pos.updated_at;
+  const entryTimestamp = entryDate ? new Date(entryDate).getTime() : Date.now();
+  const durationSec = isNaN(entryTimestamp) ? 999999 : Math.floor((Date.now() - entryTimestamp) / 1000);
   const requiredHold = pnlValue >= 0 ? profitHoldSec : lossHoldSec;
 
   if (durationSec < requiredHold) {
@@ -279,14 +280,33 @@ export async function POST(
     }, { status: 403 });
   }
 
-  // Call the atomic RPC
-  const { data: pnl, error: rpcErr } = await admin.rpc('close_position', {
-    p_position_id: positionId,
-    p_user_id:     user.id,
-    p_ltp:         baseLtp,
-    p_exit_price:  exitPrice,
-    p_closed_by:   'USER',
+  // Call the atomic RPC (v2 with v1 fallback)
+  let pnl: any;
+  let rpcErr: any;
+
+  const resV2 = await admin.rpc('close_position_v2', {
+    p_position_id:        positionId,
+    p_close_qty:          Number(pos.qty_open || pos.qty_total || 1),
+    p_close_price:        exitPrice,
+    p_closed_by:          'USER',
+    p_expected_brokerage: 0,
   });
+
+  if (resV2.error) {
+    console.warn('[POST /api/positions/[id]/close] v2 RPC error, falling back to v1:', resV2.error);
+    const resV1 = await admin.rpc('close_position', {
+      p_position_id: positionId,
+      p_user_id:     user.id,
+      p_ltp:         baseLtp,
+      p_exit_price:  exitPrice,
+      p_closed_by:   'USER',
+    });
+    pnl = resV1.data;
+    rpcErr = resV1.error;
+  } else {
+    pnl = resV2.data;
+    rpcErr = resV2.error;
+  }
 
   if (rpcErr) {
     console.error('[POST /api/positions/[id]/close] RPC error:', rpcErr);
