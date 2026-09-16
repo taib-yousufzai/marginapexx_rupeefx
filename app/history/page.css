@@ -818,3 +818,160 @@ body.blue .history-footer .footer-label {
 body.blue .history-footer .footer-value:not(.net-profit):not(.net-loss) {
     color: #F0F0F0 !important;
 }
+
+/* ── Cumulative & Detailed View Mode Styles ── */
+.history-root .view-mode-pill {
+    background: #F8F9FC;
+    border: 1px solid #E2E6EC;
+    border-radius: 1.25rem;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #5B677E;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.history-root .view-mode-pill.active {
+    background: #1A1E2B;
+    border-color: #1A1E2B;
+    color: #FFFFFF;
+}
+
+.history-root .trades-count-badge {
+    background: #EEF2F6;
+    color: #2962FF;
+    font-size: 0.55rem;
+    font-weight: 700;
+    padding: 0.15rem 0.45rem;
+    border-radius: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+    cursor: pointer;
+    border: 1px solid #DCE3EC;
+    transition: all 0.15s ease;
+}
+
+.history-root .trades-count-badge:hover {
+    background: #DBEAFE;
+    border-color: #93C5FD;
+}
+
+.history-root .sub-trades-panel {
+    margin-top: 0.625rem;
+    padding-top: 0.5rem;
+    border-top: 1px dashed #E2E8F0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+}
+
+.history-root .sub-trades-header {
+    font-size: 0.6rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: #94A3B8;
+    letter-spacing: 0.03em;
+    margin-bottom: 0.125rem;
+}
+
+.history-root .sub-trade-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #F8FAFC;
+    padding: 0.35rem 0.5rem;
+    border-radius: 0.375rem;
+    border: 1px solid #EDF2F7;
+    font-size: 0.65rem;
+}
+
+.history-root .sub-trade-left {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #475569;
+}
+
+.history-root .sub-trade-right {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.history-root .pnl-sub {
+    font-weight: 700;
+    font-size: 0.68rem;
+}
+
+.history-root .pnl-sub.positive {
+    color: #2C8E5A;
+}
+
+.history-root .pnl-sub.negative {
+    color: #C62E2E;
+}
+
+.history-root .sub-trade-time {
+    color: #94A3B8;
+    font-size: 0.6rem;
+}
+
+/* Theme overrides for dark / black / blue */
+body.dark .history-root .view-mode-pill,
+body.black .history-root .view-mode-pill {
+    background: #1E1E1E !important;
+    border-color: #2D2D2D !important;
+    color: #A0A0A0 !important;
+}
+
+body.dark .history-root .view-mode-pill.active,
+body.black .history-root .view-mode-pill.active {
+    background: #2962FF !important;
+    border-color: #2962FF !important;
+    color: #FFFFFF !important;
+}
+
+body.blue .history-root .view-mode-pill {
+    background: #131C27 !important;
+    border-color: #2A2A2A !important;
+    color: #B0B0B0 !important;
+}
+
+body.blue .history-root .view-mode-pill.active {
+    background: #2962FF !important;
+    border-color: #2962FF !important;
+    color: #FFFFFF !important;
+}
+
+body.dark .history-root .trades-count-badge,
+body.black .history-root .trades-count-badge,
+body.blue .history-root .trades-count-badge {
+    background: rgba(41, 98, 255, 0.15) !important;
+    border-color: rgba(41, 98, 255, 0.3) !important;
+    color: #60A5FA !important;
+}
+
+body.dark .history-root .sub-trades-panel,
+body.black .history-root .sub-trades-panel,
+body.blue .history-root .sub-trades-panel {
+    border-top-color: #2A2A2A !important;
+}
+
+body.dark .history-root .sub-trade-row,
+body.black .history-root .sub-trade-row {
+    background: #181818 !important;
+    border-color: #262626 !important;
+    color: #E0E0E0 !important;
+}
+
+body.blue .history-root .sub-trade-row {
+    background: #0B141E !important;
+    border-color: #1C2A3A !important;
+    color: #D0D0D0 !important;
+}
+

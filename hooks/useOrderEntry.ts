@@ -164,6 +164,13 @@ export function useOrderEntry() {
           return 0;
         });
 
+        let totalClosedQty = 0;
+        let weightedEntrySum = 0;
+        let totalPnl = 0;
+        let totalBrokerage = 0;
+        let totalSettlementAmount = 0;
+        let derivedSettlement = '';
+
         for (const p of sortedMatching) {
           if (remExit <= 0) break;
           const entryPrice = Number(p.avg_price || p.entry_price || 0);
@@ -176,36 +183,23 @@ export function useOrderEntry() {
           const pnl = posSide === 'BUY' ? (exitPrice - entryPrice) * closedQty : (entryPrice - exitPrice) * closedQty;
           const pnlPercent = (entryPrice * closedQty > 0) ? (pnl / (entryPrice * closedQty)) * 100 : 0;
 
-          const rawSettlement = p.settlement || '';
-          let derivedSettlement = rawSettlement;
-          if (!derivedSettlement) {
-            const sym: string = (p.symbol || state.symbol || '').toUpperCase();
-            if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
-            else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
-            else if (sym.includes('MCX')) derivedSettlement = 'MCX';
-            else derivedSettlement = 'NSE';
-          }
+          totalClosedQty += closedQty;
+          weightedEntrySum += entryPrice * closedQty;
+          totalPnl += pnl;
+          totalBrokerage += Number((p as any).brokerage || 0);
+          totalSettlementAmount += Math.abs(Number((p as any).settlement_amount || 0));
 
-          const optimisticHistoryItem = {
-            id: p.id,
-            scriptName: p.symbol || state.symbol,
-            type: posSide,
-            orderType: p.product_type || state.product_type || 'INTRADAY',
-            qty: closedQty,
-            price: exitPrice,
-            entryPrice,
-            exitPrice,
-            pnl,
-            date: new Date(p.entry_time || (p as any).created_at || now).toLocaleString(),
-            exitDate: new Date(now).toLocaleDateString(),
-            status: 'closed',
-            brokerage: Number((p as any).brokerage || 0),
-            closedBy: 'USER_ACTION',
-            productType: p.product_type || state.product_type || 'INTRADAY',
-            settlement: derivedSettlement,
-            settlementAmount: Math.abs(Number((p as any).settlement_amount || 0)),
-            timestamp: now,
-          };
+          if (!derivedSettlement) {
+            const rawSettlement = p.settlement || '';
+            derivedSettlement = rawSettlement;
+            if (!derivedSettlement) {
+              const sym: string = (p.symbol || state.symbol || '').toUpperCase();
+              if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
+              else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
+              else if (sym.includes('MCX')) derivedSettlement = 'MCX';
+              else derivedSettlement = 'NSE';
+            }
+          }
 
           const optimisticClosedPos = {
             ...p,
@@ -222,9 +216,36 @@ export function useOrderEntry() {
             updated_at: new Date(now).toISOString(),
           };
 
-          optimisticHistoryItems.push(optimisticHistoryItem);
           optimisticClosedPositions.push(optimisticClosedPos);
         }
+
+        const avgEntryPrice = totalClosedQty > 0 ? weightedEntrySum / totalClosedQty : 0;
+        const exitPrice = Number(state.client_price || 0);
+        const posSide = (sortedMatching[0]?.side || 'BUY') as 'BUY' | 'SELL';
+
+        const optimisticHistoryItem = {
+          id: sortedMatching.length === 1 ? sortedMatching[0].id : tempId,
+          scriptName: sortedMatching[0]?.symbol || state.symbol,
+          type: posSide,
+          orderType: sortedMatching[0]?.product_type || state.product_type || 'INTRADAY',
+          qty: totalClosedQty || state.qty || 1,
+          price: exitPrice || avgEntryPrice,
+          entryPrice: avgEntryPrice,
+          exitPrice: exitPrice || avgEntryPrice,
+          pnl: totalPnl,
+          date: new Date(sortedMatching[0]?.entry_time || (sortedMatching[0] as any)?.created_at || now).toLocaleString(),
+          exitDate: new Date(now).toLocaleDateString(),
+          status: 'closed',
+          brokerage: totalBrokerage,
+          closedBy: 'USER_ACTION',
+          productType: sortedMatching[0]?.product_type || state.product_type || 'INTRADAY',
+          settlement: derivedSettlement || state.segment || 'NSE',
+          settlementAmount: totalSettlementAmount,
+          timestamp: now,
+          trades_count: sortedMatching.length,
+        };
+
+        optimisticHistoryItems.push(optimisticHistoryItem);
       } else if (state.is_exit) {
         // Fallback for standalone exit orders
         const exitPrice = Number(state.client_price || 0);
