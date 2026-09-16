@@ -449,7 +449,9 @@ export function useOrderEntry() {
     setLoading(true);
     setError(null);
 
-    const posToClose = positionsContext?.positions?.find(p => p.id === positionId);
+    const cachedPos = typeof window !== 'undefined' && (window as any).__lastPositionsMap ? (window as any).__lastPositionsMap.get(positionId) : null;
+    const contextPos = positionsContext?.positions?.find(p => p.id === positionId);
+    const posToClose = contextPos || cachedPos;
 
     // Optimistically remove position locally in 0ms
     if (positionsContext?.removePositionLocally) {
@@ -457,21 +459,22 @@ export function useOrderEntry() {
     }
 
     // Optimistically generate closed position and history entry for instant UI
-    if (typeof window !== 'undefined' && posToClose) {
+    if (typeof window !== 'undefined') {
       const now = Date.now();
-      const entryPrice = Number(posToClose.avg_price || posToClose.entry_price || 0);
-      const exitPrice = Number(clientPrice || posToClose.current_ltp || posToClose.ltp || entryPrice);
-      const qty = Number(posToClose.qty_open || posToClose.qty_total || (posToClose as any).qty || 1);
-      const posSide = (posToClose.side || side || 'BUY') as 'BUY' | 'SELL';
-      const pnl = (posToClose.total_pnl !== undefined && posToClose.total_pnl !== null)
+      const posSymbol = posToClose?.symbol || symbol || '';
+      const entryPrice = Number(posToClose?.avg_price || posToClose?.entry_price || clientPrice || 0);
+      const exitPrice = Number(clientPrice || posToClose?.current_ltp || posToClose?.ltp || entryPrice);
+      const qty = Number(posToClose?.qty_open || posToClose?.qty_total || (posToClose as any)?.qty || 1);
+      const posSide = (posToClose?.side || side || 'BUY') as 'BUY' | 'SELL';
+      const pnl = (posToClose?.total_pnl !== undefined && posToClose?.total_pnl !== null)
         ? Number(posToClose.total_pnl)
         : (posSide === 'BUY' ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty);
       const pnlPercent = (entryPrice * qty > 0) ? (pnl / (entryPrice * qty)) * 100 : 0;
 
-      const rawSettlement = posToClose.settlement || settlement || '';
+      const rawSettlement = posToClose?.settlement || settlement || '';
       let derivedSettlement = rawSettlement;
       if (!derivedSettlement) {
-        const sym: string = (posToClose.symbol || symbol || '').toUpperCase();
+        const sym: string = (posSymbol).toUpperCase();
         if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
         else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
         else if (sym.includes('MCX')) derivedSettlement = 'MCX';
@@ -480,28 +483,30 @@ export function useOrderEntry() {
 
       const optimisticHistoryItem = {
         id: positionId,
-        scriptName: posToClose.symbol || symbol || '',
+        scriptName: posSymbol,
         type: posSide,
-        orderType: posToClose.product_type || 'INTRADAY',
+        orderType: posToClose?.product_type || 'INTRADAY',
         qty,
         price: exitPrice,
         entryPrice,
         exitPrice,
         pnl,
-        date: new Date(posToClose.entry_time || (posToClose as any).created_at || now).toLocaleString(),
+        date: new Date(posToClose?.entry_time || (posToClose as any)?.created_at || now).toLocaleString(),
         exitDate: new Date(now).toLocaleDateString(),
         status: 'closed',
-        brokerage: Number((posToClose as any).brokerage || 0),
+        brokerage: Number((posToClose as any)?.brokerage || 0),
         closedBy: 'USER_ACTION',
-        productType: posToClose.product_type || 'INTRADAY',
+        productType: posToClose?.product_type || 'INTRADAY',
         settlement: derivedSettlement,
-        settlementAmount: Math.abs(Number((posToClose as any).settlement_amount || 0)),
+        settlementAmount: Math.abs(Number((posToClose as any)?.settlement_amount || 0)),
         timestamp: now,
       };
 
       const optimisticClosedPos = {
-        ...posToClose,
+        ...(posToClose || {}),
         id: positionId,
+        symbol: posSymbol,
+        side: posSide,
         status: 'closed',
         exit_price: exitPrice,
         pnl,
@@ -600,7 +605,10 @@ export function useOrderEntry() {
     setLoading(true);
     setError(null);
 
-    const positionsToClose = positionsContext?.positions?.filter(p => positionIds.includes(p.id)) || [];
+    const cachedMap = typeof window !== 'undefined' && (window as any).__lastPositionsMap ? (window as any).__lastPositionsMap : null;
+    const positionsToClose = positionIds.map(id => {
+      return positionsContext?.positions?.find(p => p.id === id) || (cachedMap ? cachedMap.get(id) : null) || { id };
+    });
 
     // Optimistically remove positions locally in 0ms
     if (positionsContext?.removePositionLocally) {
@@ -634,7 +642,7 @@ export function useOrderEntry() {
 
         newHistoryItems.push({
           id: pos.id,
-          scriptName: pos.symbol,
+          scriptName: pos.symbol || '',
           type: posSide,
           orderType: pos.product_type || 'INTRADAY',
           qty,

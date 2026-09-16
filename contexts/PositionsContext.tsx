@@ -287,6 +287,13 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
       const rawPositionsFromServer: MyPosition[] = data.positions || [];
       const serverRawIds = new Set(rawPositionsFromServer.map(p => p.id));
 
+      if (typeof window !== 'undefined') {
+        if (!(window as any).__lastPositionsMap) {
+          (window as any).__lastPositionsMap = new Map<string, MyPosition>();
+        }
+        rawPositionsFromServer.forEach(p => (window as any).__lastPositionsMap.set(p.id, p));
+      }
+
       // Clean up optimisticallyRemovedIds for positions that the server DB no longer returns
       for (const id of Array.from(optimisticallyRemovedIds.current)) {
         if (!serverRawIds.has(id)) {

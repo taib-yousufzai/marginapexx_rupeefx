@@ -131,6 +131,14 @@ export default function PositionPage() {
             map.set(p.id, p);
           }
         }
+        const cached = (typeof window !== 'undefined' && Array.isArray((window as any).__closedPositionsCache))
+          ? (window as any).__closedPositionsCache
+          : [];
+        for (const p of cached) {
+          if (!map.has(p.id) && (Date.now() - new Date(p.exit_time || p.updated_at || p.created_at || 0).getTime() < 60000)) {
+            map.set(p.id, p);
+          }
+        }
         const result = Array.from(map.values()).sort((a: any, b: any) => 
           new Date(b.updated_at || b.exit_time || b.created_at || 0).getTime() - new Date(a.updated_at || a.exit_time || a.created_at || 0).getTime()
         );
