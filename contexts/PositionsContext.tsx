@@ -41,7 +41,10 @@ const PositionsContext = createContext<PositionsContextType | null>(null);
 
 export const cleanSym = (s?: string | null): string => {
   if (!s) return '';
-  let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+  let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '')
+             .replace(/[\/\s\_\-]/g, '')
+             .replace(/(PERP|\.P|FUT)$/i, '')
+             .toUpperCase();
   if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC', 'GOLD'].includes(str)) return 'XAUUSD';
   if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI', 'SILVER'].includes(str)) return 'XAGUSD';
   if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI', 'CRUDE', 'CRUDEOIL'].includes(str)) return 'XTIUSD';
@@ -157,6 +160,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   // segmentSettings now comes from TradeConfigProvider — no local fetch needed
   const { segmentSettings } = useTradeConfig();
   const optimisticallyRemovedIds = useRef<Set<string>>(new Set());
+  const optimisticallyRemovedTimes = useRef<Map<string, number>>(new Map());
   const abortControllerRef = useRef<AbortController | null>(null);
   const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
   // Tracks IDs of positions that were added optimistically (not yet confirmed by DB)
@@ -175,6 +179,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
 
   const removePositionLocally = useCallback((posId: string) => {
     optimisticallyRemovedIds.current.add(posId);
+    optimisticallyRemovedTimes.current.set(posId, Date.now());
     setRawPositions(prev => {
       const next = prev.filter(p => p.id !== posId);
       if (typeof window !== 'undefined') {
@@ -295,9 +300,13 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
       }
 
       // Clean up optimisticallyRemovedIds for positions that the server DB no longer returns
+      // or after 30 seconds have passed to prevent indefinite suppressions
+      const now = Date.now();
       for (const id of Array.from(optimisticallyRemovedIds.current)) {
-        if (!serverRawIds.has(id)) {
+        const removedAt = optimisticallyRemovedTimes.current.get(id) || 0;
+        if (!serverRawIds.has(id) || (now - removedAt > 30000)) {
           optimisticallyRemovedIds.current.delete(id);
+          optimisticallyRemovedTimes.current.delete(id);
         }
       }
 
@@ -427,8 +436,10 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
   const restorePositionLocally = useCallback((posId?: string) => {
     if (posId) {
       optimisticallyRemovedIds.current.delete(posId);
+      optimisticallyRemovedTimes.current.delete(posId);
     } else {
       optimisticallyRemovedIds.current.clear();
+      optimisticallyRemovedTimes.current.clear();
     }
     fetchPositions();
   }, [fetchPositions]);
@@ -470,6 +481,7 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
         if (detail.is_exit) {
           const exitQty = Number(detail.qty || detail.qty_open || 0);
           const targetClean = cleanSym(detail.symbol || (detail as any).kite_instrument || '');
+          const now = Date.now();
 
           setRawPositions(prev => {
             // Find all candidate matching positions with matching symbol or linked position ID
@@ -485,7 +497,10 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
 
             if (!exitQty || exitQty >= totalQty) {
               // Full exit: optimistically remove all matching positions immediately
-              matchingPositions.forEach(p => optimisticallyRemovedIds.current.add(p.id));
+              matchingPositions.forEach(p => {
+                optimisticallyRemovedIds.current.add(p.id);
+                optimisticallyRemovedTimes.current.set(p.id, now);
+              });
               const removeIds = new Set(matchingPositions.map(p => p.id));
               return prev.filter(p => !removeIds.has(p.id));
             } else {
@@ -508,6 +523,7 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
                 if (curQty <= remExit) {
                   remExit -= curQty;
                   optimisticallyRemovedIds.current.add(p.id);
+                  optimisticallyRemovedTimes.current.set(p.id, now);
                   updatedMap.set(p.id, null);
                 } else {
                   const newQ = curQty - remExit;

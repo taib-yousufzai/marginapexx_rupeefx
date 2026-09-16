@@ -84,7 +84,18 @@ export function useOrderEntry() {
     // Auto-detect if user has an existing opposite-side position for this symbol
     const oppositeSide = (state.side || 'BUY').toUpperCase() === 'BUY' ? 'SELL' : 'BUY';
     const targetClean = cleanSym(state.symbol || state.kite_instrument || '');
-    const matchingOppositePositions = positionsContext?.positions?.filter(
+    const contextPositions = positionsContext?.positions || [];
+    const cachedPositionsMap = (typeof window !== 'undefined' && (window as any).__lastPositionsMap)
+      ? Array.from((window as any).__lastPositionsMap.values() as Iterable<any>)
+      : [];
+    const allPositionsPool = [...contextPositions];
+    for (const cp of cachedPositionsMap) {
+      if (!allPositionsPool.some(p => p.id === cp.id)) {
+        allPositionsPool.push(cp);
+      }
+    }
+
+    const matchingOppositePositions = allPositionsPool.filter(
       p => {
         if (state.linked_position_id && p.id === state.linked_position_id) return true;
         const pStatus = (p.status || '').toLowerCase();
@@ -94,10 +105,10 @@ export function useOrderEntry() {
                pSide === oppositeSide &&
                isOpen;
       }
-    ) || [];
+    );
     const matchingOppositePos = matchingOppositePositions[0];
     const effectiveIsExit = Boolean(state.is_exit || matchingOppositePositions.length > 0);
-    const effectiveLinkedPosId = state.linked_position_id || matchingOppositePos?.id || undefined;
+    const effectiveLinkedPosId = state.linked_position_id || (matchingOppositePositions.length === 1 && (Number(matchingOppositePos?.qty_open || matchingOppositePos?.qty_total || 0) >= (state.qty || 1)) ? matchingOppositePos.id : undefined);
 
     const now = Date.now();
     const optimisticHistoryOrder = {

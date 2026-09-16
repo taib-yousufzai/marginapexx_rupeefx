@@ -39,7 +39,10 @@ function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: num
 
 function cleanSymHelper(s?: string | null): string {
   if (!s) return '';
-  let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+  let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '')
+             .replace(/[\/\s\_\-]/g, '')
+             .replace(/(PERP|\.P|FUT)$/i, '')
+             .toUpperCase();
   if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC', 'GOLD'].includes(str)) return 'XAUUSD';
   if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI', 'SILVER'].includes(str)) return 'XAGUSD';
   if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI', 'CRUDE', 'CRUDEOIL'].includes(str)) return 'XTIUSD';
@@ -1227,21 +1230,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     if (!resolvedLinkedPositionId) {
       const targetClean = cleanSymHelper(symbol);
-      const targetProd = (product_type || 'INTRADAY').toUpperCase();
-      const matchingPosition = openPositions.find((p: any) =>
+      const matchingPositions = openPositions.filter((p: any) =>
         cleanSymHelper(p.symbol || p.kite_instrument) === targetClean &&
-        p.side !== side &&                              // opposite side
-        (p.product_type || 'INTRADAY').toUpperCase() === targetProd
-      ) || openPositions.find((p: any) =>
-        cleanSymHelper(p.symbol || p.kite_instrument) === targetClean &&
-        p.side !== side                                 // opposite side fallback if product_type differs
+        p.side !== side                                 // opposite side
       );
-      if (matchingPosition) {
+      if (matchingPositions.length > 0) {
         resolvedIsExit = true;
-        resolvedLinkedPositionId = matchingPosition.id;
+        // Only anchor to a single position ID if there is exactly 1 matching lot and exit qty <= that position's qty.
+        // For cumulative exits spanning multiple lots, keep resolvedLinkedPositionId = null so FIFO executes across all lots.
+        if (matchingPositions.length === 1 && Number(matchingPositions[0].qty_open) >= Number(qty)) {
+          resolvedLinkedPositionId = matchingPositions[0].id;
+        } else {
+          resolvedLinkedPositionId = null;
+        }
         console.log(
-          `[POST /api/orders] Auto-resolved is_exit=true & linkedPositionId=${matchingPosition.id} for ${targetOrderType} order ` +
-          `(symbol=${symbol}, side=${matchingPosition.side})`
+          `[POST /api/orders] Auto-resolved is_exit=true & linkedPositionId=${resolvedLinkedPositionId} for ${targetOrderType} order ` +
+          `(symbol=${symbol}, side=${side}, matchingLots=${matchingPositions.length})`
         );
       }
     }
