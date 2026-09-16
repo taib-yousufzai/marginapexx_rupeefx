@@ -337,7 +337,7 @@ export function useOrderEntry() {
       }
     }
 
-    soundEngine.playOrderSubmitted();
+    soundEngine.playOrderExecuted();
 
     try {
       // Direct fast API dispatch (25000ms max timeout to prevent premature abort race conditions)
@@ -363,7 +363,6 @@ export function useOrderEntry() {
       if (ordersContext?.swapOptimisticOrder) {
         ordersContext.swapOptimisticOrder(tempId, confirmedOrder);
       }
-      soundEngine.playOrderExecuted();
 
       if (typeof window !== 'undefined') {
         try {
@@ -577,6 +576,8 @@ export function useOrderEntry() {
       }));
     }
 
+    soundEngine.playOrderExecuted();
+
     try {
       const result = await api.post<Record<string, unknown>>(`/api/positions/${positionId}/close`, {
         client_price: clientPrice,
@@ -734,6 +735,8 @@ export function useOrderEntry() {
         }
       }));
     }
+
+    soundEngine.playOrderExecuted();
 
     try {
       const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 20000 });
