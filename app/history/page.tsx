@@ -7,7 +7,6 @@ import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
 import AnimatedLoader from '@/components/AnimatedLoader';
-import { cleanSym } from '@/contexts/PositionsContext';
 import './page.css';
 
 interface HistoryItem {
@@ -53,7 +52,6 @@ export default function HistoryPage() {
   const router = useRouter();
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentTab, setCurrentTab] = useState<'position' | 'order'>('position');
-  const [positionViewMode, setPositionViewMode] = useState<'cumulative' | 'detailed'>('cumulative');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [appliedFromDate, setAppliedFromDate] = useState('');
@@ -419,79 +417,6 @@ export default function HistoryPage() {
     return base;
   }, [historyData, currentTab, appliedFromDate, appliedToDate]);
 
-  const groupedPositionData = useMemo(() => {
-    const posHistory = filteredData.filter(item => item.status === 'closed');
-    const groupMap = new Map<string, HistoryItem & { groupKey: string; tradesCount: number; subItems: HistoryItem[] }>();
-
-    for (const item of posHistory) {
-      const symKey = cleanSym(item.scriptName) || item.scriptName;
-      const sideKey = (item.type || 'BUY').toUpperCase();
-      const prodKey = (item.productType || item.orderType || 'INTRADAY').toUpperCase();
-      const timeWindowKey = Math.floor((item.timestamp || 0) / 10000);
-      const groupKey = `${symKey}|${sideKey}|${prodKey}|${timeWindowKey}`;
-
-      if (!groupMap.has(groupKey)) {
-        groupMap.set(groupKey, {
-          ...item,
-          id: item.id || `group_${groupKey}`,
-          groupKey,
-          qty: Number(item.qty) || 1,
-          price: Number(item.exitPrice || item.price || 0),
-          entryPrice: Number(item.entryPrice || 0),
-          exitPrice: Number(item.exitPrice || item.price || 0),
-          pnl: Number(item.pnl || 0),
-          brokerage: Number(item.brokerage || (item as any).entry_brokerage || 0),
-          settlementAmount: Number(item.settlementAmount || 0),
-          timestamp: item.timestamp || 0,
-          tradesCount: (item as any).trades_count || 1,
-          subItems: [item],
-        });
-      } else {
-        const existing = groupMap.get(groupKey)!;
-        const currentQty = Number(item.qty) || 1;
-        const prevQty = existing.qty;
-        const totalQty = prevQty + currentQty;
-
-        const prevWeightedEntry = (existing.entryPrice || 0) * prevQty;
-        const currWeightedEntry = (Number(item.entryPrice || 0)) * currentQty;
-        const newAvgEntry = totalQty > 0 ? (prevWeightedEntry + currWeightedEntry) / totalQty : 0;
-
-        const prevWeightedExit = (existing.exitPrice || 0) * prevQty;
-        const currWeightedExit = (Number(item.exitPrice || item.price || 0)) * currentQty;
-        const newAvgExit = totalQty > 0 ? (prevWeightedExit + currWeightedExit) / totalQty : 0;
-
-        existing.qty = totalQty;
-        existing.entryPrice = newAvgEntry;
-        existing.exitPrice = newAvgExit;
-        existing.price = newAvgExit;
-        existing.pnl += Number(item.pnl || 0);
-        existing.brokerage += Number(item.brokerage || (item as any).entry_brokerage || 0);
-        existing.entry_intraday_brokerage = (existing.entry_intraday_brokerage || 0) + Number(item.entry_intraday_brokerage || 0);
-        existing.entry_carry_brokerage = (existing.entry_carry_brokerage || 0) + Number(item.entry_carry_brokerage || 0);
-        existing.entry_gtt_brokerage = (existing.entry_gtt_brokerage || 0) + Number(item.entry_gtt_brokerage || 0);
-        existing.exit_intraday_brokerage = (existing.exit_intraday_brokerage || 0) + Number(item.exit_intraday_brokerage || 0);
-        existing.exit_carry_brokerage = (existing.exit_carry_brokerage || 0) + Number(item.exit_carry_brokerage || 0);
-        existing.exit_gtt_brokerage = (existing.exit_gtt_brokerage || 0) + Number(item.exit_gtt_brokerage || 0);
-        existing.settlementAmount = (existing.settlementAmount || 0) + Number(item.settlementAmount || 0);
-        existing.timestamp = Math.max(existing.timestamp, item.timestamp || 0);
-        existing.tradesCount += (item as any).trades_count || 1;
-        existing.subItems.push(item);
-      }
-    }
-
-    return Array.from(groupMap.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-  }, [filteredData]);
-
-  const itemsToRender = useMemo(() => {
-    if (currentTab === 'order') {
-      return filteredData.filter(i => i.status !== 'closed');
-    }
-    if (positionViewMode === 'cumulative') {
-      return groupedPositionData;
-    }
-    return filteredData.filter(i => i.status === 'closed');
-  }, [currentTab, positionViewMode, groupedPositionData, filteredData]);
-
   const summary = useMemo(() => {
     const posHistory = filteredData.filter(h => h.status === 'closed');
     const gp = posHistory.filter(h => h.pnl > 0).reduce((acc, h) => acc + h.pnl, 0);
@@ -550,24 +475,6 @@ export default function HistoryPage() {
                     </button>
                   </div>
                 </div>
-                {currentTab === 'position' && (
-                  <div className="view-mode-toggle-row" style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                    <button
-                      className={`view-mode-pill ${positionViewMode === 'cumulative' ? 'active' : ''}`}
-                      onClick={() => setPositionViewMode('cumulative')}
-                    >
-                      <i className="fas fa-layer-group" style={{ fontSize: '0.65rem' }}></i>
-                      Cumulative
-                    </button>
-                    <button
-                      className={`view-mode-pill ${positionViewMode === 'detailed' ? 'active' : ''}`}
-                      onClick={() => setPositionViewMode('detailed')}
-                    >
-                      <i className="fas fa-list-ul" style={{ fontSize: '0.65rem' }}></i>
-                      Detailed
-                    </button>
-                  </div>
-                )}
                 <div className="date-filter-row">
                   <div className="filter-group">
                     <i className="fas fa-calendar-alt"></i>
@@ -608,43 +515,21 @@ export default function HistoryPage() {
                     <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Weekly Trade History</h1>
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 4 }}>Historical execution logs & performance</p>
                   </div>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                    {currentTab === 'position' && (
-                      <div style={{ display: 'flex', gap: 6, background: 'var(--bg-card)', padding: 4, borderRadius: 12, border: '1px solid var(--border-color)' }}>
-                        <button
-                          className={`header-btn ${positionViewMode === 'cumulative' ? 'active' : ''}`}
-                          onClick={() => setPositionViewMode('cumulative')}
-                          style={{ padding: '6px 14px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 5 }}
-                        >
-                          <i className="fas fa-layer-group" style={{ fontSize: '0.75rem' }}></i>
-                          Cumulative
-                        </button>
-                        <button
-                          className={`header-btn ${positionViewMode === 'detailed' ? 'active' : ''}`}
-                          onClick={() => setPositionViewMode('detailed')}
-                          style={{ padding: '6px 14px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 5 }}
-                        >
-                          <i className="fas fa-list-ul" style={{ fontSize: '0.75rem' }}></i>
-                          Detailed
-                        </button>
-                      </div>
-                    )}
-                    <div className="header-buttons" style={{ display: 'flex', gap: 10, background: 'var(--bg-card)', padding: 4, borderRadius: 12, border: '1px solid var(--border-color)' }}>
-                      <button
-                        className={`header-btn ${currentTab === 'position' ? 'active' : ''}`}
-                        onClick={() => setCurrentTab('position')}
-                        style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-                      >
-                        Position History
-                      </button>
-                      <button
-                        className={`header-btn ${currentTab === 'order' ? 'active' : ''}`}
-                        onClick={() => setCurrentTab('order')}
-                        style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-                      >
-                        Order History
-                      </button>
-                    </div>
+                  <div className="header-buttons" style={{ display: 'flex', gap: 10, background: 'var(--bg-card)', padding: 4, borderRadius: 12, border: '1px solid var(--border-color)' }}>
+                    <button
+                      className={`header-btn ${currentTab === 'position' ? 'active' : ''}`}
+                      onClick={() => setCurrentTab('position')}
+                      style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                    >
+                      Position History
+                    </button>
+                    <button
+                      className={`header-btn ${currentTab === 'order' ? 'active' : ''}`}
+                      onClick={() => setCurrentTab('order')}
+                      style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+                    >
+                      Order History
+                    </button>
                   </div>
                 </div>
 
@@ -717,22 +602,16 @@ export default function HistoryPage() {
                     <div style={{ padding: '60px 0', textAlign: 'center' }}>
                       <AnimatedLoader text="Loading history..." />
                     </div>
-                  ) : itemsToRender.length === 0 ? (
+                  ) : filteredData.length === 0 ? (
                     <div className="empty-history">
                       <i className={currentTab === 'position' ? "fas fa-folder-open" : "fas fa-list-ul"}></i>
                       <p>No history found</p>
                     </div>
                   ) : (
-                    itemsToRender.map((item: any) => {
-                      const itemKey = item.groupKey || item.id;
+                    filteredData.map((item) => {
 
                       return (
-                        <div
-                          key={itemKey}
-                          className="history-card"
-                          style={{ cursor: 'pointer' }}
-                          onClick={() => router.push(`/watchlist?symbol=${encodeURIComponent(item.scriptName)}&action=detail`)}
-                        >
+                        <div key={item.id} className="history-card" style={{ cursor: 'pointer' }} onClick={() => router.push(`/watchlist?symbol=${encodeURIComponent(item.scriptName)}&action=detail`)}>
                           <div className="history-card-header">
                             <div className="script-info">
                               <span className="script-name">{item.scriptName}</span>
@@ -812,8 +691,11 @@ export default function HistoryPage() {
                               }
                             })()} style={{ position: 'relative' }}>
                               <i className="fas fa-receipt"></i> {(() => {
+                                // Use brokerage field directly; fall back to entry_brokerage or sum of breakdown columns
+                                // for positions that predate the brokerage column being populated
                                 const direct = item.brokerage || 0;
                                 if (direct > 0) return formatPrice(direct);
+                                // Fallback to entry_brokerage if available (since brokerage was charged upfront at entry)
                                 const entryBrk = (item as any).entry_brokerage || 0;
                                 if (entryBrk > 0) return formatPrice(entryBrk);
                                 if (currentTab === 'position') {
