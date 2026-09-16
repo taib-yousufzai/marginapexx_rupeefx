@@ -82,12 +82,18 @@ export function useOrderEntry() {
     }
 
     // Auto-detect if user has an existing opposite-side position for this symbol
-    const oppositeSide = state.side === 'BUY' ? 'SELL' : 'BUY';
+    const oppositeSide = (state.side || 'BUY').toUpperCase() === 'BUY' ? 'SELL' : 'BUY';
     const targetClean = cleanSym(state.symbol || state.kite_instrument || '');
     const matchingOppositePositions = positionsContext?.positions?.filter(
-      p => cleanSym(p.symbol || p.kite_instrument) === targetClean &&
-           p.side === oppositeSide &&
-           (p.status === 'open' || p.status === 'active' || !p.status)
+      p => {
+        if (state.linked_position_id && p.id === state.linked_position_id) return true;
+        const pStatus = (p.status || '').toLowerCase();
+        const isOpen = !pStatus || pStatus === 'open' || pStatus === 'active';
+        const pSide = (p.side || '').toUpperCase();
+        return cleanSym(p.symbol || p.kite_instrument || '') === targetClean &&
+               pSide === oppositeSide &&
+               isOpen;
+      }
     ) || [];
     const matchingOppositePos = matchingOppositePositions[0];
     const effectiveIsExit = Boolean(state.is_exit || matchingOppositePositions.length > 0);
@@ -208,33 +214,76 @@ export function useOrderEntry() {
           optimisticHistoryItems.push(optimisticHistoryItem);
           optimisticClosedPositions.push(optimisticClosedPos);
         }
+      } else if (state.is_exit) {
+        // Fallback for standalone exit orders
+        const exitPrice = Number(state.client_price || 0);
+        const posSide = state.side === 'BUY' ? 'SELL' : 'BUY';
+        const closedQty = state.qty || 1;
+        const fakeId = state.linked_position_id || tempId;
+        const optimisticHistoryItem = {
+          id: fakeId,
+          scriptName: state.symbol,
+          type: posSide,
+          orderType: state.product_type || 'INTRADAY',
+          qty: closedQty,
+          price: exitPrice,
+          entryPrice: exitPrice,
+          exitPrice: exitPrice,
+          pnl: 0,
+          date: new Date(now).toLocaleString(),
+          exitDate: new Date(now).toLocaleDateString(),
+          status: 'closed',
+          brokerage: 0,
+          closedBy: 'USER_ACTION',
+          productType: state.product_type || 'INTRADAY',
+          settlement: state.segment || 'NSE',
+          settlementAmount: 0,
+          timestamp: now,
+        };
+        const optimisticClosedPos = {
+          id: fakeId,
+          symbol: state.symbol,
+          side: posSide,
+          status: 'closed',
+          exit_price: exitPrice,
+          pnl: 0,
+          total_pnl: 0,
+          pnl_percent: 0,
+          qty_total: closedQty,
+          qty_open: 0,
+          closed_at: new Date(now).toISOString(),
+          exit_time: new Date(now).toISOString(),
+          updated_at: new Date(now).toISOString(),
+        };
+        optimisticHistoryItems.push(optimisticHistoryItem);
+        optimisticClosedPositions.push(optimisticClosedPos);
+      }
 
-        if (typeof window !== 'undefined' && optimisticHistoryItems.length > 0) {
-          try {
-            const existingHistory = (window as any).__historyCache || [];
-            const closedIds = new Set(optimisticHistoryItems.map(i => i.id));
-            const updatedHistory = [...optimisticHistoryItems, ...existingHistory.filter((h: any) => !closedIds.has(h.id))];
-            (window as any).__historyCache = updatedHistory;
-            localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-          } catch {}
+      if (typeof window !== 'undefined' && optimisticHistoryItems.length > 0) {
+        try {
+          const existingHistory = (window as any).__historyCache || [];
+          const closedIds = new Set(optimisticHistoryItems.map(i => i.id));
+          const updatedHistory = [...optimisticHistoryItems, ...existingHistory.filter((h: any) => !closedIds.has(h.id))];
+          (window as any).__historyCache = updatedHistory;
+          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+        } catch {}
 
-          try {
-            const existingClosed = (window as any).__closedPositionsCache || [];
-            const closedIds = new Set(optimisticClosedPositions.map(p => p.id));
-            const updatedClosed = [...optimisticClosedPositions, ...existingClosed.filter((p: any) => !closedIds.has(p.id))];
-            (window as any).__closedPositionsCache = updatedClosed;
-            localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
-          } catch {}
+        try {
+          const existingClosed = (window as any).__closedPositionsCache || [];
+          const closedIds = new Set(optimisticClosedPositions.map(p => p.id));
+          const updatedClosed = [...optimisticClosedPositions, ...existingClosed.filter((p: any) => !closedIds.has(p.id))];
+          (window as any).__closedPositionsCache = updatedClosed;
+          localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
+        } catch {}
 
-          window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
-            detail: {
-              positions: optimisticClosedPositions,
-              historyItems: optimisticHistoryItems,
-              position: optimisticClosedPositions[0],
-              historyItem: optimisticHistoryItems[0],
-            }
-          }));
-        }
+        window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
+          detail: {
+            positions: optimisticClosedPositions,
+            historyItems: optimisticHistoryItems,
+            position: optimisticClosedPositions[0],
+            historyItem: optimisticHistoryItems[0],
+          }
+        }));
       }
 
       if (typeof window !== 'undefined') {

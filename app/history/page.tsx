@@ -74,6 +74,9 @@ export default function HistoryPage() {
     return [];
   });
 
+  const historyDataRef = useRef<HistoryItem[]>(historyData);
+  historyDataRef.current = historyData;
+
   const [loading, setLoading] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
       if (window.__historyCache !== undefined) return false;
@@ -111,7 +114,7 @@ export default function HistoryPage() {
 
   const fetchHistory = useCallback(async (silent = false) => {
     try {
-      if (!silent && historyData.length === 0 && !(typeof window !== 'undefined' && (window.__historyCache?.length || localStorage.getItem(HISTORY_PERSIST_KEY)))) {
+      if (!silent && historyDataRef.current.length === 0 && !(typeof window !== 'undefined' && (window.__historyCache?.length || localStorage.getItem(HISTORY_PERSIST_KEY)))) {
         setLoading(true);
       }
       // Fetch both orders and positions history — full history
@@ -125,11 +128,11 @@ export default function HistoryPage() {
       const positionsList = Array.isArray(posData?.positions) ? posData.positions : [];
 
       // If API returned empty on a background/silent poll while we already have items, do not overwrite
-      if (ordersList.length === 0 && positionsList.length === 0 && historyData.length > 0) {
+      if (ordersList.length === 0 && positionsList.length === 0 && historyDataRef.current.length > 0) {
         return;
       }
 
-      const formattedOrders = ordersList.map((o: any) => ({
+      const formattedOrders: HistoryItem[] = ordersList.map((o: any) => ({
         id: o.id,
         scriptName: o.symbol,
         type: o.side,
@@ -146,7 +149,7 @@ export default function HistoryPage() {
         timestamp: new Date(o.created_at).getTime()
       }));
 
-      const formattedPos = positionsList.map((p: any) => {
+      const formattedPos: HistoryItem[] = positionsList.map((p: any) => {
         // Derive settlement label, falling back for old positions with none stored
         const rawSettlement = p.settlement || '';
         let settlement = rawSettlement;
@@ -187,22 +190,36 @@ export default function HistoryPage() {
         };
       });
 
-      const mergedMap = new Map<string, any>();
-      for (const o of formattedOrders) mergedMap.set(o.id, o);
-      for (const p of formattedPos) mergedMap.set(p.id, p);
+      const orderMap = new Map<string, HistoryItem>();
+      const posMap = new Map<string, HistoryItem>();
+      for (const o of formattedOrders) orderMap.set(o.id, o);
+      for (const p of formattedPos) posMap.set(p.id, p);
 
       // Retain any recent optimistic items (<60s) not yet returned by backend DB
       const existingItems = [
-        ...(historyData || []),
+        ...(historyDataRef.current || []),
         ...(typeof window !== 'undefined' && Array.isArray(window.__historyCache) ? window.__historyCache : [])
       ];
+
       for (const existing of existingItems) {
-        if (!mergedMap.has(existing.id) && (Date.now() - (existing.timestamp || 0) < 60000)) {
-          mergedMap.set(existing.id, existing);
+        if (Date.now() - (existing.timestamp || 0) < 60000) {
+          if (existing.status === 'closed') {
+            if (!posMap.has(existing.id)) {
+              posMap.set(existing.id, existing);
+            }
+          } else {
+            if (!orderMap.has(existing.id)) {
+              orderMap.set(existing.id, existing);
+            }
+          }
         }
       }
 
-      const merged = Array.from(mergedMap.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      const merged = [
+        ...Array.from(posMap.values()),
+        ...Array.from(orderMap.values())
+      ].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
       if (typeof window !== 'undefined') {
         window.__historyCache = merged;
         try {
@@ -215,7 +232,7 @@ export default function HistoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [historyData]);
+  }, []);
 
   useEffect(() => {
     fetchHistory();
