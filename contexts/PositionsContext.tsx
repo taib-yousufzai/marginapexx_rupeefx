@@ -9,7 +9,7 @@ import { useBinanceQuotes } from '@/hooks/useBinanceQuotes';
 import { MyPosition } from '@/lib/types/order';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
-import { getSharedSessionSync } from '@/lib/sharedSession';
+import { getSharedSession, getSharedSessionSync } from '@/lib/sharedSession';
 import { isContractExpired } from '@/lib/contractExpiry';
 
 export interface EnrichedPosition extends MyPosition {
@@ -42,12 +42,12 @@ const PositionsContext = createContext<PositionsContextType | null>(null);
 export const cleanSym = (s?: string | null): string => {
   if (!s) return '';
   let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
-  if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC'].includes(str)) return 'XAUUSD';
-  if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI'].includes(str)) return 'XAGUSD';
-  if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI'].includes(str)) return 'XTIUSD';
-  if (['XCUUSD', 'COMEX:XCUUSD', 'HG=F', 'HG'].includes(str)) return 'XCUUSD';
-  if (['XNGUSD', 'COMEX:XNGUSD', 'NG=F', 'NG'].includes(str)) return 'XNGUSD';
-  const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD'];
+  if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC', 'GOLD'].includes(str)) return 'XAUUSD';
+  if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI', 'SILVER'].includes(str)) return 'XAGUSD';
+  if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI', 'CRUDE', 'CRUDEOIL'].includes(str)) return 'XTIUSD';
+  if (['XCUUSD', 'COMEX:XCUUSD', 'HG=F', 'HG', 'COPPER'].includes(str)) return 'XCUUSD';
+  if (['XNGUSD', 'COMEX:XNGUSD', 'NG=F', 'NG', 'NATGAS', 'NATURALGAS'].includes(str)) return 'XNGUSD';
+  const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD', 'GOLD', 'SILVER', 'COPPER', 'CRUDE', 'NATGAS'];
   const knownBaseCrypto = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'];
   if (knownBaseCrypto.includes(str)) {
     str += 'USDT';
@@ -128,9 +128,30 @@ const resolveKitePrefix = (key: string, settlement: string) => {
   return `${prefix}${baseKey}`;
 };
 
+const POSITIONS_PERSIST_KEY = 'marginApex_open_positions_persisted';
+
 export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { children: React.ReactNode; refreshInterval?: number }) => {
-  const [rawPositions, setRawPositions] = useState<MyPosition[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [rawPositions, setRawPositions] = useState<MyPosition[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
+        if (stored) return false;
+      } catch {}
+    }
+    return true;
+  });
   const [error, setError] = useState<string | null>(null);
   const [inFlightConversions, setInFlightConversions] = useState<Record<string, string>>({});
   // segmentSettings now comes from TradeConfigProvider — no local fetch needed
@@ -326,8 +347,8 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
             entryTimeMs: new Date(p.entry_time).getTime(),
             dbSeg,
             resolvedKiteSymbol: resolveKitePrefix(p.kite_instrument || p.symbol, p.settlement || ''),
-            isCrypto,
-            isComex,
+            isCrypto: Boolean(isCrypto),
+            isComex: Boolean(isComex),
             binanceSymbol
           };
         }
@@ -391,11 +412,19 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
           return !hasRealMatch;
         });
 
-        return [...unreplacedOptimistic, ...processedPositions];
+        const finalPositions = [...unreplacedOptimistic, ...processedPositions];
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(finalPositions.filter(p => !p.id.startsWith('__optimistic__'))));
+          } catch {}
+        }
+        return finalPositions;
       });
-    } catch (err) {
+    } catch (err: any) {
       if (err instanceof Error && err.name === 'AbortError') return;
-      console.warn('[PositionsContext] Transient error fetching positions:', err);
+      if (!err?.message?.includes('aborted')) {
+        console.warn('[PositionsContext] Transient error fetching positions:', err);
+      }
       setError(null);
     } finally {
       setLoading(false);

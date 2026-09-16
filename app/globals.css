@@ -5,16 +5,16 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Smooth theme transitions — scoped to specific properties, NOT on * */
-*,
-*::before,
-*::after {
-  transition-property: background-color, border-color, color, fill, stroke;
-  transition-duration: 0.2s;
-  transition-timing-function: ease;
+/* Smooth theme transitions — only triggered during explicit user theme toggle, NOT during page load */
+html.theme-transitioning,
+html.theme-transitioning body,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+  transition-property: background-color, border-color, color, fill, stroke !important;
+  transition-duration: 0.25s !important;
+  transition-timing-function: ease !important;
 }
-
-
 
 html,
 body {
@@ -23,7 +23,7 @@ body {
   padding: 0;
   width: 100%;
   overscroll-behavior-y: auto;
-  font-size: 14.5px; /* Reduced from 15px to zoom out the UI slightly */
+  font-size: 14.5px;
   font-family: 'Inter', sans-serif;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;

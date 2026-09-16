@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { supabase } from '@/lib/supabaseClient';
 import { api } from '@/lib/api';
 
-import { getSharedSessionSync } from '@/lib/sharedSession';
+import { getSharedSession, getSharedSessionSync } from '@/lib/sharedSession';
 
 export interface BalanceContextType {
   balance: number;
@@ -20,8 +20,24 @@ export interface BalanceContextType {
 const BalanceDataContext = createContext<BalanceContextType | null>(null);
 
 export const BalanceDataProvider = ({ children }: { children: React.ReactNode }) => {
-  const [balance, setBalance] = useState(0);
-  const [settlementAmount, setSettlementAmount] = useState(0);
+  const [balance, setBalance] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('last_user_balance');
+        if (cached !== null && !isNaN(Number(cached))) return Number(cached);
+      } catch {}
+    }
+    return 0;
+  });
+  const [settlementAmount, setSettlementAmount] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = localStorage.getItem('last_user_settlement');
+        if (cached !== null && !isNaN(Number(cached))) return Number(cached);
+      } catch {}
+    }
+    return 0;
+  });
   const [loading, setLoading] = useState(true);
   const [optimisticLockedMargins, setOptimisticLockedMargins] = useState<Record<string, { amount: number; addedAt: number }>>({});
 
@@ -55,6 +71,17 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
   // Guard against concurrent in-flight fetches
   const fetchingRef = useRef(false);
 
+  const updateBalanceState = useCallback((newBal: number, newSettlement: number) => {
+    setBalance(newBal);
+    setSettlementAmount(newSettlement);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('last_user_balance', String(newBal));
+        localStorage.setItem('last_user_settlement', String(newSettlement));
+      } catch {}
+    }
+  }, []);
+
   const fetchBalance = useCallback(async () => {
     if (fetchingRef.current) return;
     let { token } = getSharedSessionSync();
@@ -67,8 +94,9 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
     fetchingRef.current = true;
     try {
       const data = await api.get<{ balance?: number; settlementAmount?: number }>('/api/pay/balance');
-      setBalance(Number(data.balance ?? 0));
-      setSettlementAmount(Math.abs(Number(data.settlementAmount ?? 0)));
+      if (typeof data?.balance === 'number') {
+        updateBalanceState(Number(data.balance), Math.abs(Number(data.settlementAmount ?? 0)));
+      }
     } catch (err: any) {
       if (err?.status !== 401) {
         console.error('[BalanceProvider] failed to fetch balance:', err);
@@ -76,7 +104,7 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
     } finally {
       fetchingRef.current = false;
     }
-  }, []);
+  }, [updateBalanceState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,9 +126,8 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       setLoading(true);
       try {
         const data = await api.get<{ balance?: number; settlementAmount?: number }>('/api/pay/balance');
-        if (!cancelled) {
-          setBalance(Number(data.balance ?? 0));
-          setSettlementAmount(Math.abs(Number(data.settlementAmount ?? 0)));
+        if (!cancelled && typeof data?.balance === 'number') {
+          updateBalanceState(Number(data.balance), Math.abs(Number(data.settlementAmount ?? 0)));
         }
       } catch (err: any) {
         if (err?.status !== 401) {
@@ -129,9 +156,8 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
           (payload) => {
             if (cancelled) return;
             const updated = payload.new as Record<string, unknown>;
-            if (updated) {
-              setBalance(Number(updated.balance ?? 0));
-              setSettlementAmount(Math.abs(Number(updated.settlement_amount ?? 0)));
+            if (updated && typeof updated.balance === 'number') {
+              updateBalanceState(Number(updated.balance), Math.abs(Number(updated.settlement_amount ?? 0)));
             }
           },
         )

@@ -3,16 +3,41 @@
  * 
  * Web Audio API synthesizer for trading execution feedback.
  * Uses native Web Audio API oscillators (zero external assets/MP3 dependencies).
+ * Proactively unlocks AudioContext on first user gesture for zero-latency playback.
  */
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private isMuted: boolean = false;
+  private isHapticsDisabled: boolean = false;
+  private isUnlocked: boolean = false;
 
   constructor() {
     if (typeof window !== 'undefined') {
       const storedMute = localStorage.getItem('marginapexx_sound_muted');
       this.isMuted = storedMute === 'true';
+      const storedHaptics = localStorage.getItem('marginapexx_haptics_disabled');
+      this.isHapticsDisabled = storedHaptics === 'true';
+
+      // Proactively unlock AudioContext on first user interaction
+      const unlockAudio = () => {
+        if (this.isUnlocked) return;
+        this.getContext();
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().then(() => {
+            this.isUnlocked = true;
+          }).catch(() => {});
+        } else if (this.ctx) {
+          this.isUnlocked = true;
+        }
+        window.removeEventListener('pointerdown', unlockAudio);
+        window.removeEventListener('touchstart', unlockAudio);
+        window.removeEventListener('keydown', unlockAudio);
+      };
+
+      window.addEventListener('pointerdown', unlockAudio, { passive: true });
+      window.addEventListener('touchstart', unlockAudio, { passive: true });
+      window.addEventListener('keydown', unlockAudio, { passive: true });
     }
   }
 
@@ -30,6 +55,15 @@ class SoundEngine {
     return this.ctx;
   }
 
+  public triggerHaptic(pattern: number | number[] = 15) {
+    if (typeof window === 'undefined' || this.isHapticsDisabled) return;
+    if ('vibrate' in navigator && typeof navigator.vibrate === 'function') {
+      try {
+        navigator.vibrate(pattern);
+      } catch {}
+    }
+  }
+
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
     if (typeof window !== 'undefined') {
@@ -38,14 +72,41 @@ class SoundEngine {
     return this.isMuted;
   }
 
+  public setMuted(muted: boolean): void {
+    this.isMuted = muted;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('marginapexx_sound_muted', String(this.isMuted));
+    }
+  }
+
   public getMutedState(): boolean {
     return this.isMuted;
+  }
+
+  public toggleHaptics(): boolean {
+    this.isHapticsDisabled = !this.isHapticsDisabled;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('marginapexx_haptics_disabled', String(this.isHapticsDisabled));
+    }
+    return !this.isHapticsDisabled;
+  }
+
+  public setHapticsEnabled(enabled: boolean): void {
+    this.isHapticsDisabled = !enabled;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('marginapexx_haptics_disabled', String(this.isHapticsDisabled));
+    }
+  }
+
+  public getHapticsState(): boolean {
+    return !this.isHapticsDisabled;
   }
 
   /**
    * Crisp mid-frequency click (600Hz, 40ms) when order is submitted
    */
   public playOrderSubmitted() {
+    this.triggerHaptic(10);
     if (this.isMuted) return;
     const ctx = this.getContext();
     if (!ctx) return;
@@ -74,6 +135,7 @@ class SoundEngine {
    * Ascending double-tone chime (800Hz -> 1200Hz) when order is executed/filled
    */
   public playOrderExecuted() {
+    this.triggerHaptic([20, 50, 25]);
     if (this.isMuted) return;
     const ctx = this.getContext();
     if (!ctx) return;
@@ -113,6 +175,7 @@ class SoundEngine {
    * Low-frequency buzz (240Hz -> 140Hz) when order fails or is rejected
    */
   public playOrderRejected() {
+    this.triggerHaptic([40, 40, 40]);
     if (this.isMuted) return;
     const ctx = this.getContext();
     if (!ctx) return;
@@ -137,6 +200,37 @@ class SoundEngine {
       console.warn('[AudioEngine] Error playing rejected sound:', e);
     }
   }
+
+  /**
+   * Triple alert beep for price alerts and margin warnings
+   */
+  public playAlertNotification() {
+    this.triggerHaptic([30, 30, 30, 30, 30]);
+    if (this.isMuted) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+
+    try {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(950, now);
+      osc.frequency.setValueAtTime(1100, now + 0.08);
+
+      gain.gain.setValueAtTime(0.14, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.18);
+    } catch (e) {
+      console.warn('[AudioEngine] Error playing alert sound:', e);
+    }
+  }
 }
 
 export const soundEngine = new SoundEngine();
+

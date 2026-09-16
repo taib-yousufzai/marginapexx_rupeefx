@@ -111,10 +111,10 @@ BEGIN
     IF p_status = 'EXECUTED' THEN
         -- Validate exit order constraints
         IF p_is_exit THEN
-            -- Check if linked_position_id is supplied to anchor position side & product_type
+            -- Check if linked_position_id is supplied to anchor position side & product_type & symbol
             IF p_linked_position_id IS NOT NULL THEN
-                SELECT side, product_type
-                INTO v_pos_side, p_product_type
+                SELECT side, product_type, symbol
+                INTO v_pos_side, p_product_type, p_symbol
                 FROM public.positions
                 WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active');
             END IF;
@@ -124,9 +124,12 @@ BEGIN
             INTO v_pos_side, v_pos_qty_open
             FROM public.positions
             WHERE user_id = p_user_id 
-              AND (symbol = p_symbol OR symbol ILIKE p_symbol OR symbol ILIKE split_part(p_symbol, ':', 2))
+              AND (
+                symbol = p_symbol 
+                OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
+                   UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+              )
               AND LOWER(status) IN ('open', 'active')
-              AND product_type = p_product_type
               AND side <> p_side
             GROUP BY side
             LIMIT 1;
@@ -137,7 +140,11 @@ BEGIN
                 INTO v_pos_side, v_pos_qty_open, p_product_type
                 FROM public.positions
                 WHERE user_id = p_user_id 
-                  AND (symbol = p_symbol OR symbol ILIKE p_symbol OR symbol ILIKE split_part(p_symbol, ':', 2))
+                  AND (
+                    symbol = p_symbol 
+                    OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
+                       UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                  )
                   AND LOWER(status) IN ('open', 'active')
                   AND side <> p_side
                 GROUP BY side, product_type
@@ -158,18 +165,36 @@ BEGIN
         END IF;
 
         -- Find if an open position exists for this symbol (re-fetch single lot for routing)
-        SELECT id, qty_open, side
-        INTO v_position_id, v_pos_qty_open, v_pos_side
-        FROM public.positions
-        WHERE user_id = p_user_id 
-          AND (symbol = p_symbol OR symbol ILIKE p_symbol OR symbol ILIKE split_part(p_symbol, ':', 2))
-          AND LOWER(status) IN ('open', 'active')
-          AND product_type = p_product_type
-        ORDER BY entry_time DESC
-        LIMIT 1
-        FOR UPDATE;
+        IF p_linked_position_id IS NOT NULL THEN
+            SELECT id, qty_open, side, product_type, symbol
+            INTO v_position_id, v_pos_qty_open, v_pos_side, p_product_type, p_symbol
+            FROM public.positions
+            WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active')
+            LIMIT 1
+            FOR UPDATE;
+        END IF;
 
-        IF NOT FOUND OR v_pos_side = p_side THEN
+        IF v_position_id IS NULL THEN
+            IF p_is_exit = true THEN
+                -- Match opposite side position for exit
+                SELECT id, qty_open, side, product_type, symbol
+                INTO v_position_id, v_pos_qty_open, v_pos_side, p_product_type, p_symbol
+                FROM public.positions
+                WHERE user_id = p_user_id 
+                  AND (
+                    symbol = p_symbol 
+                    OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
+                       UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                  )
+                  AND LOWER(status) IN ('open', 'active')
+                  AND side <> p_side
+                ORDER BY entry_time DESC
+                LIMIT 1
+                FOR UPDATE;
+            END IF;
+        END IF;
+
+        IF v_position_id IS NULL OR v_pos_side = p_side THEN
             -- Lifecycle: Create Position Lot (Same-side additions create separate lots for FIFO)
             v_position_id := public.create_position_internal(
                 p_user_id, p_symbol, p_side, p_qty, p_fill_price, p_ltp,
@@ -229,9 +254,13 @@ BEGIN
                     SELECT id, qty_open 
                     FROM public.positions
                     WHERE user_id = p_user_id 
-                      AND (symbol = p_symbol OR symbol ILIKE p_symbol OR symbol ILIKE split_part(p_symbol, ':', 2))
+                      AND (
+                        symbol = p_symbol 
+                        OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
+                           UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                      )
                       AND LOWER(status) IN ('open', 'active')
-                      AND side = v_pos_side AND product_type = p_product_type
+                      AND side = v_pos_side
                       AND (p_linked_position_id IS NULL OR id != p_linked_position_id)
                     ORDER BY entry_time ASC, qty_open ASC, id ASC
                     FOR UPDATE

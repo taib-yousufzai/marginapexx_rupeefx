@@ -31,7 +31,7 @@ export function computeLiquidationThreshold(
   walletBalance: number,
   liquidationPercentage: number,
 ): number {
-  if (walletBalance <= 0 || liquidationPercentage <= 0) return 0;
+  if (walletBalance <= 0 || liquidationPercentage <= 0) return -Infinity;
   return -(walletBalance * (liquidationPercentage / 100));
 }
 
@@ -64,7 +64,7 @@ export async function checkAndExecuteAccountLiquidation(
   exitBuffers: Map<string, { exit_buffer: number, bid_buffer?: number, carry_commission_type?: string | null, carry_commission_value?: number | null, commission_type?: string | null, commission_value?: number | null }>,
   admin: SupabaseClient,
 ): Promise<LiquidationResult> {
-  if (autoSqoffPercent <= 0 || positions.length === 0) {
+  if (balance <= 0 || autoSqoffPercent <= 0 || positions.length === 0) {
     return { liquidated: false, positionsClosed: 0, totalPnl: 0, settlementAmount: 0 };
   }
 
@@ -88,6 +88,9 @@ export async function checkAndExecuteAccountLiquidation(
       confirmedBalance = Number(liveProfile.balance ?? balance);
       if (liveProfile.auto_sqoff && Number(liveProfile.auto_sqoff) > 0) {
         confirmedAutoSqoff = Number(liveProfile.auto_sqoff);
+      }
+      if (confirmedBalance <= 0 || confirmedAutoSqoff <= 0) {
+        return { liquidated: false, positionsClosed: 0, totalPnl: totalFloatingPnl, settlementAmount: 0 };
       }
       const confirmedThreshold = computeLiquidationThreshold(confirmedBalance, confirmedAutoSqoff);
 

@@ -19,22 +19,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'NiveshX Trading',
+  title: 'Margin Apex',
   description: 'Clean Icons & Trading App UI',
-  manifest: '/manifest.webmanifest?v=20',
-  icons: {
-    icon: [
-      { url: '/favicon-32.png?v=20', sizes: '32x32', type: 'image/png' },
-      { url: '/icon-192x192.png?v=20', sizes: '192x192', type: 'image/png' },
-      { url: '/icon-512x512.png?v=20', sizes: '512x512', type: 'image/png' },
-    ],
-    shortcut: '/favicon.ico?v=20',
-    apple: '/icon-192x192.png?v=20',
-  },
+  manifest: '/manifest.webmanifest?v=9',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'NiveshX Trading'
+    title: 'Margin Apex'
   },
   formatDetection: {
     telephone: false
@@ -49,11 +40,6 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Favicons & App Icons */}
-        <link rel="icon" href="/favicon-32.png?v=20" type="image/png" sizes="32x32" />
-        <link rel="icon" href="/icon-192x192.png?v=20" type="image/png" sizes="192x192" />
-        <link rel="apple-touch-icon" href="/icon-192x192.png?v=20" />
-        <link rel="shortcut icon" href="/favicon.ico?v=20" />
         {/* Preload the charting library so it's ready before the chart component mounts */}
         <link rel="preload" href="/charting_library/charting_library.standalone.js" as="script" />
         {/* DNS prefetch for external CDNs */}
@@ -67,9 +53,20 @@ export default function RootLayout({
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css" />
         {/* Google Fonts: Playfair Display + Inter */}
         <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700;14..32,800&family=Playfair+Display:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400;1,500;1,600;1,700;1,800;1,900&display=swap" rel="stylesheet" />
+        {/* Critical Theme CSS - prevents any white flash during initial document parse */}
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+              html.dark, html[data-theme="dark"], html.dark body, body.dark { background-color: #121212 !important; color: #FFFFFF; }
+              html.black, html[data-theme="black"], html.black body, body.black { background-color: #000000 !important; color: #FFFFFF; }
+              html.blue, html[data-theme="blue"], html.blue body, body.blue { background-color: #0A1128 !important; color: #FFFFFF; }
+              html.light, html[data-theme="light"], html.light body, body.light { background-color: #F0F2F5 !important; color: #1A1A1A; }
+            `
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('niveshXTheme')||localStorage.getItem('marginApexTheme')||'light';document.documentElement.classList.remove('dark','black','blue','light');document.documentElement.classList.add(t);document.documentElement.setAttribute('data-theme',t);var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);obs.disconnect();}});o.observe(document.documentElement,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
+            __html: `(function(){try{var t=localStorage.getItem('marginApexTheme')||'light';var doc=document.documentElement;doc.classList.remove('dark','black','blue','light');doc.classList.add(t);doc.setAttribute('data-theme',t);var bg=t==='black'?'#000000':(t==='dark'?'#121212':(t==='blue'?'#0A1128':'#F0F2F5'));doc.style.backgroundColor=bg;var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);document.body.style.backgroundColor=bg;obs.disconnect();}});o.observe(doc,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
           }}
         />
       </head>

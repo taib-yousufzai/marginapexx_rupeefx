@@ -170,7 +170,7 @@ async function runLiquidationCheckPass() {
 
     const balance = Number(profile.balance ?? 0);
     const autoSqoffPercent = Number(profile.auto_sqoff ?? 90);
-    if (autoSqoffPercent <= 0) { skipped++; continue; }
+    if (balance <= 0 || autoSqoffPercent <= 0) { skipped++; continue; }
 
     const threshold = -(balance * (autoSqoffPercent / 100));
 

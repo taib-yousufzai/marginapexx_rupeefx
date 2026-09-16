@@ -40,7 +40,12 @@ function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: num
 function cleanSymHelper(s?: string | null): string {
   if (!s) return '';
   let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
-  const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD'];
+  if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC', 'GOLD'].includes(str)) return 'XAUUSD';
+  if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI', 'SILVER'].includes(str)) return 'XAGUSD';
+  if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI', 'CRUDE', 'CRUDEOIL'].includes(str)) return 'XTIUSD';
+  if (['XCUUSD', 'COMEX:XCUUSD', 'HG=F', 'HG', 'COPPER'].includes(str)) return 'XCUUSD';
+  if (['XNGUSD', 'COMEX:XNGUSD', 'NG=F', 'NG', 'NATGAS', 'NATURALGAS'].includes(str)) return 'XNGUSD';
+  const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD', 'GOLD', 'SILVER', 'COPPER', 'CRUDE', 'NATGAS'];
   const knownBaseCrypto = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'];
   if (knownBaseCrypto.includes(str)) {
     str += 'USDT';
@@ -290,12 +295,42 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const admin = getAdminClient();
     const { searchParams } = request.nextUrl;
+    const { getCachedUserOrders, setCachedUserOrders } = await import('@/lib/redisHistoryCache');
     const page = parseInt(searchParams.get('page') ?? '1', 10);
     const limit = parseInt(searchParams.get('limit') ?? '50', 10);
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
+    const statusParam = searchParams.get('status');
+    const requestedStatuses = statusParam ? statusParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : null;
+
+    if (!isFresh && searchParams.get('page') === null) {
+      const cachedOrders = await getCachedUserOrders(user.id);
+      if (cachedOrders !== null && Array.isArray(cachedOrders) && cachedOrders.length > 0) {
+        let result = cachedOrders;
+        if (requestedStatuses && requestedStatuses.length > 0) {
+          const statusSet = new Set(requestedStatuses);
+          result = result.filter((o: any) => o.status && statusSet.has(String(o.status).toLowerCase()));
+        }
+        if (result.length > 0) {
+          return NextResponse.json({ orders: result.slice(0, limit), page: 1, limit });
+        }
+      }
+    }
+    const includeVirtualOrders = !requestedStatuses || requestedStatuses.some(s => ['open', 'pending', 'active', 'trigger_pending'].includes(s));
+
+    let ordersQuery = admin
+      .from('orders')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false });
+
+    if (requestedStatuses && requestedStatuses.length > 0) {
+      const allStatusVariants = Array.from(new Set([
+        ...requestedStatuses,
+        ...requestedStatuses.map(s => s.toUpperCase())
+      ]));
+      ordersQuery = ordersQuery.in('status', allStatusVariants);
+    }
+    ordersQuery = ordersQuery.range(from, to);
 
     // Fetch user profile, orders, and open positions in a SINGLE parallel round-trip with a 2.5s fast timeout
     const queryPromise = Promise.all([
@@ -304,17 +339,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         .select('history_reset_at')
         .eq('id', user.id)
         .maybeSingle(),
-      admin
-        .from('orders')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .range(from, to),
-      admin
-        .from('positions')
-        .select('*')
-        .eq('user_id', user.id)
-        .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+      ordersQuery,
+      includeVirtualOrders
+        ? admin
+            .from('positions')
+            .select('*')
+            .eq('user_id', user.id)
+            .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+        : Promise.resolve({ data: [] })
     ]);
 
     const timeoutPromise = new Promise<any>((resolve) =>
@@ -483,6 +515,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const combinedOrders = [...virtualOrders, ...orders];
     combinedOrders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
+    setCachedUserOrders(user.id, combinedOrders).catch(() => {});
+
     return NextResponse.json({ orders: combinedOrders, page, limit });
   } catch (err) {
     console.error('[GET /api/orders]', err);
@@ -641,14 +675,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const fetchPromise = (async () => {
           if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
             const quote = await fetchBinanceQuote(symbol);
-            return quote ? { [kiteInst]: quote } : {};
+            return quote ? { [kiteInst]: quote, [symbol]: quote } : {};
+          } else if (dbSegment === 'COMEX' || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => symbol.toUpperCase().includes(c))) {
+            try {
+              const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');
+              const mt5Q = await fetchMT5StockQuote(symbol);
+              const lastP = (mt5Q as any)?.price ?? (mt5Q as any)?.lastPrice ?? 0;
+              if (mt5Q && lastP > 0) {
+                const qObj: ServerQuote = {
+                  last_price: lastP,
+                  bid: mt5Q.bid || lastP,
+                  ask: mt5Q.ask || lastP,
+                };
+                return { [kiteInst]: qObj, [symbol]: qObj, [`COMEX:${symbol}`]: qObj };
+              }
+            } catch {}
+            return {};
           } else {
             return fetchKiteQuotes(instrumentsToFetch);
           }
         })();
 
         const timeoutPromise = new Promise<Record<string, ServerQuote>>((resolve) =>
-          setTimeout(() => resolve({}), 150)
+          setTimeout(() => resolve({}), 2000)
         );
 
         return Promise.race([fetchPromise, timeoutPromise]);
@@ -678,7 +727,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // 5. Segment permission check
     const allowedSegments: string[] = profile.segments ?? [];
-    if (allowedSegments.length > 0 && !allowedSegments.includes(dbSegment)) {
+    if (allowedSegments.length > 0 && !allowedSegments.includes(dbSegment) && !is_exit) {
       return NextResponse.json({ error: `Trading not allowed in segment: ${segment}` }, { status: 403 });
     }
 
@@ -720,7 +769,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         user_id: user.id,
         segment: dbSegment,
         side: 'BUY',
-        trade_allowed: !dbSegment.toUpperCase().includes('CRYPTO'),
+        trade_allowed: true,
         max_lot: 50,
         max_order_lot: 50,
         intraday_leverage,
@@ -744,7 +793,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         user_id: user.id,
         segment: dbSegment,
         side: 'SELL',
-        trade_allowed: !dbSegment.toUpperCase().includes('CRYPTO'),
+        trade_allowed: true,
         max_lot: 50,
         max_order_lot: 50,
         intraday_leverage,
@@ -766,7 +815,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const segSetting = side === 'BUY' ? buySetting : sellSetting;
 
     // 7. Validate lot / qty limits & Strike Range
-    if (!segSetting.trade_allowed) {
+    if (!segSetting.trade_allowed && !is_exit) {
       return NextResponse.json({ error: `${side} orders not allowed in ${segment}` }, { status: 403 });
     }
 
@@ -905,8 +954,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const refPrice = ['LIMIT', 'SL', 'GTT'].includes(order_type ?? 'MARKET') ? client_price : baseLtp;
 
     // Resolve reference entry price and position side (Long vs Short)
-    const activePosition = openPositions.find(
-      (p: any) => p.symbol === symbol && p.product_type === targetProductType
+    const activePosition = openPositions.find((p: any) =>
+      (linked_position_id && p.id === linked_position_id) ||
+      (cleanSymHelper(p.symbol) === cleanSymHelper(symbol) && (p.product_type || 'INTRADAY').toUpperCase() === (targetProductType || 'INTRADAY').toUpperCase()) ||
+      (cleanSymHelper(p.symbol) === cleanSymHelper(symbol))
     );
 
     const refEntry = (is_exit && activePosition) ? Number(activePosition.entry_price) : refPrice;
@@ -1173,6 +1224,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         cleanSymHelper(p.symbol || p.kite_instrument) === targetClean &&
         p.side !== side &&                              // opposite side
         (p.product_type || 'INTRADAY').toUpperCase() === targetProd
+      ) || openPositions.find((p: any) =>
+        cleanSymHelper(p.symbol || p.kite_instrument) === targetClean &&
+        p.side !== side                                 // opposite side fallback if product_type differs
       );
       if (matchingPosition) {
         resolvedIsExit = true;
@@ -1249,14 +1303,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const executeDbCall = async () => {
+      const exitPos = resolvedLinkedPositionId
+        ? openPositions.find((p: any) => p.id === resolvedLinkedPositionId)
+        : (resolvedIsExit ? openPositions.find((p: any) => cleanSymHelper(p.symbol || p.kite_instrument) === cleanSymHelper(symbol) && p.side !== side) : null);
+      const finalSymbol = (resolvedIsExit && exitPos?.symbol) ? exitPos.symbol : symbol;
+      const finalProductType = (resolvedIsExit && exitPos?.product_type) ? exitPos.product_type : (product_type ?? 'INTRADAY');
+
       const { data: oId, error: rpcErr } = await admin.rpc('place_order_v2', {
         p_user_id: user.id,
-        p_symbol: symbol,
+        p_symbol: finalSymbol,
         p_kite_inst: kiteInst,
         p_segment: dbSegment,
         p_side: side,
         p_order_type: rpcOrderType,
-        p_product_type: product_type ?? 'INTRADAY',
+        p_product_type: finalProductType,
         p_qty: qty,
         p_lots: lots ?? 0,
         p_ltp: baseLtp,
@@ -1404,6 +1464,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         side: side,
         timestamp: new Date().toISOString(),
       })).catch(() => {});
+    } catch { /* ignore */ }
+
+    try {
+      const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+      await invalidateUserHistoryCache(user.id);
     } catch { /* ignore */ }
 
     return NextResponse.json(response, { status: 201 });

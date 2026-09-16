@@ -54,17 +54,7 @@ export function useOrderEntry() {
     setLoading(true);
     setError(null);
 
-    // 0. Client 0ms Pre-Flight Validation
-    if (balanceContext && typeof (balanceContext as any).validatePreflight === 'function' && state.client_price && state.qty) {
-      const estimatedMargin = state.client_price * state.qty;
-      const check = (balanceContext as any).validatePreflight(estimatedMargin);
-      if (check && !check.valid && check.reason) {
-        soundEngine.playOrderRejected();
-        setError(check.reason);
-        setLoading(false);
-        return { success: false, error: check.reason };
-      }
-    }
+    // 0. Client Pre-Flight Validation is delegated to server order engine with accurate leverage calculation
 
     // 1. Two-stage optimistic UI: create a pending submission order in <16ms
     const tempId = `opt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -103,11 +93,7 @@ export function useOrderEntry() {
     const effectiveLinkedPosId = state.linked_position_id || matchingOppositePos?.id || undefined;
 
     // Optimistically add position if entry order, or remove/reduce if exit order
-    const estimatedMargin = (state.client_price && state.qty) ? state.client_price * state.qty : 0;
     if (!effectiveIsExit) {
-      if (estimatedMargin > 0 && balanceContext?.lockOptimisticMargin) {
-        balanceContext.lockOptimisticMargin(estimatedMargin, tempId);
-      }
       if (positionsContext?.addOptimisticPosition) {
         positionsContext.addOptimisticPosition({
           symbol: state.symbol,
@@ -242,9 +228,95 @@ export function useOrderEntry() {
     setLoading(true);
     setError(null);
 
+    const posToClose = positionsContext?.positions?.find(p => p.id === positionId);
+
     // Optimistically remove position locally in 0ms
     if (positionsContext?.removePositionLocally) {
       positionsContext.removePositionLocally(positionId);
+    }
+
+    // Optimistically generate closed position and history entry for instant UI
+    if (typeof window !== 'undefined' && posToClose) {
+      const now = Date.now();
+      const entryPrice = Number(posToClose.avg_price || posToClose.entry_price || 0);
+      const exitPrice = Number(clientPrice || posToClose.current_ltp || posToClose.ltp || entryPrice);
+      const qty = Number(posToClose.qty_open || posToClose.qty_total || (posToClose as any).qty || 1);
+      const posSide = (posToClose.side || side || 'BUY') as 'BUY' | 'SELL';
+      const pnl = (posToClose.total_pnl !== undefined && posToClose.total_pnl !== null)
+        ? Number(posToClose.total_pnl)
+        : (posSide === 'BUY' ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty);
+      const pnlPercent = (entryPrice * qty > 0) ? (pnl / (entryPrice * qty)) * 100 : 0;
+
+      const rawSettlement = posToClose.settlement || settlement || '';
+      let derivedSettlement = rawSettlement;
+      if (!derivedSettlement) {
+        const sym: string = (posToClose.symbol || symbol || '').toUpperCase();
+        if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
+        else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
+        else if (sym.includes('MCX')) derivedSettlement = 'MCX';
+        else derivedSettlement = 'NSE';
+      }
+
+      const optimisticHistoryItem = {
+        id: positionId,
+        scriptName: posToClose.symbol || symbol || '',
+        type: posSide,
+        orderType: posToClose.product_type || 'INTRADAY',
+        qty,
+        price: exitPrice,
+        entryPrice,
+        exitPrice,
+        pnl,
+        date: new Date(posToClose.entry_time || (posToClose as any).created_at || now).toLocaleString(),
+        exitDate: new Date(now).toLocaleDateString(),
+        status: 'closed',
+        brokerage: Number((posToClose as any).brokerage || 0),
+        closedBy: 'USER_ACTION',
+        productType: posToClose.product_type || 'INTRADAY',
+        settlement: derivedSettlement,
+        settlementAmount: Math.abs(Number((posToClose as any).settlement_amount || 0)),
+        timestamp: now,
+      };
+
+      const optimisticClosedPos = {
+        ...posToClose,
+        id: positionId,
+        status: 'closed',
+        exit_price: exitPrice,
+        pnl,
+        total_pnl: pnl,
+        pnl_percent: pnlPercent,
+        qty_total: qty,
+        qty_open: 0,
+        closed_at: new Date(now).toISOString(),
+        exit_time: new Date(now).toISOString(),
+        updated_at: new Date(now).toISOString(),
+      };
+
+      try {
+        const existingHistory = (window as any).__historyCache || [];
+        const filteredHistory = existingHistory.filter((h: any) => h.id !== positionId);
+        const updatedHistory = [optimisticHistoryItem, ...filteredHistory];
+        (window as any).__historyCache = updatedHistory;
+        localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+      } catch {}
+
+      try {
+        const existingClosed = (window as any).__closedPositionsCache || [];
+        const filteredClosed = existingClosed.filter((p: any) => p.id !== positionId);
+        const updatedClosed = [optimisticClosedPos, ...filteredClosed];
+        (window as any).__closedPositionsCache = updatedClosed;
+        localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
+      } catch {}
+
+      window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
+        detail: {
+          positions: [optimisticClosedPos],
+          historyItems: [optimisticHistoryItem],
+          position: optimisticClosedPos,
+          historyItem: optimisticHistoryItem,
+        }
+      }));
     }
 
     try {
@@ -266,6 +338,21 @@ export function useOrderEntry() {
     } catch (err) {
       if (positionsContext?.restorePositionLocally) {
         positionsContext.restorePositionLocally(positionId);
+      }
+      if (typeof window !== 'undefined') {
+        try {
+          const existingHistory = (window as any).__historyCache || [];
+          const updatedHistory = existingHistory.filter((h: any) => h.id !== positionId);
+          (window as any).__historyCache = updatedHistory;
+          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+        } catch {}
+        try {
+          const existingClosed = (window as any).__closedPositionsCache || [];
+          const updatedClosed = existingClosed.filter((p: any) => p.id !== positionId);
+          (window as any).__closedPositionsCache = updatedClosed;
+          localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
+        } catch {}
+        window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: [positionId] } }));
       }
       let message = 'Unknown error';
       if (err instanceof ApiError) {
@@ -292,9 +379,99 @@ export function useOrderEntry() {
     setLoading(true);
     setError(null);
 
+    const positionsToClose = positionsContext?.positions?.filter(p => positionIds.includes(p.id)) || [];
+
     // Optimistically remove positions locally in 0ms
     if (positionsContext?.removePositionLocally) {
       positionIds.forEach(id => positionsContext.removePositionLocally(id));
+    }
+
+    if (typeof window !== 'undefined' && positionsToClose.length > 0) {
+      const now = Date.now();
+      const newHistoryItems: any[] = [];
+      const newClosedPositions: any[] = [];
+
+      for (const pos of positionsToClose) {
+        const entryPrice = Number(pos.avg_price || pos.entry_price || 0);
+        const exitPrice = Number(pos.current_ltp || pos.ltp || entryPrice);
+        const qty = Number(pos.qty_open || pos.qty_total || (pos as any).qty || 1);
+        const posSide = (pos.side || 'BUY') as 'BUY' | 'SELL';
+        const pnl = (pos.total_pnl !== undefined && pos.total_pnl !== null)
+          ? Number(pos.total_pnl)
+          : (posSide === 'BUY' ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty);
+        const pnlPercent = (entryPrice * qty > 0) ? (pnl / (entryPrice * qty)) * 100 : 0;
+
+        const rawSettlement = pos.settlement || '';
+        let derivedSettlement = rawSettlement;
+        if (!derivedSettlement) {
+          const sym: string = (pos.symbol || '').toUpperCase();
+          if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
+          else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
+          else if (sym.includes('MCX')) derivedSettlement = 'MCX';
+          else derivedSettlement = 'NSE';
+        }
+
+        newHistoryItems.push({
+          id: pos.id,
+          scriptName: pos.symbol,
+          type: posSide,
+          orderType: pos.product_type || 'INTRADAY',
+          qty,
+          price: exitPrice,
+          entryPrice,
+          exitPrice,
+          pnl,
+          date: new Date(pos.entry_time || (pos as any).created_at || now).toLocaleString(),
+          exitDate: new Date(now).toLocaleDateString(),
+          status: 'closed',
+          brokerage: Number((pos as any).brokerage || 0),
+          closedBy: 'USER_ACTION',
+          productType: pos.product_type || 'INTRADAY',
+          settlement: derivedSettlement,
+          settlementAmount: Math.abs(Number((pos as any).settlement_amount || 0)),
+          timestamp: now,
+        });
+
+        newClosedPositions.push({
+          ...pos,
+          id: pos.id,
+          status: 'closed',
+          exit_price: exitPrice,
+          pnl,
+          total_pnl: pnl,
+          pnl_percent: pnlPercent,
+          qty_total: qty,
+          qty_open: 0,
+          closed_at: new Date(now).toISOString(),
+          exit_time: new Date(now).toISOString(),
+          updated_at: new Date(now).toISOString(),
+        });
+      }
+
+      try {
+        const existingHistory = (window as any).__historyCache || [];
+        const existingIdSet = new Set(positionIds);
+        const updatedHistory = [...newHistoryItems, ...existingHistory.filter((h: any) => !existingIdSet.has(h.id))];
+        (window as any).__historyCache = updatedHistory;
+        localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+      } catch {}
+
+      try {
+        const existingClosed = (window as any).__closedPositionsCache || [];
+        const existingIdSet = new Set(positionIds);
+        const updatedClosed = [...newClosedPositions, ...existingClosed.filter((p: any) => !existingIdSet.has(p.id))];
+        (window as any).__closedPositionsCache = updatedClosed;
+        localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
+      } catch {}
+
+      window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
+        detail: {
+          positions: newClosedPositions,
+          historyItems: newHistoryItems,
+          position: newClosedPositions[0],
+          historyItem: newHistoryItems[0],
+        }
+      }));
     }
 
     try {
@@ -311,6 +488,22 @@ export function useOrderEntry() {
     } catch (err) {
       if (positionsContext?.restorePositionLocally) {
         positionIds.forEach(id => positionsContext.restorePositionLocally(id));
+      }
+      if (typeof window !== 'undefined') {
+        const existingIdSet = new Set(positionIds);
+        try {
+          const existingHistory = (window as any).__historyCache || [];
+          const updatedHistory = existingHistory.filter((h: any) => !existingIdSet.has(h.id));
+          (window as any).__historyCache = updatedHistory;
+          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+        } catch {}
+        try {
+          const existingClosed = (window as any).__closedPositionsCache || [];
+          const updatedClosed = existingClosed.filter((p: any) => !existingIdSet.has(p.id));
+          (window as any).__closedPositionsCache = updatedClosed;
+          localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
+        } catch {}
+        window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds } }));
       }
       let message = 'Unknown error';
       if (err instanceof ApiError) {

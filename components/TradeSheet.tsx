@@ -358,7 +358,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const isMatchingSymbol = (pSym?: string) => {
     if (!pSym || !targetItemSymClean) return false;
     const pClean = cleanSym(pSym);
-    return pClean === targetItemSymClean || pClean.includes(targetItemSymClean) || targetItemSymClean.includes(pClean);
+    return pClean === targetItemSymClean;
   };
 
   const anyPosForSymbol = activePositions.find(p => isMatchingSymbol(p.symbol) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active'));

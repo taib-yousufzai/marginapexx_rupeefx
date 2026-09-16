@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
+import AnimatedLoader from '@/components/AnimatedLoader';
 import './page.css';
 
 interface HistoryItem {
@@ -44,6 +45,8 @@ declare global {
   }
 }
 
+const HISTORY_PERSIST_KEY = 'marginApex_history_cache_persisted';
+
 export default function HistoryPage() {
   useAuth();
   const router = useRouter();
@@ -53,8 +56,34 @@ export default function HistoryPage() {
   const [toDate, setToDate] = useState('');
   const [appliedFromDate, setAppliedFromDate] = useState('');
   const [appliedToDate, setAppliedToDate] = useState('');
-  const [historyData, setHistoryData] = useState<HistoryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  
+  const [historyData, setHistoryData] = useState<HistoryItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      if (window.__historyCache) return window.__historyCache;
+      try {
+        const stored = localStorage.getItem(HISTORY_PERSIST_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) {
+            window.__historyCache = parsed;
+            return parsed;
+          }
+        }
+      } catch (e) {}
+    }
+    return [];
+  });
+
+  const [loading, setLoading] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      if (window.__historyCache !== undefined) return false;
+      try {
+        const stored = localStorage.getItem(HISTORY_PERSIST_KEY);
+        if (stored !== null) return false;
+      } catch (e) {}
+    }
+    return true;
+  });
   const mainContentRef = useRef<HTMLDivElement>(null);
 
   // Scroll reset - runs synchronously before browser paint via ref callback
@@ -82,18 +111,25 @@ export default function HistoryPage() {
 
   const fetchHistory = useCallback(async (silent = false) => {
     try {
-      if (!silent && historyData.length === 0 && !(typeof window !== 'undefined' && window.__historyCache)) {
+      if (!silent && historyData.length === 0 && !(typeof window !== 'undefined' && (window.__historyCache?.length || localStorage.getItem(HISTORY_PERSIST_KEY)))) {
         setLoading(true);
       }
-      // Fetch both orders and positions history — last 30 days by default
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      // Fetch both orders and positions history — full history
       const now = Date.now();
       const [ordersData, posData] = await Promise.all([
-        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500&fresh=true&_t=${now}`).catch(() => ({ orders: [] })),
-        api.get<{ positions: any[] }>(`/api/positions?status=closed&from=${thirtyDaysAgo}&fresh=true&_t=${now}`).catch(() => ({ positions: [] })),
+        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500&_t=${now}`).catch(() => ({ orders: [] })),
+        api.get<{ positions: any[] }>(`/api/positions?status=closed&_t=${now}`).catch(() => ({ positions: [] })),
       ]);
 
-      const formattedOrders = (ordersData.orders || []).map((o: any) => ({
+      const ordersList = Array.isArray(ordersData?.orders) ? ordersData.orders : [];
+      const positionsList = Array.isArray(posData?.positions) ? posData.positions : [];
+
+      // If API returned empty on a background/silent poll while we already have items, do not overwrite
+      if (ordersList.length === 0 && positionsList.length === 0 && historyData.length > 0) {
+        return;
+      }
+
+      const formattedOrders = ordersList.map((o: any) => ({
         id: o.id,
         scriptName: o.symbol,
         type: o.side,
@@ -110,7 +146,7 @@ export default function HistoryPage() {
         timestamp: new Date(o.created_at).getTime()
       }));
 
-      const formattedPos = (posData.positions || []).map((p: any) => {
+      const formattedPos = positionsList.map((p: any) => {
         // Derive settlement label, falling back for old positions with none stored
         const rawSettlement = p.settlement || '';
         let settlement = rawSettlement;
@@ -151,31 +187,41 @@ export default function HistoryPage() {
         };
       });
 
-      const merged = [...formattedOrders, ...formattedPos].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
-      // Always apply the fresh result — even if empty (e.g. after admin clears
-      // history via history_reset_at). Preserving stale cache here was the
-      // root cause of pre-reset records remaining visible after Clear History.
-      if (typeof window !== 'undefined') window.__historyCache = merged;
+      const mergedMap = new Map<string, any>();
+      for (const o of formattedOrders) mergedMap.set(o.id, o);
+      for (const p of formattedPos) mergedMap.set(p.id, p);
+
+      // Retain any recent optimistic items (<60s) not yet returned by backend DB
+      if (historyData && historyData.length > 0) {
+        for (const existing of historyData) {
+          if (!mergedMap.has(existing.id) && (Date.now() - (existing.timestamp || 0) < 60000)) {
+            mergedMap.set(existing.id, existing);
+          }
+        }
+      }
+
+      const merged = Array.from(mergedMap.values()).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      if (typeof window !== 'undefined') {
+        window.__historyCache = merged;
+        try {
+          localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(merged));
+        } catch (e) {}
+      }
       setHistoryData(merged);
     } catch (err) {
       console.warn('Failed to fetch history:', err);
     } finally {
       setLoading(false);
     }
-  }, [historyData.length]);
+  }, [historyData]);
 
   useEffect(() => {
-    // Serve stale cache immediately for perceived performance
-    if (typeof window !== 'undefined' && window.__historyCache && window.__historyCache.length > 0) {
-      setHistoryData(window.__historyCache);
-    }
-
     fetchHistory();
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let followUpTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const triggerRefresh = (delay = 100) => {
+    const triggerRefresh = (delay = 50) => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         fetchHistory(true);
@@ -185,7 +231,44 @@ export default function HistoryPage() {
       if (followUpTimer) clearTimeout(followUpTimer);
       followUpTimer = setTimeout(() => {
         fetchHistory(true);
-      }, 1000);
+      }, 800);
+    };
+
+    // Instant optimistic update when position closure is initiated
+    const handleOptimisticClose = (e: any) => {
+      const items = e.detail?.historyItems || (e.detail?.historyItem ? [e.detail.historyItem] : []);
+      if (items.length === 0) return;
+      setHistoryData(prev => {
+        const itemIds = new Set(items.map((i: any) => i.id));
+        const filtered = prev.filter(x => !itemIds.has(x.id));
+        const updated = [...items, ...filtered];
+        if (typeof window !== 'undefined') {
+          window.__historyCache = updated;
+          try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(updated)); } catch {}
+        }
+        return updated;
+      });
+      triggerRefresh(150);
+    };
+
+    const handleOptimisticRollback = (e: any) => {
+      const ids: string[] = e.detail?.positionIds || [];
+      if (ids.length === 0) return;
+      const idSet = new Set(ids);
+      setHistoryData(prev => {
+        const filtered = prev.filter(x => !idSet.has(x.id));
+        if (typeof window !== 'undefined') {
+          window.__historyCache = filtered;
+          try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(filtered)); } catch {}
+        }
+        return filtered;
+      });
+      triggerRefresh(50);
+    };
+
+    // Smooth background refresh on trade events without wiping UI
+    const handleCloseOrOrderEvent = () => {
+      triggerRefresh(50);
     };
 
     // Listen for all order and position lifecycle events
@@ -202,8 +285,9 @@ export default function HistoryPage() {
       'balance_updated',
     ];
 
-    const handleEvent = () => triggerRefresh(100);
-    eventList.forEach(evt => window.addEventListener(evt, handleEvent));
+    eventList.forEach(evt => window.addEventListener(evt, handleCloseOrOrderEvent));
+    window.addEventListener('position_closed_optimistic', handleOptimisticClose);
+    window.addEventListener('position_closed_rollback', handleOptimisticRollback);
 
     // Instant sync when tab/app becomes visible or focused
     const handleVisibility = () => {
@@ -226,8 +310,8 @@ export default function HistoryPage() {
     // Supabase Realtime channel
     const channel = supabase
       .channel(`history-realtime-${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, () => triggerRefresh(100))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => triggerRefresh(100))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, () => handleCloseOrOrderEvent())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => handleCloseOrOrderEvent())
       .subscribe();
 
     return () => {
@@ -236,7 +320,7 @@ export default function HistoryPage() {
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleFocus);
-      eventList.forEach(evt => window.removeEventListener(evt, handleEvent));
+      eventList.forEach(evt => window.removeEventListener(evt, handleCloseOrOrderEvent));
       supabase.removeChannel(channel);
     };
   }, [fetchHistory]);
@@ -456,8 +540,11 @@ export default function HistoryPage() {
 
               <div className="main-content" ref={scrollResetRef}>
                 <div className="history-list">
-                  {filteredData.length === 0 ? (
-
+                  {loading && historyData.length === 0 ? (
+                    <div style={{ padding: '60px 0', textAlign: 'center' }}>
+                      <AnimatedLoader text="Loading history..." />
+                    </div>
+                  ) : filteredData.length === 0 ? (
                     <div className="empty-history">
                       <i className={currentTab === 'position' ? "fas fa-folder-open" : "fas fa-list-ul"}></i>
                       <p>No history found</p>
