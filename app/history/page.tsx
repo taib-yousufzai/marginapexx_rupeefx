@@ -427,8 +427,8 @@ export default function HistoryPage() {
       const symKey = cleanSym(item.scriptName) || item.scriptName;
       const sideKey = (item.type || 'BUY').toUpperCase();
       const prodKey = (item.productType || item.orderType || 'INTRADAY').toUpperCase();
-      const dateKey = item.exitDate || item.date.split(' ')[0] || 'default';
-      const groupKey = `${symKey}|${sideKey}|${prodKey}|${dateKey}`;
+      const timeWindowKey = Math.floor((item.timestamp || 0) / 10000);
+      const groupKey = `${symKey}|${sideKey}|${prodKey}|${timeWindowKey}`;
 
       if (!groupMap.has(groupKey)) {
         groupMap.set(groupKey, {
