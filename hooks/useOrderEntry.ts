@@ -118,6 +118,9 @@ export function useOrderEntry() {
       window.dispatchEvent(new CustomEvent('order_placed_optimistic', { detail: { order: optimisticOrder } }));
     }
 
+    const optimisticClosedPositions: any[] = [];
+    const optimisticHistoryItems: any[] = [];
+
     // Optimistically add position if entry order, or remove/reduce if exit order
     if (!effectiveIsExit) {
       if (positionsContext?.addOptimisticPosition) {
@@ -143,9 +146,6 @@ export function useOrderEntry() {
           }
           return 0;
         });
-
-        const optimisticClosedPositions: any[] = [];
-        const optimisticHistoryItems: any[] = [];
 
         for (const p of sortedMatching) {
           if (remExit <= 0) break;
