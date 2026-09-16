@@ -137,6 +137,31 @@ async function fetchQuoteBatch(
     }));
   }
 
+  // 3c. MT5 quotes for remaining COMEX symbols
+  const missingComex = Array.from(missing).filter(s =>
+    ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => s.toUpperCase().includes(c)) ||
+    s.startsWith('COMEX:')
+  );
+  if (missingComex.length > 0) {
+    try {
+      const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');
+      await Promise.all(missingComex.map(async (sym) => {
+        try {
+          const cleanSym = sym.replace('COMEX:', '');
+          const mt5Q = await fetchMT5StockQuote(cleanSym);
+          const lastP = (mt5Q as any)?.price ?? (mt5Q as any)?.lastPrice ?? 0;
+          if (mt5Q && lastP > 0) {
+            const bid = mt5Q.bid || lastP;
+            const ask = mt5Q.ask || lastP;
+            quotesMap[sym] = { bid, ask, ltp: lastP };
+            quotesMap[cleanSym] = { bid, ask, ltp: lastP };
+            missing.delete(sym);
+          }
+        } catch {}
+      }));
+    } catch {}
+  }
+
   return quotesMap;
 }
 
@@ -160,7 +185,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .select('*')
         .in('id', positionIds)
         .eq('user_id', user.id)
-        .eq('status', 'open'),
+        .or('status.eq.open,status.eq.active,status.eq.OPEN,status.eq.ACTIVE'),
       admin.from('profiles')
         .select('parent_id, trading_mode')
         .eq('id', user.id)
@@ -194,7 +219,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const segSettingsMap = new Map<string, any>();
     if (segSettings) {
       segSettings.forEach(s => {
-        segSettingsMap.set(`${s.segment}|${s.side}`, s);
+        segSettingsMap.set(`${(s.segment || '').toUpperCase()}|${(s.side || '').toUpperCase()}`, s);
       });
     }
 
@@ -202,13 +227,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Crypto positions use Binance key (BTCUSDT), others use Kite exchange-prefixed key
     const kiteSymbolsToFetch = new Set<string>();
     const cryptoSymbolsToFetch = new Set<string>();
+    const comexSymbolsToFetch = new Set<string>();
 
     const posSymbols = positions.map(pos => {
-      const isCrypto = (pos.settlement || '').toUpperCase().includes('CRYPTO');
+      const isComex = (pos.settlement || '').toUpperCase().includes('COMEX') ||
+        ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (pos.symbol || '').toUpperCase().includes(c));
+      const isCrypto = !isComex && ((pos.settlement || '').toUpperCase().includes('CRYPTO') ||
+        ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'AVAX', 'LINK', 'LTC', 'MATIC', 'NEAR', 'SHIB', 'UNI', 'PEPE', 'USDT'].some(s => (pos.symbol || '').toUpperCase().includes(s)));
       let lookupKey: string;
 
-      if (isCrypto) {
-        let cleanSym = (pos.symbol || '').replace('/', '').toUpperCase();
+      if (isComex) {
+        lookupKey = pos.symbol;
+        comexSymbolsToFetch.add(lookupKey);
+      } else if (isCrypto) {
+        let cleanSym = (pos.symbol || '').replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
         if (!cleanSym.endsWith('USDT')) cleanSym = cleanSym + 'USDT';
         lookupKey = cleanSym;
         cryptoSymbolsToFetch.add(lookupKey);
@@ -233,7 +265,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
 
     const quotesMap = await fetchQuoteBatch(
-      Array.from(kiteSymbolsToFetch),
+      [...Array.from(kiteSymbolsToFetch), ...Array.from(comexSymbolsToFetch)],
       Array.from(cryptoSymbolsToFetch)
     );
 
@@ -246,7 +278,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
 
         // Get settings and price parameters
-        const segSetting = segSettingsMap.get(`${pos.settlement ?? ''}|${pos.side}`);
+        const upperSettlement = (pos.settlement ?? '').toUpperCase();
+        const upperSide = (pos.side ?? '').toUpperCase();
+        const segSetting = segSettingsMap.get(`${upperSettlement}|${upperSide}`) || segSettingsMap.get(`CRYPTO|${upperSide}`) || segSettingsMap.get(`NSE|${upperSide}`);
         const rawExitBuffer = segSetting?.exit_buffer;
         const exitBuffer = (rawExitBuffer !== undefined && rawExitBuffer !== null && !isNaN(Number(rawExitBuffer)))
           ? (Number(rawExitBuffer) > 0.005 ? Number(rawExitBuffer) / 100 : Number(rawExitBuffer))
@@ -371,6 +405,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         } catch (cancelErr) {
           console.warn('[POST /api/positions/close] Non-fatal error cleaning up pending orders:', cancelErr);
         }
+        try {
+          const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+          await invalidateUserHistoryCache(user.id);
+        } catch { /* ignore */ }
       })();
     }
 

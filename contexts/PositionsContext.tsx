@@ -175,7 +175,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
 
   const removePositionLocally = useCallback((posId: string) => {
     optimisticallyRemovedIds.current.add(posId);
-    setRawPositions(prev => prev.filter(p => p.id !== posId));
+    setRawPositions(prev => {
+      const next = prev.filter(p => p.id !== posId);
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__'))));
+        } catch {}
+      }
+      return next;
+    });
   }, []);
 
 const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { opt_id?: string }) => {

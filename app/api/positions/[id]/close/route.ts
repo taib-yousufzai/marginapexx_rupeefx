@@ -105,7 +105,7 @@ async function fetchKiteLtp(instrument: string): Promise<number | null> {
 
 async function fetchBinanceQuote(symbol: string): Promise<number | null> {
   try {
-    let cleanSym = symbol.replace('/', '').toUpperCase();
+    let cleanSym = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
     if (!cleanSym.endsWith('USDT')) {
       cleanSym = cleanSym + 'USDT';
     }
@@ -144,8 +144,8 @@ export async function POST(
       .select('*')
       .eq('id', positionId)
       .eq('user_id', user.id)
-      .eq('status', 'open')
-      .single(),
+      .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+      .maybeSingle(),
     admin.from('profiles')
       .select('parent_id, trading_mode')
       .eq('id', user.id)
@@ -177,6 +177,22 @@ export async function POST(
         const isCrypto = (pos.settlement || '').toUpperCase().includes('CRYPTO');
         if (isCrypto) {
           return fetchBinanceQuote(pos.symbol);
+        }
+        const isComex = (pos.settlement || '').toUpperCase().includes('COMEX') ||
+          ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (pos.symbol || '').toUpperCase().includes(c));
+        if (isComex) {
+          try {
+            const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');
+            const mt5Q = await fetchMT5StockQuote(pos.symbol);
+            const lastP = (mt5Q as any)?.price ?? (mt5Q as any)?.lastPrice ?? 0;
+            if (mt5Q && lastP > 0) {
+              return {
+                ltp: lastP,
+                bid: mt5Q.bid || lastP,
+                ask: mt5Q.ask || lastP,
+              } as any;
+            }
+          } catch {}
         }
         let fullSymbol = pos.symbol;
         if (!pos.symbol.includes(':')) {
@@ -280,6 +296,8 @@ export async function POST(
   // Cancel any open/pending exit or linked orders for this position/symbol asynchronously
   (async () => {
     try {
+      const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+      await invalidateUserHistoryCache(user.id);
       const { PositionService } = await import('@/lib/trading/PositionService');
       await PositionService.cancelPendingOrdersForClosedPosition(admin, user.id, positionId, pos.symbol);
     } catch (cancelErr) {

@@ -83,7 +83,7 @@ const TRADING_HOURS_TTL_MS = 10 * 60 * 1000; // 10 minutes
  */
 async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
   try {
-    let cleanSym = symbol.replace('/', '').toUpperCase();
+    let cleanSym = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
     if (!cleanSym.endsWith('USDT')) {
       cleanSym = cleanSym + 'USDT';
     }
@@ -675,7 +675,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const fetchPromise = (async () => {
           if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
             const quote = await fetchBinanceQuote(symbol);
-            return quote ? { [kiteInst]: quote, [symbol]: quote } : {};
+            if (!quote) return {};
+            const clean = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+            return {
+              [kiteInst]: quote,
+              [symbol]: quote,
+              [clean]: quote,
+              [`CRYPTO:${clean}`]: quote,
+              [`${clean}USDT`]: quote,
+            };
           } else if (dbSegment === 'COMEX' || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => symbol.toUpperCase().includes(c))) {
             try {
               const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');

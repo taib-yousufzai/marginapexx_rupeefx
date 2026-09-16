@@ -208,9 +208,9 @@ export function useOrderEntry() {
         if (ordersContext?.removeOptimisticOrder) {
           ordersContext.removeOptimisticOrder(tempId);
         }
-        if (state.is_exit && positionsContext?.restorePositionLocally) {
-          positionsContext.restorePositionLocally(state.linked_position_id || '');
-        } else if (!state.is_exit && positionsContext?.removeOptimisticPosition) {
+        if (effectiveIsExit && positionsContext?.restorePositionLocally) {
+          positionsContext.restorePositionLocally(effectiveLinkedPosId || '');
+        } else if (!effectiveIsExit && positionsContext?.removeOptimisticPosition) {
           positionsContext.removeOptimisticPosition(tempId);
         }
         soundEngine.playOrderRejected();

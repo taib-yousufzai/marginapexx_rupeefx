@@ -22,7 +22,7 @@ export async function fetchWithTimeout(url: string, options: any = {}, timeoutMs
 const binanceInflight = new Map<string, Promise<{ltp: number, bid: number, ask: number} | null>>();
 
 export async function fetchBinanceQuote(symbol: string): Promise<{ltp: number, bid: number, ask: number} | null> {
-  let cleanSym = symbol.replace('/', '').toUpperCase();
+  let cleanSym = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
   if (!cleanSym.endsWith('USDT')) cleanSym = cleanSym + 'USDT';
 
   let promise = binanceInflight.get(cleanSym);
