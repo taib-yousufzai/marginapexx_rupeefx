@@ -54,21 +54,10 @@ export default function HistoryPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentTab, setCurrentTab] = useState<'position' | 'order'>('position');
   const [positionViewMode, setPositionViewMode] = useState<'cumulative' | 'detailed'>('cumulative');
-  const [expandedCardKeys, setExpandedCardKeys] = useState<Set<string>>(new Set());
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [appliedFromDate, setAppliedFromDate] = useState('');
   const [appliedToDate, setAppliedToDate] = useState('');
-
-  const toggleCardExpand = (key: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    setExpandedCardKeys(prev => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
   
   const [historyData, setHistoryData] = useState<HistoryItem[]>(() => {
     if (typeof window !== 'undefined') {
@@ -736,21 +725,13 @@ export default function HistoryPage() {
                   ) : (
                     itemsToRender.map((item: any) => {
                       const itemKey = item.groupKey || item.id;
-                      const hasSubTrades = currentTab === 'position' && positionViewMode === 'cumulative' && item.tradesCount > 1;
-                      const isExpanded = expandedCardKeys.has(itemKey);
 
                       return (
                         <div
                           key={itemKey}
                           className="history-card"
                           style={{ cursor: 'pointer' }}
-                          onClick={() => {
-                            if (hasSubTrades) {
-                              toggleCardExpand(itemKey);
-                            } else {
-                              router.push(`/watchlist?symbol=${encodeURIComponent(item.scriptName)}&action=detail`);
-                            }
-                          }}
+                          onClick={() => router.push(`/watchlist?symbol=${encodeURIComponent(item.scriptName)}&action=detail`)}
                         >
                           <div className="history-card-header">
                             <div className="script-info">
@@ -760,16 +741,6 @@ export default function HistoryPage() {
                                   {item.type}
                                 </span>
                                 <span style={{ fontSize: '0.55rem', color: '#9AA4BF' }}>{item.orderType}</span>
-                                {hasSubTrades && (
-                                  <span
-                                    className="trades-count-badge"
-                                    onClick={(e) => toggleCardExpand(itemKey, e)}
-                                    title="Click to view sub-trade breakdown"
-                                  >
-                                    <i className="fas fa-layer-group"></i> {item.tradesCount} Trades
-                                    <i className={`fas fa-chevron-${isExpanded ? 'up' : 'down'}`} style={{ fontSize: '0.5rem', marginLeft: '2px' }}></i>
-                                  </span>
-                                )}
                                 {currentTab === 'order' && (
                                   <span className={`order-type-badge ${item.status === 'executed' ? 'completed' : 'pending'}`}>
                                     {item.status}
@@ -875,46 +846,7 @@ export default function HistoryPage() {
                               </span>
                             )}
                             {currentTab === 'order' && <span className="detail-item"><i className="fas fa-hourglass-half"></i> {item.date.split(' ')[1] || ''}</span>}
-                            {hasSubTrades && (
-                              <span
-                                className="detail-item"
-                                style={{ marginLeft: 'auto', color: '#2962FF', cursor: 'pointer', fontWeight: 600, fontSize: '0.68rem' }}
-                                onClick={(e) => toggleCardExpand(itemKey, e)}
-                              >
-                                {isExpanded ? 'Hide breakdown' : `View ${item.tradesCount} sub-trades`}
-                                <i className={`fas fa-chevron-${isExpanded ? 'up' : 'down'}`} style={{ marginLeft: '3px' }}></i>
-                              </span>
-                            )}
                           </div>
-
-                          {/* Expandable sub-trades breakdown */}
-                          {hasSubTrades && isExpanded && item.subItems && (
-                            <div className="sub-trades-panel" onClick={(e) => e.stopPropagation()}>
-                              <div className="sub-trades-header">
-                                <span>Individual Executions ({item.subItems.length} orders)</span>
-                              </div>
-                              {item.subItems.map((sub: HistoryItem, sIdx: number) => {
-                                const subIsPositive = sub.pnl >= 0;
-                                const subPct = sub.entryPrice && sub.qty ? (sub.pnl / (sub.entryPrice * sub.qty)) * 100 : 0;
-                                return (
-                                  <div key={sub.id || sIdx} className="sub-trade-row">
-                                    <div className="sub-trade-left">
-                                      <span className="sub-trade-qty"><i className="fas fa-layer-group"></i> {sub.qty}</span>
-                                      <span className="sub-trade-prices">
-                                        <i className="fas fa-arrow-right"></i> {formatPrice(sub.entryPrice || 0)} → <i className="fas fa-arrow-left"></i> {formatPrice(sub.exitPrice || 0)}
-                                      </span>
-                                    </div>
-                                    <div className="sub-trade-right">
-                                      <span className={subIsPositive ? 'pnl-sub positive' : 'pnl-sub negative'}>
-                                        {subIsPositive ? '+' : ''}{formatPrice(sub.pnl)} ({subIsPositive ? '+' : ''}{subPct.toFixed(2)}%)
-                                      </span>
-                                      <span className="sub-trade-time">{sub.date.split(' ')[1] || sub.date}</span>
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
                         </div>
                       );
                     })
