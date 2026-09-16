@@ -192,11 +192,13 @@ export default function HistoryPage() {
       for (const p of formattedPos) mergedMap.set(p.id, p);
 
       // Retain any recent optimistic items (<60s) not yet returned by backend DB
-      if (historyData && historyData.length > 0) {
-        for (const existing of historyData) {
-          if (!mergedMap.has(existing.id) && (Date.now() - (existing.timestamp || 0) < 60000)) {
-            mergedMap.set(existing.id, existing);
-          }
+      const existingItems = [
+        ...(historyData || []),
+        ...(typeof window !== 'undefined' && Array.isArray(window.__historyCache) ? window.__historyCache : [])
+      ];
+      for (const existing of existingItems) {
+        if (!mergedMap.has(existing.id) && (Date.now() - (existing.timestamp || 0) < 60000)) {
+          mergedMap.set(existing.id, existing);
         }
       }
 
@@ -251,6 +253,44 @@ export default function HistoryPage() {
       triggerRefresh(150);
     };
 
+    // Instant optimistic update when an order is placed
+    const handleOptimisticOrder = (e: any) => {
+      const order = e.detail?.order || (e.detail?.symbol ? {
+        id: e.detail.opt_id || `opt_${Date.now()}`,
+        symbol: e.detail.symbol,
+        side: e.detail.side,
+        order_type: e.detail.product_type || 'INTRADAY',
+        qty: e.detail.qty || e.detail.qty_open || 1,
+        fill_price: e.detail.entry_price || e.detail.ltp || 0,
+        status: 'EXECUTED',
+        created_at: new Date().toISOString(),
+      } : null);
+      if (!order) return;
+      const historyItem: HistoryItem = {
+        id: order.id,
+        scriptName: order.symbol,
+        type: order.side,
+        orderType: order.order_type || 'MARKET',
+        qty: order.qty,
+        price: order.fill_price || order.client_price || 0,
+        pnl: 0,
+        date: new Date(order.created_at || Date.now()).toLocaleString(),
+        status: order.status || 'EXECUTED',
+        brokerage: order.brokerage || 0,
+        timestamp: new Date(order.created_at || Date.now()).getTime(),
+      };
+      setHistoryData(prev => {
+        const filtered = prev.filter(x => x.id !== historyItem.id);
+        const updated = [historyItem, ...filtered];
+        if (typeof window !== 'undefined') {
+          window.__historyCache = updated;
+          try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(updated)); } catch {}
+        }
+        return updated;
+      });
+      triggerRefresh(150);
+    };
+
     const handleOptimisticRollback = (e: any) => {
       const ids: string[] = e.detail?.positionIds || [];
       if (ids.length === 0) return;
@@ -274,7 +314,6 @@ export default function HistoryPage() {
     // Listen for all order and position lifecycle events
     const eventList = [
       'order_placed',
-      'order_placed_with_data',
       'position-closed',
       'position_closed',
       'position_updated',
@@ -288,6 +327,8 @@ export default function HistoryPage() {
     eventList.forEach(evt => window.addEventListener(evt, handleCloseOrOrderEvent));
     window.addEventListener('position_closed_optimistic', handleOptimisticClose);
     window.addEventListener('position_closed_rollback', handleOptimisticRollback);
+    window.addEventListener('order_placed_optimistic', handleOptimisticOrder);
+    window.addEventListener('order_placed_with_data', handleOptimisticOrder);
 
     // Instant sync when tab/app becomes visible or focused
     const handleVisibility = () => {
