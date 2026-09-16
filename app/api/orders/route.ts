@@ -17,15 +17,19 @@ import { getCachedScriptSettings } from '@/lib/redisSettingsCache';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 
 function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[] | Record<string, number>): number {
-  const n = symbol.toUpperCase();
+  let n = symbol.toUpperCase();
+  if (n === 'DODGE' || n === 'DODGEUSDT') n = 'DOGE';
   if (dbSettings) {
     if (Array.isArray(dbSettings)) {
-      const match = dbSettings.find(s => n.includes(s.symbol.toUpperCase()) || s.symbol.toUpperCase().includes(n));
+      const match = dbSettings.find(s => {
+        const sym = s.symbol.toUpperCase();
+        return n.includes(sym) || sym.includes(n) || (n === 'DOGE' && sym.includes('DODGE'));
+      });
       if (match) return Number(match.lot_size);
     } else {
       for (const [sym, size] of Object.entries(dbSettings)) {
         const upper = sym.toUpperCase();
-        if (n.includes(upper) || upper.includes(n)) return Number(size);
+        if (n.includes(upper) || upper.includes(n) || (n === 'DOGE' && upper.includes('DODGE'))) return Number(size);
       }
     }
   }
@@ -48,6 +52,7 @@ function cleanSymHelper(s?: string | null): string {
   if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI', 'CRUDE', 'CRUDEOIL'].includes(str)) return 'XTIUSD';
   if (['XCUUSD', 'COMEX:XCUUSD', 'HG=F', 'HG', 'COPPER'].includes(str)) return 'XCUUSD';
   if (['XNGUSD', 'COMEX:XNGUSD', 'NG=F', 'NG', 'NATGAS', 'NATURALGAS'].includes(str)) return 'XNGUSD';
+  if (str === 'DODGE' || str === 'DODGEUSDT' || str === 'DOGE' || str === 'DOGEUSDT') return 'DOGEUSDT';
   const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD', 'GOLD', 'SILVER', 'COPPER', 'CRUDE', 'NATGAS'];
   const knownBaseCrypto = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'];
   if (knownBaseCrypto.includes(str)) {
@@ -87,6 +92,7 @@ const TRADING_HOURS_TTL_MS = 10 * 60 * 1000; // 10 minutes
 async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
   try {
     let cleanSym = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+    if (cleanSym === 'DODGE' || cleanSym === 'DODGEUSDT') cleanSym = 'DOGEUSDT';
     if (!cleanSym.endsWith('USDT')) {
       cleanSym = cleanSym + 'USDT';
     }
@@ -680,12 +686,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             const quote = await fetchBinanceQuote(symbol);
             if (!quote) return {};
             const clean = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+            const isDoge = clean === 'DOGE' || clean === 'DODGE' || clean === 'DOGEUSDT' || clean === 'DODGEUSDT';
             return {
               [kiteInst]: quote,
               [symbol]: quote,
               [clean]: quote,
               [`CRYPTO:${clean}`]: quote,
               [`${clean}USDT`]: quote,
+              ...(isDoge ? {
+                'DOGE': quote,
+                'DODGE': quote,
+                'DOGEUSDT': quote,
+                'DODGEUSDT': quote,
+                'CRYPTO:DOGE': quote,
+                'CRYPTO:DODGE': quote,
+              } : {}),
             };
           } else if (dbSegment === 'COMEX' || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => symbol.toUpperCase().includes(c))) {
             try {

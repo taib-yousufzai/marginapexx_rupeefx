@@ -47,10 +47,12 @@ export class TradeEngine {
     // 1. Initial Profile Fetch handled entirely within get_trade_context later!
     // But we need to early exit if no user... Wait, user is already verified by API layer.
     // Let's just resolve segment first.
-    if (dbSegment === 'CRYPTO' || ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].some(c => symUp === c || symUp.startsWith(c + 'USDT'))) {
+    if (dbSegment === 'CRYPTO' || ['BTC', 'ETH', 'DOGE', 'DODGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].some(c => symUp === c || symUp.startsWith(c + 'USDT'))) {
        dbSegment = 'CRYPTO';
        const kiUpper = kiteInst.toUpperCase();
-       kiteInst = kiUpper.endsWith('USDT') ? kiUpper : kiUpper + 'USDT';
+       let cleanKi = kiUpper.replace(/^(CRYPTO:|BINANCE:)/i, '');
+       if (cleanKi === 'DODGE' || cleanKi === 'DODGEUSDT') cleanKi = 'DOGE';
+       kiteInst = cleanKi.endsWith('USDT') ? cleanKi : cleanKi + 'USDT';
        // Keep `symbol` in the same format as stored in DB (e.g. BTCUSDT or BTC)
     } else if (dbSegment !== 'COMEX' && (symUp.includes('GOLD') || symUp.includes('SILVER') || symUp.includes('CRUDE') || symUp.includes('NATGAS') || symUp.includes('NATURALGAS'))) {
        dbSegment = (symUp.endsWith('CE') || symUp.endsWith('PE')) ? 'MCX-OPT' : 'MCX-FUT';

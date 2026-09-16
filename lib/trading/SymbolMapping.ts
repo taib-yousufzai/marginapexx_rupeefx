@@ -112,9 +112,12 @@ export function mapSegmentWithSymbol(segment: string, symbol: string = ''): Segm
     const FOREX_PAIRS = ['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'];
     if (FOREX_PAIRS.includes(cleanSym)) return 'FOREX';
 
-    const CRYPTO_BASES = ['BTC','ETH','DOGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC'];
+    const CRYPTO_BASES = ['BTC','ETH','DOGE','DODGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC'];
     if (CRYPTO_BASES.some(c => sym === c || sym.startsWith(c + 'USDT'))) return 'CRYPTO';
     if (sym.endsWith('USDT')) return 'CRYPTO';
+
+    // COMEX commodities / global symbols
+    if (sym.startsWith('COMEX:') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => sym.includes(c)) || sym.endsWith('=F')) return 'COMEX';
 
     // MCX commodities
     if (sym.includes('GOLD') || sym.includes('SILVER') || sym.includes('CRUDE') || sym.includes('NATURALGAS') || sym.includes('NATGAS') || sym.includes('COPPER') || sym.includes('ZINC') || sym.includes('LEAD') || sym.includes('ALUMINIUM') || sym.includes('NICKEL')) {
@@ -142,6 +145,7 @@ export function mapSegmentWithSymbol(segment: string, symbol: string = ''): Segm
 export function mapSymbolToSegment(symbol: string): Segment {
   const n = symbol.toUpperCase();
   if (n.startsWith('US:') || n.startsWith('US-EQ:')) return 'US-EQ';
+  if (n.startsWith('COMEX:') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => n.includes(c)) || n.endsWith('=F')) return 'COMEX';
   if (n.includes('GOLD') || n.includes('SILVER') || n.includes('CRUDE') || n.includes('NATGAS') || n.includes('NATURALGAS')) {
     if (n.endsWith('CE') || n.endsWith('PE')) return 'MCX-OPT';
     return 'MCX-FUT';
@@ -162,7 +166,7 @@ export function mapSymbolToSegment(symbol: string): Segment {
   if (isIndexName) {
     return 'INDEX-FUT';
   }
-  if (n.endsWith('USDT') || ['BTC','ETH','DOGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC'].some(c => n === c)) {
+  if (n.endsWith('USDT') || ['BTC','ETH','DOGE','DODGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC'].some(c => n === c)) {
     return 'CRYPTO';
   }
   return 'STOCKS';

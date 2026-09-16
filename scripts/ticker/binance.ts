@@ -7,7 +7,7 @@ import { getAdminClient } from '../../lib/adminClient.ts';
 // Default symbols — will be expanded with dynamic subscriptions from frontend requests
 const DEFAULT_BINANCE_SYMBOLS = [
   'btcusdt', 'ethusdt', 'bnbusdt', 'solusdt', 'xrpusdt', 'dogeusdt', 'adausdt', 'maticusdt',
-  'gbpusdt', 'eurusdt'
+  'paxgusdt', 'eurusdt', 'gbpusdt'
 ];
 
 const HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds — detect stale connections
@@ -99,6 +99,8 @@ export class BinanceTicker {
     const admin = getAdminClient();
     // Comprehensive list of common crypto symbols
     const symbols = Array.from(this.activeSymbols).map(s => s.toUpperCase().replace('USDT', ''));
+    if (!symbols.includes('DODGE')) symbols.push('DODGE');
+    if (!symbols.includes('DODGEUSDT')) symbols.push('DODGEUSDT');
     const rows = symbols.map(sym => ({
       id: sym,
       instrument_token: 0,
@@ -224,9 +226,13 @@ export class BinanceTicker {
       // Upsert standard symbol (e.g. ETHUSDT)
       this.dbWriter.addTick(result.symbol, result.tickData);
 
-      // Also upsert short symbol (e.g. ETH) so orders using abbreviated symbols match
+      // Upsert short symbol (e.g. ETH) so orders using abbreviated symbols match
       const shortSymbol = result.symbol.replace('USDT', '');
       this.dbWriter.addTick(shortSymbol, result.tickData);
+      if (shortSymbol === 'DOGE') {
+        this.dbWriter.addTick('DODGE', result.tickData);
+        this.dbWriter.addTick('DODGEUSDT', result.tickData);
+      }
     } catch (err) {
       logger.warn({ err, raw }, 'Failed to parse Binance stream message');
     }

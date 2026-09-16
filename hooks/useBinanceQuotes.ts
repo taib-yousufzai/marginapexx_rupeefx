@@ -33,7 +33,8 @@ export function useBinanceQuotes(symbols: string[]) {
       symbols
         .filter(s => s && !s.includes(':'))
         .map(s => {
-          const upper = s.trim().toUpperCase().replace('/', '');
+          let upper = s.trim().toUpperCase().replace('/', '');
+          if (upper === 'DODGE' || upper === 'DODGEUSDT') return 'DOGEUSDT';
           return upper.endsWith('USDT') ? upper : `${upper}USDT`;
         })
     ));
@@ -101,6 +102,10 @@ export function useBinanceQuotes(symbols: string[]) {
           const shortSymbol = symUpper.replace('USDT', '');
           pendingUpdatesRef.current[symUpper] = quote;
           pendingUpdatesRef.current[shortSymbol] = quote;
+          if (shortSymbol === 'DOGE') {
+            pendingUpdatesRef.current['DODGE'] = quote;
+            pendingUpdatesRef.current['DODGEUSDT'] = quote;
+          }
         }
       } catch (err) {
         console.error('[useBinanceQuotes] WS parse error:', err);

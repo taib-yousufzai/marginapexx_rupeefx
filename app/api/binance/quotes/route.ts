@@ -9,9 +9,12 @@ export async function GET(request: NextRequest) {
   const rawSymbols = searchParams.get('symbols')?.split(',') || [];
 
   const symbols = rawSymbols
-    .map(s => s.trim().toUpperCase())
-    .filter(Boolean)
-    .map(s => (s.endsWith('USDT') ? s : `${s}USDT`));
+    .map(s => {
+      let sym = s.trim().toUpperCase();
+      if (sym === 'DODGE' || sym === 'DODGEUSDT') return 'DOGEUSDT';
+      return sym.endsWith('USDT') ? sym : `${sym}USDT`;
+    })
+    .filter(Boolean);
 
   if (symbols.length === 0) {
     return NextResponse.json({ error: 'No symbols provided' }, { status: 400 });
@@ -60,6 +63,10 @@ export async function GET(request: NextRequest) {
           quotes[item.symbol] = quote;
           const shortSymbol = item.symbol.replace('USDT', '');
           quotes[shortSymbol] = quote;
+          if (item.symbol === 'DOGEUSDT') {
+            quotes['DODGE'] = quote;
+            quotes['DODGEUSDT'] = quote;
+          }
         }
       });
     } else {
@@ -89,6 +96,10 @@ export async function GET(request: NextRequest) {
                 quotes[item.symbol] = quote;
                 const shortSymbol = item.symbol.replace('USDT', '');
                 quotes[shortSymbol] = quote;
+                if (item.symbol === 'DOGEUSDT') {
+                  quotes['DODGE'] = quote;
+                  quotes['DODGEUSDT'] = quote;
+                }
               }
             }
           } catch {

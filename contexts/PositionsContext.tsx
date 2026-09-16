@@ -329,7 +329,9 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
           let binanceSymbol = '';
           if (isCrypto) {
             binanceSymbol = (p.symbol || '').replace(/^(CRYPTO:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
-            if (binanceSymbol.endsWith('USD') && !binanceSymbol.endsWith('USDT')) {
+            if (binanceSymbol === 'DODGE' || binanceSymbol === 'DODGEUSDT') {
+              binanceSymbol = 'DOGEUSDT';
+            } else if (binanceSymbol.endsWith('USD') && !binanceSymbol.endsWith('USDT')) {
               binanceSymbol = binanceSymbol.slice(0, -3) + 'USDT';
             } else if (!binanceSymbol.endsWith('USDT')) {
               binanceSymbol += 'USDT';

@@ -34,6 +34,19 @@ const MarketDataContext = createContext<MarketDataContextType>({
   reconnectCount: 0,
 });
 
+const COMEX_ALIAS_MAP: Record<string, string[]> = {
+  'XAUUSD': ['GC=F', 'GC', 'COMEX:XAUUSD', 'COMEX:GOLD', 'COMEX:GC'],
+  'GC=F': ['XAUUSD', 'GC', 'COMEX:XAUUSD', 'COMEX:GOLD'],
+  'XAGUSD': ['SI=F', 'SI', 'COMEX:XAGUSD', 'COMEX:SILVER', 'COMEX:SI'],
+  'SI=F': ['XAGUSD', 'SI', 'COMEX:XAGUSD', 'COMEX:SILVER'],
+  'XTIUSD': ['CL=F', 'CL', 'WTI', 'USOIL', 'COMEX:XTIUSD', 'COMEX:CRUDE', 'COMEX:CL', 'COMEX:WTI'],
+  'CL=F': ['XTIUSD', 'CL', 'WTI', 'COMEX:XTIUSD', 'COMEX:CRUDE'],
+  'XCUUSD': ['HG=F', 'HG', 'COMEX:XCUUSD', 'COMEX:COPPER', 'COMEX:HG'],
+  'HG=F': ['XCUUSD', 'HG', 'COMEX:XCUUSD', 'COMEX:COPPER'],
+  'XNGUSD': ['NG=F', 'NG', 'COMEX:XNGUSD', 'COMEX:NATGAS', 'COMEX:NG'],
+  'NG=F': ['XNGUSD', 'NG', 'COMEX:XNGUSD', 'COMEX:NATGAS'],
+};
+
 // Singleton manager
 class MarketWSManager {
   private ws: WebSocket | null = null;
@@ -62,43 +75,10 @@ class MarketWSManager {
   public lastMessageReceivedTime = 0;
 
   constructor() {
-    // Smart URL resolution for production and development
+    // Connect to production Railway ticker WebSocket (or custom configured env)
     let url = process.env.NEXT_PUBLIC_TICKER_WS_URL;
-
-    // Skip Vercel URLs as they don't support WebSocket
-    if (url && url.includes('vercel.app')) url = '';
-
-    // Try to derive WS URL from HTTP ticker URL
-    if (!url && process.env.NEXT_PUBLIC_TICKER_URL) {
-      const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL;
-      if (!tickerUrl.includes('vercel.app')) {
-        url = tickerUrl.replace(/^http/, 'ws');
-      }
-    }
-
-    // Production fallback: Use Railway production URL
-    if (!url) {
-      // Check if we're in production by looking at window.location
-      if (typeof window !== 'undefined') {
-        const hostname = window.location.hostname;
-        // If production domain, use production ticker
-        if (hostname !== 'localhost' && !hostname.includes('127.0.0.1')) {
-          // IMPORTANT: Ticker runs on a SEPARATE service in production!
-          // This should be set via NEXT_PUBLIC_TICKER_WS_URL environment variable
-          // For now, we'll try common patterns and provide detailed error logging
-          url = 'wss://marginapexx-production.up.railway.app';
-          console.error('[MarketWSManager] ⚠️ WARNING: Using main app URL for WebSocket. Ticker service might be separate!');
-          console.error('[MarketWSManager] Please set NEXT_PUBLIC_TICKER_WS_URL to the correct ticker service URL.');
-          console.error('[MarketWSManager] Current URL:', url);
-        } else {
-          // Localhost development - ticker runs on port 8080
-          url = 'ws://localhost:8080';
-          console.log('[MarketWSManager] Using local development ticker URL:', url);
-        }
-      } else {
-        // Server-side fallback
-        url = 'wss://marginapexx-production.up.railway.app';
-      }
+    if (!url || url.includes('vercel.app')) {
+      url = 'wss://marginapexx-production.up.railway.app';
     }
 
     this.wsUrl = url;
@@ -169,14 +149,6 @@ class MarketWSManager {
       }
       this.ws = null;
     }
-    if (this.binanceWs) {
-      this.binanceWs.onopen = null;
-      this.binanceWs.onmessage = null;
-      this.binanceWs.onerror = null;
-      this.binanceWs.onclose = null;
-      try { this.binanceWs.close(); } catch { }
-      this.binanceWs = null;
-    }
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -185,10 +157,13 @@ class MarketWSManager {
 
   private connectBinance() {
     if (typeof window === 'undefined') return;
-    const cryptoSymbols: string[] = [];
-    const CRYPTO_BASES = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'];
+    const defaultCryptos = ['BTCUSDT', 'ETHUSDT', 'DOGEUSDT', 'SOLUSDT', 'XRPUSDT', 'ADAUSDT', 'BNBUSDT', 'PAXGUSDT', 'EURUSDT', 'GBPUSDT'];
+    const cryptoSymbols: string[] = [...defaultCryptos];
+    const CRYPTO_BASES = ['BTC', 'ETH', 'DOGE', 'DODGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'PAXG'];
     for (const sym of Array.from(this.symbolRefCount.keys())) {
-      const upper = sym.toUpperCase().replace(/^CRYPTO:/, '').trim();
+      let upper = sym.toUpperCase().replace(/^CRYPTO:/, '').trim();
+      if (upper === 'DODGE') upper = 'DOGE';
+      if (upper === 'DODGEUSDT') upper = 'DOGEUSDT';
       if (upper.endsWith('USDT')) {
         cryptoSymbols.push(upper);
       } else if (CRYPTO_BASES.includes(upper)) {
@@ -219,19 +194,23 @@ class MarketWSManager {
             const lp = parseFloat(data.c || '0');
             const bp = parseFloat(data.b || data.c || '0');
             const ap = parseFloat(data.a || data.c || '0');
-            const close = parseFloat(data.x || data.o || '0');
+            const pChange = parseFloat(data.p || '0');
+            const pChangePct = parseFloat(data.P || '0');
+            const openVal = parseFloat(data.o || '0');
+            const close = parseFloat(data.x || (openVal > 0 ? openVal : (lp - pChange)) || lp);
 
             const quoteObj = {
               timestamp: new Date(data.E || Date.now()).toISOString(),
               last_price: lp,
               volume: parseFloat(data.v || '0'),
               ohlc: {
-                open: parseFloat(data.o || '0'),
-                high: parseFloat(data.h || '0'),
-                low: parseFloat(data.l || '0'),
+                open: openVal > 0 ? openVal : close,
+                high: parseFloat(data.h || lp),
+                low: parseFloat(data.l || lp),
                 close,
               },
-              net_change: lp - close,
+              net_change: pChange !== 0 ? pChange : (lp - close),
+              changePercent: pChangePct !== 0 ? pChangePct : (close > 0 ? ((lp - close) / close * 100) : 0),
               bid: bp,
               ask: ap,
             };
@@ -240,6 +219,19 @@ class MarketWSManager {
             this.notifyListeners('update', { symbol: symUpper, quote: quoteObj });
             this.notifyListeners('update', { symbol: shortSymbol, quote: quoteObj });
             this.notifyListeners('update', { symbol: `CRYPTO:${shortSymbol}`, quote: quoteObj });
+
+            if (shortSymbol === 'DOGE') {
+              this.notifyListeners('update', { symbol: 'DODGE', quote: quoteObj });
+              this.notifyListeners('update', { symbol: 'DODGEUSDT', quote: quoteObj });
+              this.notifyListeners('update', { symbol: 'CRYPTO:DODGE', quote: quoteObj });
+            }
+
+            if (symUpper === 'PAXGUSDT') {
+              this.notifyListeners('update', { symbol: 'XAUUSD', quote: quoteObj });
+              this.notifyListeners('update', { symbol: 'GC=F', quote: quoteObj });
+              this.notifyListeners('update', { symbol: 'COMEX:XAUUSD', quote: quoteObj });
+              this.notifyListeners('update', { symbol: 'COMEX:GOLD', quote: quoteObj });
+            }
           }
         } catch (e) {
           console.error('[MarketWSManager] Binance WS parse error:', e);
@@ -294,8 +286,8 @@ class MarketWSManager {
               close: raw.prevClose || price,
             },
             net_change: price - (raw.prevClose || price),
-            bid: price,
-            ask: price,
+            bid: raw.bid || price,
+            ask: raw.ask || price,
           };
 
           this.notifyListeners('update', { symbol: sym, quote: quoteObj });
@@ -308,19 +300,112 @@ class MarketWSManager {
     };
 
     pollUSQuotes();
-    this.usStockInterval = setInterval(pollUSQuotes, 2000);
+    this.usStockInterval = setInterval(pollUSQuotes, 1000);
   }
 
-  private connect() {
+  private comexInterval: ReturnType<typeof setInterval> | null = null;
+
+  private connectCOMEX() {
+    if (typeof window === 'undefined') return;
+    if (this.comexInterval) return;
+
+    const pollCOMEX = async () => {
+      const defaultComex = ['XAUUSD', 'GOLD', 'GC=F', 'SILVER', 'XAGUSD', 'SI=F', 'CRUDE', 'XTIUSD', 'CL=F', 'COPPER', 'XCUUSD', 'HG=F', 'NATGAS', 'XNGUSD', 'NG=F'];
+      const comexSymbols: string[] = [...defaultComex];
+
+      for (const sym of Array.from(this.symbolRefCount.keys())) {
+        const upper = sym.toUpperCase().replace(/^(COMEX:|MCX:|TVC:|FX:|OANDA:)/i, '').trim();
+        comexSymbols.push(upper);
+      }
+
+      const unique = Array.from(new Set(comexSymbols));
+      try {
+        const res = await fetch(`/api/market/comex?symbols=${encodeURIComponent(unique.join(','))}`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const quotesMap = json?.quotes || {};
+
+        for (const [sym, q] of Object.entries(quotesMap)) {
+          const upper = sym.toUpperCase();
+          if (this.binanceWs && this.binanceWs.readyState === WebSocket.OPEN && (upper === 'XAUUSD' || upper === 'GOLD' || upper === 'GC=F')) {
+            continue;
+          }
+          const raw = q as any;
+          const price = raw.lastPrice || raw.price || 0;
+          if (price <= 0) continue;
+
+          const quoteObj = {
+            timestamp: new Date().toISOString(),
+            last_price: price,
+            volume: raw.volume || 5000,
+            ohlc: {
+              open: raw.open || price,
+              high: raw.high || price,
+              low: raw.low || price,
+              close: raw.close || raw.open || price,
+            },
+            net_change: raw.change || (price - (raw.close || price)),
+            bid: raw.bid || price,
+            ask: raw.ask || price,
+          };
+
+          this.notifyListeners('update', { symbol: sym, quote: quoteObj });
+          this.notifyListeners('update', { symbol: `COMEX:${sym}`, quote: quoteObj });
+          this.notifyListeners('update', { symbol: upper, quote: quoteObj });
+          this.notifyListeners('update', { symbol: `COMEX:${upper}`, quote: quoteObj });
+
+          const aliases = COMEX_ALIAS_MAP[upper] || [];
+          for (const alias of aliases) {
+            this.notifyListeners('update', { symbol: alias, quote: quoteObj });
+            this.notifyListeners('update', { symbol: `COMEX:${alias}`, quote: quoteObj });
+          }
+        }
+      } catch (e) {
+        // fail silently
+      }
+    };
+
+    pollCOMEX();
+    this.comexInterval = setInterval(pollCOMEX, 500);
+  }
+
+  private overviewInterval: ReturnType<typeof setInterval> | null = null;
+
+  private connectMarketOverview() {
+    if (typeof window === 'undefined') return;
+    if (this.overviewInterval) return;
+
+    const pollOverview = async () => {
+      try {
+        const res = await fetch('/api/market/overview', { cache: 'no-store' });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && data.quotes) {
+          for (const [sym, q] of Object.entries(data.quotes)) {
+            this.notifyListeners('update', { symbol: sym, quote: q });
+          }
+        }
+      } catch (e) {
+        // fail silently
+      }
+    };
+
+    pollOverview();
+    this.overviewInterval = setInterval(pollOverview, 1000);
+  }
+
+  public connect() {
+    this.connectBinance();
+    this.connectUSStocks();
+    this.connectCOMEX();
+    this.connectMarketOverview();
+
     console.log('[MarketWSManager] connect() called, symbolRefCount:', this.symbolRefCount.size, 'ws state:', this.ws?.readyState);
 
     if (this.symbolRefCount.size === 0) {
-      console.log('[MarketWSManager] No symbols to subscribe to, skipping connect');
+      console.log('[MarketWSManager] No symbols to subscribe to, skipping backend WS connect');
       return;
     }
-
-    this.connectBinance();
-    this.connectUSStocks();
 
     // Prevent overlapping connection attempts
     if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
@@ -509,9 +594,6 @@ class MarketWSManager {
     if (toUnsubscribe.length > 0 && this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ action: 'unsubscribe', symbols: toUnsubscribe }));
     }
-    if (this.symbolRefCount.size === 0) {
-      this.disconnectCleanly();
-    }
   }
 
   private static instance: MarketWSManager | null = null;
@@ -612,7 +694,18 @@ export function normalizeQuote(q: any, symbolKey?: string): QuoteData {
 
 // Global provider component
 export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [quotes, setQuotes] = useState<Record<string, QuoteData>>({});
+  const [quotes, setQuotes] = useState<Record<string, QuoteData>>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('marginApex_market_overview_quotes_persisted');
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+      } catch (e) {}
+    }
+    return {};
+  });
   const [statusInfo, setStatusInfo] = useState<{
     connectionStatus: 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
     lastError: string | null;
@@ -627,6 +720,31 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const pendingUpdatesRef = useRef<Record<string, QuoteData>>({});
   const fetchInitialQuotesRef = useRef<() => void>(() => { });
   const isFetchingRef = useRef<boolean>(false);
+
+  // Connect background WS and ticker streams on mount
+  useEffect(() => {
+    wsManager.connect();
+  }, [wsManager]);
+
+  // Immediately pre-fetch live market overview quotes from Redis (<5ms) on mount
+  useEffect(() => {
+    fetch('/api/market/overview', { cache: 'no-store' })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.quotes && Object.keys(data.quotes).length > 0) {
+          const normalizedMap: Record<string, QuoteData> = {};
+          for (const [sym, q] of Object.entries(data.quotes)) {
+            normalizedMap[sym] = normalizeQuote(q, sym);
+          }
+          setQuotes(prev => {
+            const next = { ...prev, ...normalizedMap };
+            try { localStorage.setItem('marginApex_market_overview_quotes_persisted', JSON.stringify(next)); } catch {}
+            return next;
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Flush pending updates every 250ms to reduce render count
   useEffect(() => {
@@ -745,25 +863,10 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       // Fallback 2: Direct query to Railway ticker daemon
       try {
-        let baseUrl = process.env.NEXT_PUBLIC_TICKER_URL;
-
-        if (!baseUrl) {
-          if (typeof window !== 'undefined') {
-            const hostname = window.location.hostname;
-            if (hostname !== 'localhost' && !hostname.includes('127.0.0.1')) {
-              baseUrl = 'https://marginapexx-production.up.railway.app';
-              console.log('[MarketDataProvider] Using production ticker HTTP URL');
-            } else {
-              baseUrl = 'http://localhost:8080';
-              console.log('[MarketDataProvider] Using local ticker HTTP URL (port 8080)');
-            }
-          } else {
-            baseUrl = 'https://marginapexx-production.up.railway.app';
-          }
-        }
+        const baseUrl = process.env.NEXT_PUBLIC_TICKER_URL || 'https://marginapexx-production.up.railway.app';
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        const timeoutId = setTimeout(() => controller.abort(), 2500);
 
         const res = await fetch(`${baseUrl}/quotes?symbols=${symbols.map(s => encodeURIComponent(String(s))).join(',')}`, {
           signal: controller.signal,
@@ -783,11 +886,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
         }
       } catch (err: any) {
-        if (err.name === 'AbortError') {
-          console.error('[MarketDataProvider] Direct ticker daemon timeout - slow network');
-        } else {
-          console.error('[MarketDataProvider] Direct HTTP fallback error:', err);
-        }
+        // Failover silent
       } finally {
         isFetchingRef.current = false;
       }
