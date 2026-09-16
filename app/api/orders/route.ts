@@ -96,23 +96,27 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
     if (!cleanSym.endsWith('USDT')) {
       cleanSym = cleanSym + 'USDT';
     }
+    const baseClean = cleanSym.replace('USDT', '');
 
-    // 1. Try Redis cache first (populated by ticker daemon if running)
+    // 1. Try Redis cache first (0.5ms) across all possible crypto symbol keys
     try {
       const redis = getRedisClient();
-      const cached = await redis.hget('market:quotes', cleanSym);
-      if (cached) {
-        const tick = JSON.parse(cached);
-        if (tick && (tick.last_price > 0 || tick.lastPrice > 0)) {
-          const ltp = Number(tick.last_price || tick.lastPrice);
-          const bp = tick.bid ? Number(tick.bid) : ltp;
-          const ap = tick.ask ? Number(tick.ask) : ltp;
-          return {
-            last_price: ltp,
-            bid: bp,
-            ask: ap,
-            depth: tick.depth || null,
-          };
+      const keysToTry = [cleanSym, baseClean, `CRYPTO:${cleanSym}`, `CRYPTO:${baseClean}`, `BINANCE:${cleanSym}`];
+      for (const k of keysToTry) {
+        const cached = await redis.hget('market:quotes', k);
+        if (cached) {
+          const tick = JSON.parse(cached);
+          const ltp = Number(tick.last_price || tick.lastPrice || 0);
+          if (ltp > 0) {
+            const bp = tick.bid ? Number(tick.bid) : ltp;
+            const ap = tick.ask ? Number(tick.ask) : ltp;
+            return {
+              last_price: ltp,
+              bid: bp,
+              ask: ap,
+              depth: tick.depth || null,
+            };
+          }
         }
       }
     } catch (e) { }
@@ -123,7 +127,6 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
       fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(2500) }).catch(() => null),
     ]);
 
-    const isForexUsd = ['GBPUSD', 'EURUSD'].includes(cleanSym.replace('USDT', ''));
     const usdInrRate = 1;
 
     if (bookRes?.ok && priceRes?.ok) {
@@ -146,6 +149,17 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
           sell: [{ price: ask, quantity: askQty }],
         }
       };
+    } else if (priceRes?.ok) {
+      const priceData = await priceRes.json();
+      const rawLtp = parseFloat(priceData.price || '0');
+      if (rawLtp > 0) {
+        return {
+          last_price: rawLtp,
+          bid: rawLtp,
+          ask: rawLtp,
+          depth: null,
+        };
+      }
     }
   } catch (err) {
     console.error('[fetchBinanceQuote] Error:', err);
@@ -308,8 +322,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const { getCachedUserOrders, setCachedUserOrders } = await import('@/lib/redisHistoryCache');
     const page = parseInt(searchParams.get('page') ?? '1', 10);
     const limit = parseInt(searchParams.get('limit') ?? '50', 10);
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const isFresh = searchParams.get('fresh') === 'true';
     const statusParam = searchParams.get('status');
     const requestedStatuses = statusParam ? statusParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : null;
+    const admin = getAdminClient();
 
     if (!isFresh && searchParams.get('page') === null) {
       const cachedOrders = await getCachedUserOrders(user.id);
@@ -972,7 +990,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Enforce Anti-Scalping hold duration for manual market exits
     if (is_exit && activePosition && (order_type === 'MARKET' || order_type === 'SLM')) {
       const exitBuffer = segSetting?.exit_buffer ?? 0;
-      const profitHoldSec = segSetting?.profit_hold_sec ?? 120;
+      const profitHoldSec = segSetting?.profit_hold_sec ?? 0;
       const lossHoldSec = segSetting?.loss_hold_sec ?? 0;
 
       let estExitPrice: number;
