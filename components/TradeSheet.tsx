@@ -91,8 +91,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   // Derived convenience aliases kept for JSX readability
   const isSubmitting = orderState === 'processing';
   const orderError = orderState === 'error' ? orderErrorMsg : null;
-  // isBusy gates the BUY/SELL footer buttons â€” also checks the hook's own loading flag
-  const isBusy = placingOrder || isSubmitting;
+  // isBusy gates the BUY/SELL footer buttons — checks local submit state of this sheet
+  const isBusy = isSubmitting;
   const isExpired = useMemo(() => {
     if (!item?.expiry || effectiveExitMode || isModify) return false;
     const expiryDate = new Date(item.expiry);
