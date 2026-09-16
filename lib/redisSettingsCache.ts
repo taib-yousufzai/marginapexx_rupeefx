@@ -102,6 +102,90 @@ export async function getCachedUserSegmentSettings(
 }
 
 /**
+ * In-memory L1 cache for User Profiles (static permissions)
+ */
+interface CachedUserProfile {
+  id: string;
+  active: boolean;
+  read_only: boolean;
+  segments: string[];
+  parent_id: string | null;
+  trading_mode: string | null;
+  history_reset_at: string | null;
+}
+
+const MEM_USER_PROFILES = new Map<string, { data: CachedUserProfile; expiresAt: number }>();
+
+/**
+ * Get user profile static permissions using in-memory + Redis caching (5-minute TTL).
+ */
+export async function getCachedUserProfile(
+  userId: string,
+  getSupabaseAdmin: () => any
+): Promise<CachedUserProfile | null> {
+  const now = Date.now();
+  const memCached = MEM_USER_PROFILES.get(userId);
+  if (memCached && memCached.expiresAt > now) {
+    return memCached.data;
+  }
+
+  const redis = getRedisClient();
+  const redisKey = `user:profile_perms:${userId}`;
+
+  try {
+    const cached = await redis.get(redisKey);
+    if (cached) {
+      const parsed: CachedUserProfile = JSON.parse(cached);
+      MEM_USER_PROFILES.set(userId, { data: parsed, expiresAt: now + 60 * 1000 });
+      return parsed;
+    }
+  } catch (_) {}
+
+  try {
+    const admin = getSupabaseAdmin();
+    const { data, error } = await admin
+      .from('profiles')
+      .select('id, active, read_only, segments, parent_id, trading_mode, history_reset_at')
+      .eq('id', userId)
+      .single();
+
+    if (error || !data) return null;
+
+    const profileData: CachedUserProfile = {
+      id: data.id,
+      active: Boolean(data.active),
+      read_only: Boolean(data.read_only),
+      segments: Array.isArray(data.segments) ? data.segments : [],
+      parent_id: data.parent_id ?? null,
+      trading_mode: data.trading_mode ?? 'default',
+      history_reset_at: data.history_reset_at ?? null,
+    };
+
+    MEM_USER_PROFILES.set(userId, { data: profileData, expiresAt: now + 60 * 1000 });
+
+    try {
+      await redis.setex(redisKey, 300, JSON.stringify(profileData));
+    } catch (_) {}
+
+    return profileData;
+  } catch (err) {
+    console.warn('[getCachedUserProfile] Fallback error:', err);
+    return null;
+  }
+}
+
+/**
+ * Invalidate user profile permissions cache.
+ */
+export async function invalidateUserProfile(userId: string): Promise<void> {
+  MEM_USER_PROFILES.delete(userId);
+  const redis = getRedisClient();
+  try {
+    await redis.del(`user:profile_perms:${userId}`);
+  } catch (_) {}
+}
+
+/**
  * Invalidate user segment settings in Redis when updated by admin.
  */
 export async function invalidateUserSegmentSettings(userId: string): Promise<void> {
@@ -149,6 +233,32 @@ export async function getCachedTemplateScripts(
 }
 
 /**
+ * Invalidate user positions API response cache in Redis.
+ */
+export async function invalidateUserPositionsCache(userId: string): Promise<void> {
+  const redis = getRedisClient();
+  try {
+    const keys = await redis.keys(`api:positions:${userId}:*`);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  } catch (_) {}
+}
+
+/**
+ * Invalidate user orders API response cache in Redis.
+ */
+export async function invalidateUserOrdersCache(userId: string): Promise<void> {
+  const redis = getRedisClient();
+  try {
+    const keys = await redis.keys(`api:orders:${userId}:*`);
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+  } catch (_) {}
+}
+
+/**
  * Invalidate template scripts cache in Redis when an admin updates a template.
  */
 export async function invalidateTemplateScripts(templateId: number): Promise<void> {
@@ -157,3 +267,5 @@ export async function invalidateTemplateScripts(templateId: number): Promise<voi
     await redis.del(`template:scripts:${templateId}`);
   } catch (_) {}
 }
+
+

@@ -69,7 +69,19 @@ export async function POST(
       return Response.json({ error: 'User profile not found' }, { status: 404 });
     }
 
-    // 4. Audit log
+    // 4. Invalidate caches
+    try {
+      const { invalidateUserProfile, invalidateUserPositionsCache, invalidateUserOrdersCache } = await import('@/lib/redisSettingsCache');
+      const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+      await Promise.all([
+        invalidateUserProfile(id),
+        invalidateUserPositionsCache(id),
+        invalidateUserOrdersCache(id),
+        invalidateUserHistoryCache(id),
+      ]);
+    } catch (_) {}
+
+    // 5. Audit log
     await auditLog(adminClient, callerUser.id, id, 'Clear History', {
       history_reset_at: resetTimestamp,
       client_id: profileData.client_id,

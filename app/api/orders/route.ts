@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient } from '@/lib/redis';
-import { getCachedScriptSettings } from '@/lib/redisSettingsCache';
+import { getCachedScriptSettings, getCachedUserProfile, getCachedUserSegmentSettings, invalidateUserPositionsCache, invalidateUserOrdersCache } from '@/lib/redisSettingsCache';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 
 function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[] | Record<string, number>): number {
@@ -341,13 +341,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     }
     ordersQuery = ordersQuery.range(from, to);
 
-    // Fetch user profile, orders, and open positions in a SINGLE parallel round-trip with a 2.5s fast timeout
+    // Fetch cached user profile, orders, and open positions in parallel (0 DB queries for profile)
     const queryPromise = Promise.all([
-      admin
-        .from('profiles')
-        .select('history_reset_at')
-        .eq('id', user.id)
-        .maybeSingle(),
+      getCachedUserProfile(user.id, () => admin),
       ordersQuery,
       includeVirtualOrders
         ? admin
@@ -372,15 +368,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Orders query timed out' }, { status: 504 });
     }
 
-    let userProfileRes: any = { data: null };
+    let userProfile: any = null;
     let ordersRes: any = { data: [] };
     let posRes: any = { data: [] };
 
     if (raceRes && Array.isArray(raceRes)) {
-      [userProfileRes, ordersRes, posRes] = raceRes;
+      [userProfile, ordersRes, posRes] = raceRes;
     }
 
-    const userProfile = userProfileRes?.data;
     const historyResetAt = userProfile?.history_reset_at ? new Date(userProfile.history_reset_at).getTime() : null;
 
     let dbOrders = ordersRes.data ?? [];
@@ -646,26 +641,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       instrumentsToFetch.push(underlyingId);
     }
 
-    // 4-6 + 8-9: Run all independent DB queries AND the Kite LTP fetch in parallel.
-    // This is the key optimization — previously these were sequential (~4 round-trips).
-    const [profileResult, segSettingsResult, scalperSegSettingsResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult] = await Promise.all([
-      // Profile
+    // 4-6 + 8-9: Run cached profile / settings lookups AND independent DB queries in parallel.
+    // This reduces multi-table Postgres round-trips to an instant hot memory/Redis lookup.
+    const [cachedProfile, balanceResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult] = await Promise.all([
+      // Profile (Cached in L1/Redis for instant permissions & trading mode)
+      getCachedUserProfile(user.id, () => admin),
+
+      // Fresh balance from profiles
       admin.from('profiles')
-        .select('id, active, read_only, segments, parent_id, balance, trading_mode')
+        .select('balance')
         .eq('id', user.id)
         .single(),
-
-      // Segment settings (we don't know parent_id yet, so we'll refetch if needed)
-      admin.from('segment_settings')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('segment', dbSegment),
-
-      // Scalper segment settings
-      admin.from('scalper_segment_settings')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('segment', dbSegment),
 
       // Fetch active positions to verify total open lot limits (max_lot)
       admin.from('positions')
@@ -734,8 +720,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     ]);
 
     const t4_backendQuoteRead = Date.now();
-    const profile = profileResult.data;
-    const profileErr = profileResult.error;
+    const profile = cachedProfile ? {
+      ...cachedProfile,
+      balance: Number(balanceResult.data?.balance ?? 0),
+    } : null;
+    const profileErr = !profile ? 'Profile not found' : null;
     const rawQuote = quotesMap[kiteInst];
     const kiteLtp = typeof rawQuote === 'number' ? rawQuote : (rawQuote?.last_price ?? null);
     const dbScriptSettings = (scriptSettingsResult?.data as any[]) ?? [];
@@ -757,25 +746,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: `Trading not allowed in segment: ${segment}` }, { status: 403 });
     }
 
-    // 6. Segment settings — choose based on active trading mode
+    // 6. Segment settings — cached resolution with parent inheritance
     const isScalper = profile.trading_mode === 'scalper';
-    const settingsList = isScalper ? (scalperSegSettingsResult.data || []) : (segSettingsResult.data || []);
-
-    let buySetting = settingsList.find((s: any) => s.side === 'BUY');
-    let sellSetting = settingsList.find((s: any) => s.side === 'SELL');
-
-    if ((!buySetting || !sellSetting) && profile.parent_id && profile.parent_id !== user.id) {
-      const targetTable = isScalper ? 'scalper_segment_settings' : 'segment_settings';
-      const { data } = await admin
-        .from(targetTable)
-        .select('*')
-        .eq('user_id', profile.parent_id)
-        .eq('segment', dbSegment);
-      if (data) {
-        if (!buySetting) buySetting = data.find((s: any) => s.side === 'BUY');
-        if (!sellSetting) sellSetting = data.find((s: any) => s.side === 'SELL');
-      }
+    const lookupId = profile.parent_id ?? user.id;
+    let settingsList = await getCachedUserSegmentSettings(lookupId, dbSegment, isScalper, () => admin);
+    if ((!settingsList || settingsList.length === 0) && lookupId !== user.id) {
+      settingsList = await getCachedUserSegmentSettings(user.id, dbSegment, isScalper, () => admin);
     }
+
+    let buySetting = (settingsList || []).find((s: any) => s.side === 'BUY');
+    let sellSetting = (settingsList || []).find((s: any) => s.side === 'SELL');
 
     // If there are still no settings in database, construct safety fallback defaults based on segment
     const segUpper = dbSegment.toUpperCase();
@@ -1470,33 +1450,40 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         : `${side} ${order_type} order placed (Pending) at ₹${fillPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
     };
 
-    if (attemptRedisKey) {
+    // Decoupled asynchronous post-processing (zero blocking latency on HTTP response)
+    queueMicrotask(async () => {
+      if (attemptRedisKey) {
+        try {
+          const redis = getRedisClient();
+          await redis.setex(attemptRedisKey, 60, JSON.stringify(response));
+        } catch { /* ignore */ }
+      }
+
       try {
         const redis = getRedisClient();
-        await Promise.race([
-          redis.setex(attemptRedisKey, 60, JSON.stringify(response)),
-          new Promise(r => setTimeout(r, 300))
+        await redis.publish('order_events', JSON.stringify({
+          user_id: user.id,
+          order_id: response.order_id,
+          status: response.status,
+          fill_price: response.fill_price,
+          symbol: symbol,
+          side: side,
+          timestamp: new Date().toISOString(),
+        }));
+      } catch { /* ignore */ }
+
+      try {
+        const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+        await invalidateUserHistoryCache(user.id);
+      } catch { /* ignore */ }
+
+      try {
+        await Promise.all([
+          invalidateUserPositionsCache(user.id),
+          invalidateUserOrdersCache(user.id),
         ]);
       } catch { /* ignore */ }
-    }
-
-    try {
-      const redis = getRedisClient();
-      redis.publish('order_events', JSON.stringify({
-        user_id: user.id,
-        order_id: response.order_id,
-        status: response.status,
-        fill_price: response.fill_price,
-        symbol: symbol,
-        side: side,
-        timestamp: new Date().toISOString(),
-      })).catch(() => {});
-    } catch { /* ignore */ }
-
-    try {
-      const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
-      await invalidateUserHistoryCache(user.id);
-    } catch { /* ignore */ }
+    });
 
     return NextResponse.json(response, { status: 201 });
   } catch (topErr: any) {

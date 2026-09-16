@@ -2,6 +2,8 @@ export const dynamic = 'force-dynamic';
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+import { getRedisClient } from '@/lib/redis';
+import { getCachedUserProfile } from '@/lib/redisSettingsCache';
 
 /**
  * GET /api/positions
@@ -17,25 +19,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const admin = getAdminClient();
-
     const { searchParams } = new URL(request.url);
     const statusParam = searchParams.get('status');
 
-    // Fetch profile for history_reset_at — 2s timeout to avoid hanging on Supabase 522s
-    let userProfile: { history_reset_at?: string } | null = null;
+    // Fast Redis cache check (3s TTL for active position polls)
+    const cacheKey = `api:positions:${user.id}:${statusParam || 'open'}:${searchParams.get('all') || ''}:${searchParams.get('from') || ''}`;
     try {
-      const { data } = await admin
-        .from('profiles')
-        .select('history_reset_at')
-        .eq('id', user.id)
-        .maybeSingle()
-        .abortSignal(AbortSignal.timeout(2000));
-      userProfile = data;
-    } catch {
-      // Timeout or connection error — proceed with no history_reset_at filter
-    }
+      const redis = getRedisClient();
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return NextResponse.json(JSON.parse(cached));
+      }
+    } catch (_) {}
 
+    const admin = getAdminClient();
+
+    // Fetch cached profile for history_reset_at (0 DB round trips on warm cache)
+    const userProfile = await getCachedUserProfile(user.id, () => admin);
     const historyResetAt = userProfile?.history_reset_at;
 
     let positionsQuery = admin.from('positions').select('*').eq('user_id', user.id);
@@ -156,7 +156,13 @@ export async function GET(request: NextRequest) {
       };
     }));
 
-    return NextResponse.json({ positions });
+    const responsePayload = { positions };
+    try {
+      const redis = getRedisClient();
+      await redis.setex(cacheKey, 3, JSON.stringify(responsePayload));
+    } catch (_) {}
+
+    return NextResponse.json(responsePayload);
   } catch (error: any) {
     console.error('[Positions API] Error:', error.message);
     return NextResponse.json({ error: error.message }, { status: 500 });

@@ -104,15 +104,30 @@ async function fetchKiteLtp(instrument: string): Promise<number | null> {
   }
 }
 
+import { getRedisClient } from '@/lib/redis';
+import { getCachedUserProfile, getCachedUserSegmentSettings, invalidateUserPositionsCache, invalidateUserOrdersCache } from '@/lib/redisSettingsCache';
+
 async function fetchBinanceQuote(symbol: string): Promise<number | null> {
   try {
     let clean = cleanSym(symbol);
     if (!clean.endsWith('USDT')) {
       clean = clean + 'USDT';
     }
+    // 1. Check Redis in-memory cache first (0.5ms)
+    try {
+      const redis = getRedisClient();
+      const cached = await redis.hget('market:quotes', clean);
+      if (cached) {
+        const tick = JSON.parse(cached);
+        const ltp = Number(tick.last_price || tick.lastPrice || 0);
+        if (ltp > 0) return ltp;
+      }
+    } catch (_) {}
+
+    // 2. Fallback to REST API with 1.5s timeout
     const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${clean}`, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(1500),
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -139,18 +154,15 @@ export async function POST(
 
   const admin = getAdminClient();
 
-  // 1. Parallel fetch position and profile
-  const [posResult, profileResult] = await Promise.all([
+  // 1. Parallel fetch position and cached profile
+  const [posResult, cachedProfile] = await Promise.all([
     admin.from('positions')
       .select('*')
       .eq('id', positionId)
       .eq('user_id', user.id)
       .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
       .maybeSingle(),
-    admin.from('profiles')
-      .select('parent_id, trading_mode')
-      .eq('id', user.id)
-      .single(),
+    getCachedUserProfile(user.id, () => admin),
   ]);
 
   const { data: pos, error: posErr } = posResult;
@@ -159,16 +171,10 @@ export async function POST(
   }
 
   // 2. Parallel fetch segment settings and LTP
-  const isScalper = profileResult.data?.trading_mode === 'scalper';
-  const targetTable = isScalper ? 'scalper_segment_settings' : 'segment_settings';
-  const lookupId = profileResult.data?.parent_id ?? user.id;
-  const [segSettingResult, kiteLtp] = await Promise.all([
-    admin.from(targetTable)
-      .select('exit_buffer, profit_hold_sec, loss_hold_sec, bid_buffer, exit_price_mode')
-      .eq('user_id', lookupId)
-      .eq('segment', pos.settlement ?? '')
-      .eq('side', pos.side)
-      .maybeSingle(),
+  const isScalper = cachedProfile?.trading_mode === 'scalper';
+  const lookupId = cachedProfile?.parent_id ?? user.id;
+  const [segSettingsList, kiteLtp] = await Promise.all([
+    getCachedUserSegmentSettings(lookupId, pos.settlement ?? '', isScalper, () => admin),
     (() => {
       const fetchPromise = (async () => {
         if (!pos.symbol) return null;
@@ -216,7 +222,11 @@ export async function POST(
     })(),
   ]);
 
-  const { data: segSetting } = segSettingResult;
+  let segSetting = Array.isArray(segSettingsList) ? segSettingsList.find((s: any) => s.side === pos.side) : null;
+  if (!segSetting && lookupId !== user.id) {
+    const userSegSettings = await getCachedUserSegmentSettings(user.id, pos.settlement ?? '', isScalper, () => admin);
+    segSetting = Array.isArray(userSegSettings) ? userSegSettings.find((s: any) => s.side === pos.side) : null;
+  }
   const rawExitBuffer = segSetting?.exit_buffer;
   const exitBuffer = (rawExitBuffer !== undefined && rawExitBuffer !== null && !isNaN(Number(rawExitBuffer)))
     ? (Number(rawExitBuffer) > 0.005 ? Number(rawExitBuffer) / 100 : Number(rawExitBuffer))
@@ -318,6 +328,10 @@ export async function POST(
     try {
       const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
       await invalidateUserHistoryCache(user.id);
+      await Promise.all([
+        invalidateUserPositionsCache(user.id),
+        invalidateUserOrdersCache(user.id),
+      ]);
       const { PositionService } = await import('@/lib/trading/PositionService');
       await PositionService.cancelPendingOrdersForClosedPosition(admin, user.id, positionId, pos.symbol);
     } catch (cancelErr) {

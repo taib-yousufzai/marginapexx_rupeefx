@@ -665,9 +665,9 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
     window.addEventListener('position_updated', handleOrderPlaced);
     window.addEventListener('order_executed', handleOrderPlaced);
 
-    // Active polling fallback: even when subscribed to realtime channels,
-    // poll every 8s as a safety net (paused when tab is in background)
-    const pollTime = Math.max(refreshInterval, 8000);
+    // Active polling fallback: event listeners handle instant user actions (0ms).
+    // Polling is a background safety net relaxed to 25s to minimize Supabase IO.
+    const pollTime = Math.max(refreshInterval, 25000);
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') {
         fetchPositions();
