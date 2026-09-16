@@ -74,7 +74,7 @@ import { calculateSingleLegCharge, calculateOrderBrokerage } from '@/lib/trading
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 
-import { mapSymbolToSegment } from '@/lib/trading/SymbolMapping';
+import { mapSymbolToSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
 import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
 import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
@@ -602,7 +602,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Quantity must be positive' }, { status: 400 });
     }
 
-    const dbSegment = mapSegmentToDbSegment(segment);
+    const dbSegment = mapSegmentWithSymbol(segment, symbol);
     const admin = getAdminClient();
 
     // Check market hours

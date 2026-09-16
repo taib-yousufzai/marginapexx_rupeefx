@@ -106,32 +106,34 @@ export function mapSegmentWithSymbol(segment: string, symbol: string = ''): Segm
 
   // Symbol-first: US, forex & crypto symbols check
   if (sym) {
-    if (sym.startsWith('US:') || sym.startsWith('US-EQ:')) return 'US-EQ';
-    if (sym.startsWith('FOREX:')) return 'FOREX';
-    const cleanSym = sym.includes(':') ? sym.split(':')[1] : sym;
+    if (sym.startsWith('US:') || sym.startsWith('US-EQ:') || sym.includes('US-EQ')) return 'US-EQ';
+    if (sym.startsWith('FOREX:') || sym.startsWith('CDS:') || sym.includes('FOREX') || sym.includes('CDS')) return 'FOREX';
+    const cleanSym = sym.replace(/^(CRYPTO:|BINANCE:|FOREX:|COMEX:|NSE:|BSE:|MCX:|NFO:|US:|US-EQ:)/i, '')
+                        .replace(/[\/\s\_]/g, '')
+                        .toUpperCase();
+
     const FOREX_PAIRS = ['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'];
     if (FOREX_PAIRS.includes(cleanSym)) return 'FOREX';
 
-    const CRYPTO_BASES = ['BTC','ETH','DOGE','DODGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC'];
-    if (CRYPTO_BASES.some(c => sym === c || sym.startsWith(c + 'USDT'))) return 'CRYPTO';
-    if (sym.endsWith('USDT')) return 'CRYPTO';
+    const CRYPTO_BASES = ['BTC','ETH','DOGE','DODGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC','LINK','UNI','BCH','SHIB','PEPE','TRX','NEAR','SUI','APT','FET','RNDR','INJ','TIA','OP','ARB'];
+    if (cleanSym.endsWith('USDT') || CRYPTO_BASES.some(c => cleanSym === c || cleanSym.startsWith(c + 'USDT') || cleanSym === c + 'USD')) return 'CRYPTO';
 
     // COMEX commodities / global symbols
-    if (sym.startsWith('COMEX:') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => sym.includes(c)) || sym.endsWith('=F')) return 'COMEX';
+    if (sym.startsWith('COMEX:') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => cleanSym.includes(c)) || cleanSym.endsWith('=F')) return 'COMEX';
 
     // MCX commodities
-    if (sym.includes('GOLD') || sym.includes('SILVER') || sym.includes('CRUDE') || sym.includes('NATURALGAS') || sym.includes('NATGAS') || sym.includes('COPPER') || sym.includes('ZINC') || sym.includes('LEAD') || sym.includes('ALUMINIUM') || sym.includes('NICKEL')) {
-      if (sym.endsWith('CE') || sym.endsWith('PE')) return 'MCX-OPT';
+    if (cleanSym.includes('GOLD') || cleanSym.includes('SILVER') || cleanSym.includes('CRUDE') || cleanSym.includes('NATURALGAS') || cleanSym.includes('NATGAS') || cleanSym.includes('COPPER') || cleanSym.includes('ZINC') || cleanSym.includes('LEAD') || cleanSym.includes('ALUMINIUM') || cleanSym.includes('NICKEL')) {
+      if (cleanSym.endsWith('CE') || cleanSym.endsWith('PE')) return 'MCX-OPT';
       return 'MCX-FUT';
     }
     // Index derivatives
-    if (sym.includes('NIFTY') || sym.includes('SENSEX') || sym.includes('BANKEX')) {
-      if (sym.endsWith('CE') || sym.endsWith('PE')) return 'INDEX-OPT';
+    if (cleanSym.includes('NIFTY') || cleanSym.includes('SENSEX') || cleanSym.includes('BANKEX')) {
+      if (cleanSym.endsWith('CE') || cleanSym.endsWith('PE')) return 'INDEX-OPT';
       return 'INDEX-FUT';
     }
-    if (sym.endsWith('CE') || sym.endsWith('PE')) return 'STOCK-OPT';
-    if (sym.endsWith('FUT')) return 'STOCK-FUT';
-    if (sym.includes('-') || sym.includes('/')) return 'FOREX';
+    if (cleanSym.endsWith('CE') || cleanSym.endsWith('PE')) return 'STOCK-OPT';
+    if (cleanSym.endsWith('FUT')) return 'STOCK-FUT';
+    if (cleanSym.includes('-') || cleanSym.includes('/')) return 'FOREX';
   }
 
   // Fall back to label-based mapping

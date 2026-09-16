@@ -106,18 +106,7 @@ async function fetchKiteLtp(instrument: string): Promise<number | null> {
 
 import { getRedisClient } from '@/lib/redis';
 import { getCachedUserProfile, getCachedUserSegmentSettings, invalidateUserPositionsCache, invalidateUserOrdersCache } from '@/lib/redisSettingsCache';
-
-function mapSegmentToDbSegment(s: string): string {
-  if (!s) return 'NSE';
-  const u = s.toUpperCase().trim();
-  if (u.includes('CRYPTO')) return 'CRYPTO';
-  if (u.includes('COMEX')) return 'COMEX';
-  if (u.includes('MCX') || u.includes('COMMODITY')) return 'MCX';
-  if (u.includes('FOREX') || u.includes('CDS') || u.includes('CURRENCY')) return 'CDS';
-  if (u.includes('BSE')) return 'BSE';
-  if (u.includes('NFO') || u.includes('FNO') || u.includes('OPT') || u.includes('FUT')) return 'NFO';
-  return 'NSE';
-}
+import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 
 async function fetchBinanceQuote(symbol: string): Promise<number | null> {
   try {
@@ -221,7 +210,7 @@ export async function POST(
     return NextResponse.json({ error: 'Position not found or already closed' }, { status: 404 });
   }
 
-  const dbSegment = mapSegmentToDbSegment(pos.settlement || pos.symbol || '');
+  const dbSegment = mapSegmentWithSymbol(pos.settlement || '', pos.symbol || '');
 
   // 2. Parallel fetch segment settings and LTP
   const isScalper = cachedProfile?.trading_mode === 'scalper';

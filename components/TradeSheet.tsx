@@ -129,10 +129,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     : (item ? getLotSize(item.symbol || item.name || '') : 1);
 
   const dbSeg = item ? mapSegmentWithSymbol(item.segment, item.symbol) : '';
+  const cleanSymUpper = (item?.symbol || '').toUpperCase().replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '');
   const isCrypto = !!item?.binanceSymbol ||
-    (item?.segment || '').toUpperCase() === 'CRYPTO' ||
-    (item?.segment || '').toUpperCase() === 'CRYPTO-FUT' ||
-    ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC'].includes(item?.symbol || '');
+    dbSeg === 'CRYPTO' ||
+    (item?.segment || '').toUpperCase().includes('CRYPTO') ||
+    cleanSymUpper.endsWith('USDT') ||
+    ['BTC', 'ETH', 'DOGE', 'DODGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'].some(c => cleanSymUpper === c || cleanSymUpper.startsWith(c));
   const isComex = item && (item as any).preferredView
     ? (item as any).preferredView === 'comex'
     : (dbSeg.toUpperCase().includes('COMEX') || !!item?.comexSymbol || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (item?.symbol || '').toUpperCase().includes(c)));
@@ -216,12 +218,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   let currentChangePercent = parseFloat(item?.change?.replace(/[%+]/g, '') || '0') || 0;
 
   const cryptoQuote = isCrypto && bSymbol ? (marketQuotes[bSymbol] || marketQuotes[item?.symbol?.replace('/', '') || '']) : null;
-  const cleanSymUpper = item?.symbol ? item.symbol.replace(/^US:/i, '').trim().toUpperCase() : '';
+  const usCleanSym = item?.symbol ? item.symbol.replace(/^US:/i, '').trim().toUpperCase() : '';
   const activeKiteQuote = (computedKiteSymbol && marketQuotes[computedKiteSymbol]) ||
     (item?.kiteSymbol && marketQuotes[item.kiteSymbol]) ||
     (item?.symbol && marketQuotes[item.symbol]) ||
-    (cleanSymUpper && marketQuotes[cleanSymUpper]) ||
-    (cleanSymUpper && marketQuotes[`US:${cleanSymUpper}`]) ||
+    (usCleanSym && marketQuotes[usCleanSym]) ||
+    (usCleanSym && marketQuotes[`US:${usCleanSym}`]) ||
     (item?.symbol && marketQuotes[item.symbol.replace(/\s+/g, '')]) ||
     (item?.name && marketQuotes[item.name]) ||
     null;
@@ -1076,7 +1078,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           const orderPayload = {
             symbol: item.symbol,
             kite_instrument: computedKiteSymbol || item.symbol,
-            segment: item.segment,
+            segment: isCrypto ? 'CRYPTO' : (dbSeg || item.segment),
             side: placeSide,
             qty: finalQty,
             lots: finalLots,
@@ -1194,7 +1196,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           const orderPayload = {
             symbol: item.symbol,
             kite_instrument: computedKiteSymbol || item.symbol,
-            segment: item.segment,
+            segment: isCrypto ? 'CRYPTO' : (dbSeg || item.segment),
             side: placeSide,
             qty: finalQty,
             lots: finalLots,

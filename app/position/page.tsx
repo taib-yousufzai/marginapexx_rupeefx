@@ -20,6 +20,7 @@ import { ErrorModal } from '@/components/ErrorModal';
 import HoldLockCountdown from '@/components/HoldLockCountdown';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
 import { fmtSymbolName, isUsdInstrument } from '@/lib/format';
+import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import TickFlash from '@/components/TickFlash';
 import './page.css';
 
@@ -374,11 +375,12 @@ export default function PositionPage() {
   };
 
   const openAddMore = (pos: EnrichedPosition) => {
+    const inferredSeg = mapSegmentWithSymbol(pos.settlement || '', pos.symbol || '');
     setTradeSheetItem({
       name: pos.symbol,
       symbol: pos.symbol,
       kiteSymbol: pos.kite_instrument || pos.symbol,
-      segment: pos.settlement || 'INR',
+      segment: inferredSeg,
       price: pos.current_ltp,
       change: `${pos.pnl_percent >= 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%`,
     });
@@ -394,6 +396,8 @@ export default function PositionPage() {
     // rapid repeated taps within the same event loop tick.
     if (isOpeningTradeSheetRef.current) return;
 
+    const inferredSeg = mapSegmentWithSymbol(pos.settlement || '', pos.symbol || '');
+
     // Guard: if a real non-market pending exit order exists, show warning popup instead.
     const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
     const warningMsg = checkPendingExitConflict(pos.symbol, exitSide, pos.id, false);
@@ -407,7 +411,7 @@ export default function PositionPage() {
           name: pos.symbol,
           symbol: pos.symbol,
           kiteSymbol: pos.kite_instrument || pos.symbol,
-          segment: pos.settlement || 'INR',
+          segment: inferredSeg,
           price: pos.current_ltp,
           change: `${pos.pnl_percent >= 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%`,
         });
@@ -431,7 +435,7 @@ export default function PositionPage() {
       name: pos.symbol,
       symbol: pos.symbol,
       kiteSymbol: pos.kite_instrument || pos.symbol,
-      segment: pos.settlement || 'INR',
+      segment: inferredSeg,
       price: pos.current_ltp,
       change: `${pos.pnl_percent >= 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%`,
     });
@@ -451,6 +455,7 @@ export default function PositionPage() {
     const exitSide = group.side === 'BUY' ? 'SELL' : 'BUY';
     const isCumulative = group.ids.length > 1;
     const linkedId = isCumulative ? null : group.ids[0];
+    const inferredSeg = mapSegmentWithSymbol(group.settlement || '', group.representativePos?.symbol || group.symbol || '');
     
     const warningMsg = checkPendingExitConflict(group.representativePos.symbol, exitSide, linkedId, isCumulative);
     if (warningMsg) {
@@ -460,7 +465,7 @@ export default function PositionPage() {
           name: group.symbol,
           symbol: group.representativePos.symbol,
           kiteSymbol: group.representativePos.kite_instrument || group.symbol,
-          segment: group.settlement || 'INR',
+          segment: inferredSeg,
           price: group.current_ltp,
           change: `${group.pnl_percent >= 0 ? '+' : ''}${group.pnl_percent.toFixed(2)}%`,
         });
@@ -481,7 +486,7 @@ export default function PositionPage() {
       // exact symbol match, so sending the display name causes "No open position to exit".
       symbol: group.representativePos.symbol,
       kiteSymbol: group.representativePos.kite_instrument || group.symbol,
-      segment: group.settlement || 'INR',
+      segment: inferredSeg,
       price: group.current_ltp,
       change: `${group.pnl_percent >= 0 ? '+' : ''}${group.pnl_percent.toFixed(2)}%`,
     });
@@ -505,6 +510,7 @@ export default function PositionPage() {
     const exitSide = pos.side === 'BUY' ? 'SELL' : 'BUY';
     const isCumul = isCumulative ?? false;
     const linkedId = isCumul ? null : pos.id;
+    const inferredSeg = mapSegmentWithSymbol(pos.settlement || '', pos.symbol || '');
 
     // Guard: if a real non-market pending exit order exists, show warning popup.
     const warningMsg = checkPendingExitConflict(pos.symbol, exitSide, linkedId, isCumul);
@@ -515,7 +521,7 @@ export default function PositionPage() {
           name: pos.symbol,
           symbol: pos.symbol,
           kiteSymbol: pos.kite_instrument || pos.symbol,
-          segment: pos.settlement || 'INR',
+          segment: inferredSeg,
           price: pos.current_ltp,
           change: `${pos.pnl_percent >= 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%`,
         });
@@ -533,7 +539,7 @@ export default function PositionPage() {
       name: pos.symbol,
       symbol: pos.symbol,
       kiteSymbol: pos.kite_instrument || pos.symbol,
-      segment: pos.settlement || 'INR',
+      segment: inferredSeg,
       price: pos.current_ltp,
       change: `${pos.pnl_percent >= 0 ? '+' : ''}${pos.pnl_percent.toFixed(2)}%`,
     });

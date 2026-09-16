@@ -4,6 +4,7 @@ import { getSharedKiteSession } from '@/lib/kiteSession';
 import { calculateCarryBrokerage } from '@/lib/trading/BrokerageCalculator';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
+import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 
 
 /**
@@ -26,15 +27,21 @@ async function fetchQuoteBatch(
     const { getRedisClient } = await import('@/lib/redis');
     const redis = getRedisClient();
     await Promise.all(Array.from(missing).map(async (sym) => {
-      const cached = await redis.hget('market:quotes', sym);
-      if (cached) {
-        const q = JSON.parse(cached);
-        const ltp = Number(q.last_price ?? q.ltp ?? q.price ?? 0);
-        const bid = Number(q.bid ?? q.buy_price ?? q.depth?.buy?.[0]?.price ?? 0);
-        const ask = Number(q.ask ?? q.sell_price ?? q.depth?.sell?.[0]?.price ?? 0);
-        if (bid > 0 || ask > 0 || ltp > 0) {
-          quotesMap[sym] = { bid, ask, ltp: ltp > 0 ? ltp : undefined };
-          missing.delete(sym);
+      const cleanSym = sym.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+      const baseClean = cleanSym.replace('USDT', '');
+      const keysToTry = [sym, cleanSym, baseClean, `CRYPTO:${cleanSym}`, `CRYPTO:${baseClean}`, `BINANCE:${cleanSym}`];
+      for (const k of keysToTry) {
+        const cached = await redis.hget('market:quotes', k);
+        if (cached) {
+          const q = JSON.parse(cached);
+          const ltp = Number(q.last_price ?? q.ltp ?? q.price ?? 0);
+          const bid = Number(q.bid ?? q.buy_price ?? q.depth?.buy?.[0]?.price ?? 0);
+          const ask = Number(q.ask ?? q.sell_price ?? q.depth?.sell?.[0]?.price ?? 0);
+          if (bid > 0 || ask > 0 || ltp > 0) {
+            quotesMap[sym] = { bid, ask, ltp: ltp > 0 ? ltp : undefined };
+            missing.delete(sym);
+            break;
+          }
         }
       }
     }));
@@ -109,7 +116,7 @@ async function fetchQuoteBatch(
   if (missingCrypto.length > 0) {
     await Promise.all(missingCrypto.map(async (sym) => {
       try {
-        const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
+        const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
         if (res.ok) {
           const data = await res.json();
           const bid = parseFloat(data.bidPrice);
@@ -121,7 +128,7 @@ async function fetchQuoteBatch(
           }
         } else {
           // Fallback to /ticker/price if bookTicker fails
-          const resPrice = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
+          const resPrice = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
           if (resPrice.ok) {
             const pData = await resPrice.json();
             const ltp = parseFloat(pData.price);
@@ -278,14 +285,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
 
         // Get settings and price parameters
-        const upperSettlement = (pos.settlement ?? '').toUpperCase();
+        const dbSeg = mapSegmentWithSymbol(pos.settlement || '', pos.symbol || '');
         const upperSide = (pos.side ?? '').toUpperCase();
-        const segSetting = segSettingsMap.get(`${upperSettlement}|${upperSide}`) || segSettingsMap.get(`CRYPTO|${upperSide}`) || segSettingsMap.get(`NSE|${upperSide}`);
+        const segSetting = segSettingsMap.get(`${dbSeg}|${upperSide}`) || segSettingsMap.get(`CRYPTO|${upperSide}`) || segSettingsMap.get(`NSE|${upperSide}`);
         const rawExitBuffer = segSetting?.exit_buffer;
         const exitBuffer = (rawExitBuffer !== undefined && rawExitBuffer !== null && !isNaN(Number(rawExitBuffer)))
           ? (Number(rawExitBuffer) > 0.005 ? Number(rawExitBuffer) / 100 : Number(rawExitBuffer))
           : 0;
-        const profitHoldSec = segSetting?.profit_hold_sec ?? 120;
+        const profitHoldSec = segSetting?.profit_hold_sec ?? 0;
         const lossHoldSec = segSetting?.loss_hold_sec ?? 0;
 
         // Resolve price components from quote batch with fallback to position LTP / entry_price
