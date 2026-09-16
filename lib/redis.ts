@@ -125,6 +125,15 @@ class MockRedis {
     return 1;
   }
 
+  public async keys(pattern: string): Promise<string[]> {
+    const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
+    const matched: string[] = [];
+    for (const k of this.store.keys()) {
+      if (regex.test(k)) matched.push(k);
+    }
+    return matched;
+  }
+
   public async del(...keys: string[]): Promise<number> {
     let deleted = 0;
     for (const k of keys) {
