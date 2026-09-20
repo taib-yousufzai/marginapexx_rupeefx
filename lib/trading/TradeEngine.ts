@@ -427,7 +427,6 @@ export class TradeEngine {
       }
     }
 
-    const totalOpenSegmentLots = openPositionsSegmentLots + pendingOrdersSegmentLots;
     const totalOpenInstrumentLots = openPositionsInstrumentLots + pendingOrdersInstrumentLots;
     const newOrderLots = qty / symbolLotSize;
 
@@ -436,12 +435,6 @@ export class TradeEngine {
       if (totalOpenInstrumentLots + newOrderLots > maxLotLimit) {
         const remainingLots = Math.max(0, maxLotLimit - totalOpenInstrumentLots);
         throw new Error(`Order exceeds maximum cap of ${maxLotLimit} lots for this instrument. Current open positions: ${totalOpenInstrumentLots.toFixed(2)} lots. Remaining capacity: ${remainingLots.toFixed(2)} lots.`);
-      }
-      if (!RiskValidation.validateMaxLotLimit(totalOpenSegmentLots + newOrderLots, maxLotLimit)) {
-        const breakdownMsg = pendingOrdersSegmentLots > 0
-          ? `(${openPositionsSegmentLots.toFixed(2)} open positions + ${pendingOrdersSegmentLots.toFixed(2)} pending orders)`
-          : `(${totalOpenSegmentLots.toFixed(2)} in open positions)`;
-        throw new Error(`Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current segment exposure: ${totalOpenSegmentLots.toFixed(2)} lots ${breakdownMsg}.`);
       }
     }
 

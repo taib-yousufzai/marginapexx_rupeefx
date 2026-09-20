@@ -857,21 +857,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Verify cumulative limits (max_lot) across open positions and pending orders
     const maxLotCap = Number(segSetting.max_lot || 0);
     if (!is_exit && maxLotCap > 0) {
-      let totalOpenSegmentLots = 0;
       let totalOpenInstrumentLots = 0;
       const targetSymbolClean = cleanSymHelper(symbol);
 
       const openPositions = positionsResult?.data ?? [];
       if (openPositions.length > 0) {
         for (const pos of openPositions) {
-          const posSegment = pos.settlement || mapSymbolToSegment(pos.symbol);
-          const posDbSegment = mapSegmentToDbSegment(posSegment);
           const pSize = getLotSize(pos.symbol, dbScriptSettings);
           const pLots = Number(pos.lots) > 0 ? Number(pos.lots) : (pSize > 0 ? (Number(pos.qty_open) / pSize) : 0);
 
-          if (posDbSegment === dbSegment) {
-            totalOpenSegmentLots += pLots;
-          }
           if (cleanSymHelper(pos.symbol) === targetSymbolClean) {
             totalOpenInstrumentLots += pLots;
           }
@@ -882,14 +876,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       if (pendingOrders.length > 0) {
         for (const po of pendingOrders) {
           if (!po.is_exit) {
-            const poSegment = po.settlement || mapSymbolToSegment(po.symbol);
-            const poDbSegment = mapSegmentToDbSegment(poSegment);
             const poSize = getLotSize(po.symbol, dbScriptSettings);
             const poLots = Number(po.lots) > 0 ? Number(po.lots) : (poSize > 0 ? (Number(po.qty) / poSize) : 0);
 
-            if (poDbSegment === dbSegment) {
-              totalOpenSegmentLots += poLots;
-            }
             if (cleanSymHelper(po.symbol) === targetSymbolClean) {
               totalOpenInstrumentLots += poLots;
             }
@@ -904,13 +893,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const remainingInstQty = remainingInstLots * symbolLotSize;
         return NextResponse.json({
           error: `Order exceeds maximum cap of ${maxLotCap} lots (${maxLotCap * symbolLotSize} qty) for this instrument. Current open positions: ${totalOpenInstrumentLots.toFixed(2)} lots. Remaining capacity: ${remainingInstLots.toFixed(2)} lots (${remainingInstQty} qty).`,
-        }, { status: 400 });
-      }
-
-      if (totalOpenSegmentLots + newOrderLots > maxLotCap) {
-        const remainingSegLots = Math.max(0, maxLotCap - totalOpenSegmentLots);
-        return NextResponse.json({
-          error: `Order exceeds maximum segment limit of ${maxLotCap} lots. Current segment exposure: ${totalOpenSegmentLots.toFixed(2)} lots. Remaining capacity: ${remainingSegLots.toFixed(2)} lots.`,
         }, { status: 400 });
       }
     }

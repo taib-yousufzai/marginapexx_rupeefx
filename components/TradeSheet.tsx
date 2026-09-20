@@ -712,7 +712,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           }
         }
 
-        // 2. Cumulative limit / Maximum Cap per instrument and segment (max_lot)
+        // 2. Cumulative limit / Maximum Cap per instrument (max_lot)
         if (maxLotCap > 0) {
           const maxAllowedQty = maxLotCap * lotSize;
           const openMatchingPositions = activePositions.filter(p => (p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active');
@@ -728,26 +728,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             const currentLots = currentInstrumentOpenQty / lotSize;
             setQtyError(`Exceeds max cap of ${maxLotCap} lots (remaining: ${remainingLots.toFixed(2)} lots)`);
             showOrderError(`Order exceeds maximum allowed cap of ${maxLotCap} lots (${maxAllowedQty} qty) for this instrument. You currently have ${currentLots.toFixed(2)} lots (${currentInstrumentOpenQty} qty) open. Remaining capacity: ${remainingLots.toFixed(2)} lots (${remainingAllowedQty} qty).`);
-            return;
-          }
-
-          // Cumulative lots already open for this entire segment
-          const currentSegmentOpenLots = openMatchingPositions
-            .filter(p => {
-              const posSeg = (p as any).segment || (p as any).settlement || mapSymbolToSegment(p.symbol);
-              return mapSegmentToDbSegment(posSeg) === dbSeg;
-            })
-            .reduce((sum, p) => {
-              const pLot = Number((p as any).lot_size || (p as any).lotSize) || (isMatchingSymbol(p.symbol) ? lotSize : 1);
-              const pLots = Number((p as any).lots) > 0 ? Number((p as any).lots) : ((Number(p.qty_open) || 0) / (pLot > 0 ? pLot : 1));
-              return sum + pLots;
-            }, 0);
-
-          const orderLots = rawQty / lotSize;
-          if (currentSegmentOpenLots + orderLots > maxLotCap) {
-            const remainingSegLots = Math.max(0, maxLotCap - currentSegmentOpenLots);
-            setQtyError(`Exceeds max segment cap of ${maxLotCap} lots`);
-            showOrderError(`Order exceeds maximum segment limit of ${maxLotCap} lots. Current segment exposure: ${currentSegmentOpenLots.toFixed(2)} lots. Remaining capacity: ${remainingSegLots.toFixed(2)} lots.`);
             return;
           }
         }
