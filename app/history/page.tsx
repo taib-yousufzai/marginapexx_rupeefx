@@ -285,7 +285,7 @@ export default function HistoryPage() {
     };
 
     const handleOptimisticRollback = (e: any) => {
-      const ids: string[] = e.detail?.positionIds || [];
+      const ids: string[] = e.detail?.positionIds || (e.detail?.orderId ? [e.detail.orderId] : []);
       if (ids.length === 0) return;
       const idSet = new Set(ids);
       setHistoryData(prev => {

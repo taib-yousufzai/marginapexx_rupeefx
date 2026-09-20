@@ -489,15 +489,21 @@ export function useOrderEntry() {
         }
 
         if (typeof window !== 'undefined') {
+          const failedIds = new Set<string>([
+            tempId,
+            ...(effectiveLinkedPosId ? [effectiveLinkedPosId] : []),
+            ...optimisticHistoryItems.map(i => i.id)
+          ]);
           try {
             const existingHistory = (window as any).__historyCache || [];
-            const updatedHistory = existingHistory.filter((h: any) => h.id !== tempId);
+            const updatedHistory = existingHistory.filter((h: any) => !failedIds.has(h.id));
             (window as any).__historyCache = updatedHistory;
             localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
           } catch {}
-          if (effectiveIsExit && optimisticHistoryItems.length > 0) {
-            const closedIds = new Set(optimisticHistoryItems.map(i => i.id));
-            window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: Array.from(closedIds) } }));
+          if (effectiveIsExit) {
+            window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: Array.from(failedIds) } }));
+          } else {
+            window.dispatchEvent(new CustomEvent('order_failed', { detail: { orderId: tempId } }));
           }
         }
         soundEngine.playOrderRejected();
@@ -651,6 +657,12 @@ export function useOrderEntry() {
         positionsContext.restorePositionLocally(positionId);
       }
       if (typeof window !== 'undefined') {
+        try {
+          const existingHistory = (window as any).__historyCache || [];
+          const updatedHistory = existingHistory.filter((h: any) => h.id !== positionId);
+          (window as any).__historyCache = updatedHistory;
+          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+        } catch {}
         window.dispatchEvent(new CustomEvent('position_closed_rollback', {
           detail: { positionIds: [positionId] }
         }));
@@ -726,6 +738,13 @@ export function useOrderEntry() {
     }
 
     if (typeof window !== 'undefined' && optHistoryItems.length > 0) {
+      try {
+        const existingHistory = (window as any).__historyCache || [];
+        const optIds = new Set(optHistoryItems.map((i: any) => i.id));
+        const updatedHistory = [...optHistoryItems, ...existingHistory.filter((h: any) => !optIds.has(h.id))];
+        (window as any).__historyCache = updatedHistory;
+        localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+      } catch {}
       window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
         detail: {
           positions: optClosedPositions,
@@ -799,6 +818,13 @@ export function useOrderEntry() {
         positionIds.forEach(id => positionsContext.restorePositionLocally(id));
       }
       if (typeof window !== 'undefined') {
+        try {
+          const failedIds = new Set([...positionIds, ...optHistoryItems.map(i => i.id)]);
+          const existingHistory = (window as any).__historyCache || [];
+          const updatedHistory = existingHistory.filter((h: any) => !failedIds.has(h.id));
+          (window as any).__historyCache = updatedHistory;
+          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+        } catch {}
         window.dispatchEvent(new CustomEvent('position_closed_rollback', {
           detail: { positionIds }
         }));
