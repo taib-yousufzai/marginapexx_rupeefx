@@ -313,6 +313,12 @@ export function useOrderEntry() {
       }
 
       if (typeof window !== 'undefined' && optimisticHistoryItems.length > 0) {
+        try {
+          const existingHistory = (window as any).__historyCache || [];
+          const newIds = new Set(optimisticHistoryItems.map(i => i.id));
+          const updatedHistory = [...optimisticHistoryItems, ...existingHistory.filter((h: any) => !newIds.has(h.id))];
+          (window as any).__historyCache = updatedHistory;
+        } catch {}
         window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
           detail: {
             positions: optimisticClosedPositions,
@@ -562,6 +568,11 @@ export function useOrderEntry() {
     }
 
     if (typeof window !== 'undefined') {
+      try {
+        const existingHistory = (window as any).__historyCache || [];
+        const updatedHistory = [optimisticHistoryItem, ...existingHistory.filter((h: any) => h.id !== positionId)];
+        (window as any).__historyCache = updatedHistory;
+      } catch {}
       window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
         detail: {
           positions: [optimisticClosedPos],
