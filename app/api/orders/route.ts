@@ -673,7 +673,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Fetch active positions to verify total open lot limits (max_lot)
       admin.from('positions')
-        .select('id, symbol, qty_open, status, entry_price, side, product_type, entry_time')
+        .select('id, symbol, settlement, qty_open, lots, status, entry_price, side, product_type, entry_time')
         .eq('user_id', user.id)
         .in('status', ['open', 'OPEN', 'active', 'ACTIVE']),
 
@@ -844,48 +844,75 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const symbolLotSize = lots > 0 ? (qty / lots) : getLotSize(symbol, dbScriptSettings);
-    const maxQty = (segSetting.max_order_lot as number) * symbolLotSize;
-    if (qty > maxQty) {
-      return NextResponse.json({
-        error: `The maximum you can exit in a single order is ${segSetting.max_order_lot} lots or ${maxQty} qty. Please execute your position in multiple orders, or use the Exit All button available on the top right.`,
-      }, { status: 400 });
-    }
-
-    // Verify cumulative segment limits (max_lot) across open positions and pending orders
-    let totalOpenLots = 0;
-    const openPositions = positionsResult?.data ?? [];
-    if (openPositions.length > 0) {
-      for (const pos of openPositions) {
-        const posSegment = mapSymbolToSegment(pos.symbol);
-        if (posSegment === dbSegment) {
-          const size = getLotSize(pos.symbol, dbScriptSettings);
-          if (size > 0) totalOpenLots += Number(pos.qty_open) / size;
-        }
+    const maxOrderLot = Number(segSetting.max_order_lot || segSetting.max_lot || 0);
+    if (!is_exit && maxOrderLot > 0) {
+      const maxQty = maxOrderLot * symbolLotSize;
+      if (qty > maxQty) {
+        return NextResponse.json({
+          error: `The maximum allowed per order is ${maxOrderLot} lots or ${maxQty} qty. Please place your trade in multiple orders.`,
+        }, { status: 400 });
       }
     }
 
-    const pendingOrders = pendingOrdersResult?.data ?? [];
-    if (pendingOrders.length > 0) {
-      for (const po of pendingOrders) {
-        if (!po.is_exit) {
-          const poSegment = mapSymbolToSegment(po.symbol);
-          if (poSegment === dbSegment) {
+    // Verify cumulative limits (max_lot) across open positions and pending orders
+    const maxLotCap = Number(segSetting.max_lot || 0);
+    if (!is_exit && maxLotCap > 0) {
+      let totalOpenSegmentLots = 0;
+      let totalOpenInstrumentLots = 0;
+      const targetSymbolClean = cleanSymHelper(symbol);
+
+      const openPositions = positionsResult?.data ?? [];
+      if (openPositions.length > 0) {
+        for (const pos of openPositions) {
+          const posSegment = pos.settlement || mapSymbolToSegment(pos.symbol);
+          const posDbSegment = mapSegmentToDbSegment(posSegment);
+          const pSize = getLotSize(pos.symbol, dbScriptSettings);
+          const pLots = Number(pos.lots) > 0 ? Number(pos.lots) : (pSize > 0 ? (Number(pos.qty_open) / pSize) : 0);
+
+          if (posDbSegment === dbSegment) {
+            totalOpenSegmentLots += pLots;
+          }
+          if (cleanSymHelper(pos.symbol) === targetSymbolClean) {
+            totalOpenInstrumentLots += pLots;
+          }
+        }
+      }
+
+      const pendingOrders = pendingOrdersResult?.data ?? [];
+      if (pendingOrders.length > 0) {
+        for (const po of pendingOrders) {
+          if (!po.is_exit) {
+            const poSegment = po.settlement || mapSymbolToSegment(po.symbol);
+            const poDbSegment = mapSegmentToDbSegment(poSegment);
             const poSize = getLotSize(po.symbol, dbScriptSettings);
-            if (poSize > 0) {
-              totalOpenLots += Number(po.lots) > 0
-                ? Number(po.lots)
-                : (Number(po.qty) / poSize);
+            const poLots = Number(po.lots) > 0 ? Number(po.lots) : (poSize > 0 ? (Number(po.qty) / poSize) : 0);
+
+            if (poDbSegment === dbSegment) {
+              totalOpenSegmentLots += poLots;
+            }
+            if (cleanSymHelper(po.symbol) === targetSymbolClean) {
+              totalOpenInstrumentLots += poLots;
             }
           }
         }
       }
-    }
 
-    const newOrderLots = lots > 0 ? lots : (qty / symbolLotSize);
-    if (!is_exit && (totalOpenLots + newOrderLots) > (segSetting.max_lot as number)) {
-      return NextResponse.json({
-        error: `Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current open positions: ${totalOpenLots.toFixed(2)} lots.`,
-      }, { status: 400 });
+      const newOrderLots = lots > 0 ? lots : (symbolLotSize > 0 ? qty / symbolLotSize : qty);
+
+      if (totalOpenInstrumentLots + newOrderLots > maxLotCap) {
+        const remainingInstLots = Math.max(0, maxLotCap - totalOpenInstrumentLots);
+        const remainingInstQty = remainingInstLots * symbolLotSize;
+        return NextResponse.json({
+          error: `Order exceeds maximum cap of ${maxLotCap} lots (${maxLotCap * symbolLotSize} qty) for this instrument. Current open positions: ${totalOpenInstrumentLots.toFixed(2)} lots. Remaining capacity: ${remainingInstLots.toFixed(2)} lots (${remainingInstQty} qty).`,
+        }, { status: 400 });
+      }
+
+      if (totalOpenSegmentLots + newOrderLots > maxLotCap) {
+        const remainingSegLots = Math.max(0, maxLotCap - totalOpenSegmentLots);
+        return NextResponse.json({
+          error: `Order exceeds maximum segment limit of ${maxLotCap} lots. Current segment exposure: ${totalOpenSegmentLots.toFixed(2)} lots. Remaining capacity: ${remainingSegLots.toFixed(2)} lots.`,
+        }, { status: 400 });
+      }
     }
 
     // Strike Range check — STRICTLY enforced for fresh entry/add-more (!is_exit). Exits (is_exit === true) bypass.
@@ -1330,16 +1357,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const executeDbCall = async () => {
       const exitPos = resolvedLinkedPositionId
         ? openPositions.find((p: any) => p.id === resolvedLinkedPositionId)
-        : (resolvedIsExit ? openPositions.find((p: any) => cleanSymHelper(p.symbol || p.kite_instrument) === cleanSymHelper(symbol) && p.side !== side) : null);
+        : (resolvedIsExit ? (openPositions.find((p: any) => cleanSymHelper(p.symbol || p.kite_instrument) === cleanSymHelper(symbol) && p.side !== side) || openPositions.find((p: any) => cleanSymHelper(p.symbol || p.kite_instrument) === cleanSymHelper(symbol))) : null);
       const finalSymbol = (resolvedIsExit && exitPos?.symbol) ? exitPos.symbol : symbol;
       const finalProductType = (resolvedIsExit && exitPos?.product_type) ? exitPos.product_type : (product_type ?? 'INTRADAY');
+      const finalSide = (resolvedIsExit && exitPos?.side)
+        ? (exitPos.side === 'BUY' ? 'SELL' : 'BUY')
+        : side;
 
       const { data: oId, error: rpcErr } = await admin.rpc('place_order_v2', {
         p_user_id: user.id,
         p_symbol: finalSymbol,
         p_kite_inst: kiteInst,
         p_segment: dbSegment,
-        p_side: side,
+        p_side: finalSide,
         p_order_type: rpcOrderType,
         p_product_type: finalProductType,
         p_qty: qty,
@@ -1492,16 +1522,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       try {
         const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
-        await invalidateUserHistoryCache(user.id);
-      } catch { /* ignore */ }
-
-      try {
         await Promise.all([
+          invalidateUserHistoryCache(user.id),
           invalidateUserPositionsCache(user.id),
           invalidateUserOrdersCache(user.id),
         ]);
       } catch { /* ignore */ }
     });
+
+    try {
+      const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+      await Promise.all([
+        invalidateUserHistoryCache(user.id),
+        invalidateUserPositionsCache(user.id),
+        invalidateUserOrdersCache(user.id),
+      ]);
+    } catch { /* ignore */ }
 
     return NextResponse.json(response, { status: 201 });
   } catch (topErr: any) {

@@ -145,21 +145,22 @@ export function mapSegmentWithSymbol(segment: string, symbol: string = ''): Segm
  * Less reliable than using the explicit segment label — use only as a fallback.
  */
 export function mapSymbolToSegment(symbol: string): Segment {
-  const n = symbol.toUpperCase();
-  if (n.startsWith('US:') || n.startsWith('US-EQ:')) return 'US-EQ';
-  if (n.startsWith('COMEX:') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => n.includes(c)) || n.endsWith('=F')) return 'COMEX';
-  if (n.includes('GOLD') || n.includes('SILVER') || n.includes('CRUDE') || n.includes('NATGAS') || n.includes('NATURALGAS')) {
-    if (n.endsWith('CE') || n.endsWith('PE')) return 'MCX-OPT';
+  const n = (symbol || '').toUpperCase().trim();
+  const clean = n.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '');
+  if (n.startsWith('US:') || n.startsWith('US-EQ:') || clean.startsWith('US:')) return 'US-EQ';
+  if (n.startsWith('COMEX:') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => clean.includes(c)) || n.endsWith('=F') || clean.endsWith('=F')) return 'COMEX';
+  if (clean.includes('GOLD') || clean.includes('SILVER') || clean.includes('CRUDE') || clean.includes('NATGAS') || clean.includes('NATURALGAS')) {
+    if (clean.endsWith('CE') || clean.endsWith('PE')) return 'MCX-OPT';
     return 'MCX-FUT';
   }
-  const isIndexName = n.includes('NIFTY') || n.includes('SENSEX') || n.includes('BANKEX') || n.includes('FINNIFTY') || n.includes('MIDCP') || n.includes('MIDCAP');
-  if (n.endsWith('CE') || n.endsWith('PE')) {
+  const isIndexName = clean.includes('NIFTY') || clean.includes('SENSEX') || clean.includes('BANKEX') || clean.includes('FINNIFTY') || clean.includes('MIDCP') || clean.includes('MIDCAP');
+  if (clean.endsWith('CE') || clean.endsWith('PE')) {
     if (isIndexName) {
       return 'INDEX-OPT';
     }
     return 'STOCK-OPT';
   }
-  if (n.endsWith('FUT') || n.includes('FUTURES')) {
+  if (clean.endsWith('FUT') || clean.includes('FUTURES')) {
     if (isIndexName) {
       return 'INDEX-FUT';
     }
@@ -168,8 +169,11 @@ export function mapSymbolToSegment(symbol: string): Segment {
   if (isIndexName) {
     return 'INDEX-FUT';
   }
-  if (n.endsWith('USDT') || ['BTC','ETH','DOGE','DODGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC'].some(c => n === c)) {
+  if (n.startsWith('CRYPTO:') || n.startsWith('BINANCE:') || clean.endsWith('USDT') || ['BTC','ETH','DOGE','DODGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC','LINK','UNI','BCH','SHIB','PEPE','TRX','NEAR','SUI','APT','FET','RNDR','INJ','TIA','OP','ARB'].some(c => clean === c || clean.startsWith(c))) {
     return 'CRYPTO';
+  }
+  if (clean.includes('GBPUSD') || clean.includes('EURUSD') || clean.includes('USDJPY') || clean.includes('USDCHF') || clean.includes('USDCAD') || clean.includes('AUDUSD') || clean.includes('NZDUSD') || clean.includes('USDINR') || clean.includes('EURINR') || clean.includes('GBPINR') || clean.includes('JPYINR')) {
+    return 'FOREX';
   }
   return 'STOCKS';
 }

@@ -680,12 +680,55 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         }
       } else {
         const placeSetting = dbSeg ? getSegment(dbSeg, placeSide) : undefined;
-        const maxOrderLot = placeSetting?.max_order_lot ?? placeSetting?.max_lot ?? 0;
+        const maxOrderLot = Number(placeSetting?.max_order_lot || placeSetting?.max_lot || 0);
+        const maxLotCap = Number(placeSetting?.max_lot || 0);
+
+        // 1. Single-order limit (max_order_lot)
         if (maxOrderLot > 0) {
           const maxOrderQty = maxOrderLot * lotSize;
           if (rawQty > maxOrderQty) {
             setQtyError(`Max ${maxOrderLot} lots or ${maxOrderQty} qty per order`);
             showOrderError(`The maximum allowed per order is ${maxOrderLot} lots or ${maxOrderQty} qty. Please place your trade in multiple orders.`);
+            return;
+          }
+        }
+
+        // 2. Cumulative limit / Maximum Cap per instrument and segment (max_lot)
+        if (maxLotCap > 0) {
+          const maxAllowedQty = maxLotCap * lotSize;
+          const openMatchingPositions = activePositions.filter(p => (p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active');
+
+          // Cumulative quantity already open for this instrument
+          const currentInstrumentOpenQty = openMatchingPositions
+            .filter(p => isMatchingSymbol(p.symbol))
+            .reduce((sum, p) => sum + (Number(p.qty_open) || 0), 0);
+
+          if (currentInstrumentOpenQty + rawQty > maxAllowedQty) {
+            const remainingAllowedQty = Math.max(0, maxAllowedQty - currentInstrumentOpenQty);
+            const remainingLots = remainingAllowedQty / lotSize;
+            const currentLots = currentInstrumentOpenQty / lotSize;
+            setQtyError(`Exceeds max cap of ${maxLotCap} lots (remaining: ${remainingLots.toFixed(2)} lots)`);
+            showOrderError(`Order exceeds maximum allowed cap of ${maxLotCap} lots (${maxAllowedQty} qty) for this instrument. You currently have ${currentLots.toFixed(2)} lots (${currentInstrumentOpenQty} qty) open. Remaining capacity: ${remainingLots.toFixed(2)} lots (${remainingAllowedQty} qty).`);
+            return;
+          }
+
+          // Cumulative lots already open for this entire segment
+          const currentSegmentOpenLots = openMatchingPositions
+            .filter(p => {
+              const posSeg = p.segment || mapSymbolToSegment(p.symbol);
+              return mapSegmentToDbSegment(posSeg) === dbSeg;
+            })
+            .reduce((sum, p) => {
+              const pLot = Number(p.lot_size) || (isMatchingSymbol(p.symbol) ? lotSize : 1);
+              const pLots = Number(p.lots) > 0 ? Number(p.lots) : ((Number(p.qty_open) || 0) / (pLot > 0 ? pLot : 1));
+              return sum + pLots;
+            }, 0);
+
+          const orderLots = rawQty / lotSize;
+          if (currentSegmentOpenLots + orderLots > maxLotCap) {
+            const remainingSegLots = Math.max(0, maxLotCap - currentSegmentOpenLots);
+            setQtyError(`Exceeds max segment cap of ${maxLotCap} lots`);
+            showOrderError(`Order exceeds maximum segment limit of ${maxLotCap} lots. Current segment exposure: ${currentSegmentOpenLots.toFixed(2)} lots. Remaining capacity: ${remainingSegLots.toFixed(2)} lots.`);
             return;
           }
         }

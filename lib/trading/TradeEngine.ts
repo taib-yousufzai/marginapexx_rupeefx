@@ -386,38 +386,63 @@ export class TradeEngine {
       return getLotSizeFallback(sym, ctxScriptSettings);
     };
 
+    let openPositionsSegmentLots = 0;
+    let openPositionsInstrumentLots = 0;
+    let pendingOrdersSegmentLots = 0;
+    let pendingOrdersInstrumentLots = 0;
+
     for (const pos of openPositions) {
       const posSegment = mapSymbolToSegment(pos.symbol);
-      if (posSegment === dbSegment) {
-        const pLot = resolveLotSizeForSymbol(pos.symbol);
-        if (pLot > 0) {
-          openPositionsLots += (Number(pos.lots) > 0 && Number(pos.qty_open) === Number(pos.qty_total))
+      const pLot = resolveLotSizeForSymbol(pos.symbol);
+      const pLots = (pLot > 0)
+        ? ((Number(pos.lots) > 0 && Number(pos.qty_open) === Number(pos.qty_total))
             ? Number(pos.lots)
-            : (Number(pos.qty_open) / pLot);
-        }
+            : (Number(pos.qty_open) / pLot))
+        : 0;
+
+      if (posSegment === dbSegment) {
+        openPositionsSegmentLots += pLots;
+      }
+      if (pos.symbol === symbol || pos.symbol === kiteInst) {
+        openPositionsInstrumentLots += pLots;
       }
     }
 
     for (const po of pendingOrders) {
       if (!po.is_exit) {
         const poSegment = mapSymbolToSegment(po.symbol);
-        if (poSegment === dbSegment) {
-          const poLot = resolveLotSizeForSymbol(po.symbol);
-          if (poLot > 0) {
-            pendingOrdersLots += (Number(po.lots) > 0 && Number(po.qty) > 0)
+        const poLot = resolveLotSizeForSymbol(po.symbol);
+        const poLots = (poLot > 0)
+          ? ((Number(po.lots) > 0 && Number(po.qty) > 0)
               ? Number(po.lots)
-              : (Number(po.qty) / poLot);
-          }
+              : (Number(po.qty) / poLot))
+          : 0;
+
+        if (poSegment === dbSegment) {
+          pendingOrdersSegmentLots += poLots;
+        }
+        if (po.symbol === symbol || po.symbol === kiteInst) {
+          pendingOrdersInstrumentLots += poLots;
         }
       }
     }
-    const totalOpenLots = openPositionsLots + pendingOrdersLots;
+
+    const totalOpenSegmentLots = openPositionsSegmentLots + pendingOrdersSegmentLots;
+    const totalOpenInstrumentLots = openPositionsInstrumentLots + pendingOrdersInstrumentLots;
     const newOrderLots = qty / symbolLotSize;
-    if (!is_exit && !RiskValidation.validateMaxLotLimit(totalOpenLots + newOrderLots, Number(segSetting.max_lot || 50))) {
-      const breakdownMsg = pendingOrdersLots > 0
-        ? `(${openPositionsLots.toFixed(2)} open positions + ${pendingOrdersLots.toFixed(2)} pending orders)`
-        : `(${totalOpenLots.toFixed(2)} in open positions)`;
-      throw new Error(`Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current segment exposure: ${totalOpenLots.toFixed(2)} lots ${breakdownMsg}.`);
+
+    if (!is_exit) {
+      const maxLotLimit = Number(segSetting.max_lot || 50);
+      if (totalOpenInstrumentLots + newOrderLots > maxLotLimit) {
+        const remainingLots = Math.max(0, maxLotLimit - totalOpenInstrumentLots);
+        throw new Error(`Order exceeds maximum cap of ${maxLotLimit} lots for this instrument. Current open positions: ${totalOpenInstrumentLots.toFixed(2)} lots. Remaining capacity: ${remainingLots.toFixed(2)} lots.`);
+      }
+      if (!RiskValidation.validateMaxLotLimit(totalOpenSegmentLots + newOrderLots, maxLotLimit)) {
+        const breakdownMsg = pendingOrdersSegmentLots > 0
+          ? `(${openPositionsSegmentLots.toFixed(2)} open positions + ${pendingOrdersSegmentLots.toFixed(2)} pending orders)`
+          : `(${totalOpenSegmentLots.toFixed(2)} in open positions)`;
+        throw new Error(`Order exceeds maximum segment limit of ${segSetting.max_lot} lots. Current segment exposure: ${totalOpenSegmentLots.toFixed(2)} lots ${breakdownMsg}.`);
+      }
     }
 
     let kiteLtp = quotesMap[kiteInst] ?? null;
