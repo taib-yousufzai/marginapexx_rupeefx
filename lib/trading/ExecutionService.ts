@@ -150,7 +150,7 @@ export class ExecutionService {
       }
 
     } finally {
-      // Always release the lock and invalidate position and balance cache
+      // Always release the lock and invalidate position, balance, and history cache
       await redis.del(lockKey);
       try {
         await redis.del(
@@ -159,6 +159,8 @@ export class ExecutionService {
           `pos:${params.userId}:active`,
           `balance:${params.userId}`,
         );
+        const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+        await invalidateUserHistoryCache(params.userId);
       } catch { /* non-critical */ }
     }
 

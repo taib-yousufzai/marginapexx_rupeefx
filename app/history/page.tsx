@@ -120,8 +120,8 @@ export default function HistoryPage() {
       // Fetch both orders and positions history — full history
       const now = Date.now();
       const [ordersData, posData] = await Promise.all([
-        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500&_t=${now}`).catch(() => ({ orders: [] })),
-        api.get<{ positions: any[] }>(`/api/positions?status=closed&all=true&_t=${now}`).catch(() => ({ positions: [] })),
+        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500&fresh=true&_t=${now}`).catch(() => ({ orders: [] })),
+        api.get<{ positions: any[] }>(`/api/positions?status=closed&all=true&fresh=true&_t=${now}`).catch(() => ({ positions: [] })),
       ]);
 
       const ordersList = Array.isArray(ordersData?.orders) ? ordersData.orders : [];
