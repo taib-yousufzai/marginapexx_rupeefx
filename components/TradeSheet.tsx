@@ -16,7 +16,7 @@ import { calculateOrderBrokerage } from '@/lib/trading/BrokerageCalculator';
 import { ErrorModal } from '@/components/ErrorModal';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { useBalance } from '@/hooks/useBalance';
-import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
+import { mapSegmentWithSymbol, mapSegmentToDbSegment, mapSymbolToSegment } from '@/lib/trading/SymbolMapping';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { generateRealisticFallbackQuote, FallbackQuote } from '@/lib/quoteFallback';
 import type { TradingInstrument } from '@/lib/types/instrument';
@@ -61,6 +61,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const isClosing = false;
   const handleCloseAnimation = () => {
+    setOrderState('idle');
+    setOrderErrorMsg(null);
+    setQtyError(null);
+    isExecutingRef.current = false;
     onClose();
   };
 
@@ -462,6 +466,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     userHasEditedQty.current = true;
     setQtyInput(val);
     if (qtyError) setQtyError(null);
+    if (orderState === 'error') {
+      setOrderState('idle');
+      setOrderErrorMsg(null);
+    }
     const n = parseFloat(val);
     // Only update the committed qty when we have a real positive number
     if (!isNaN(n) && n > 0) setOrderQty(n);
@@ -469,6 +477,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const stepQty = (delta: number) => {
     if (qtyError) setQtyError(null);
+    if (orderState === 'error') {
+      setOrderState('idle');
+      setOrderErrorMsg(null);
+    }
     const step = orderUnit === 'lot' ? 1 : (lotSize > 1 ? lotSize : 1);
     const maxOrderLot = segSetting?.max_order_lot ?? segSetting?.max_lot ?? 0;
     const maxVal = maxOrderLot > 0
@@ -483,6 +495,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   // Reset state when item changes
   useEffect(() => {
     if (item) {
+      setOrderState('idle');
+      setOrderErrorMsg(null);
+      setQtyError(null);
+      isExecutingRef.current = false;
       if (initialOrder) {
         setOrderQty(initialOrder.qty);
         setQtyInput(String(initialOrder.qty));
@@ -567,6 +583,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   };
 
   const showOrderError = (msg: string) => {
+    isExecutingRef.current = false;
+    setOrderState('idle');
     setToast(msg);
     setOrderErrorMsg(msg);
     window.dispatchEvent(new CustomEvent('order_error', { detail: msg }));
@@ -633,12 +651,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const isExecutingRef = useRef(false);
 
   const handlePlace = async (placeSide: 'BUY' | 'SELL') => {
-    // Synchronous guard â€” isExecutingRef is checked before any await so no
+    // Synchronous guard — isExecutingRef is checked before any await so no
     // concurrent call can slip through during a React render cycle.
-    // Also reject if the UI is already showing an error (user must dismiss first).
-    if (isExecutingRef.current || orderState !== 'idle') return;
+    if (isExecutingRef.current || orderState === 'processing') return;
     isExecutingRef.current = true;
     setOrderState('processing');
+    setOrderErrorMsg(null);
+    setQtyError(null);
     let handedOffToOrderFlow = false;
     let currentExitMode = effectiveExitMode;
     let currentLinkedPosId = linkedPosId;
@@ -715,12 +734,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           // Cumulative lots already open for this entire segment
           const currentSegmentOpenLots = openMatchingPositions
             .filter(p => {
-              const posSeg = p.segment || mapSymbolToSegment(p.symbol);
+              const posSeg = (p as any).segment || (p as any).settlement || mapSymbolToSegment(p.symbol);
               return mapSegmentToDbSegment(posSeg) === dbSeg;
             })
             .reduce((sum, p) => {
-              const pLot = Number(p.lot_size) || (isMatchingSymbol(p.symbol) ? lotSize : 1);
-              const pLots = Number(p.lots) > 0 ? Number(p.lots) : ((Number(p.qty_open) || 0) / (pLot > 0 ? pLot : 1));
+              const pLot = Number((p as any).lot_size || (p as any).lotSize) || (isMatchingSymbol(p.symbol) ? lotSize : 1);
+              const pLots = Number((p as any).lots) > 0 ? Number((p as any).lots) : ((Number(p.qty_open) || 0) / (pLot > 0 ? pLot : 1));
               return sum + pLots;
             }, 0);
 

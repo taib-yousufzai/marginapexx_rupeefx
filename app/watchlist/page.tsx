@@ -477,11 +477,24 @@ function WatchlistContent() {
 
   const isMarketOpen = (item: WatchlistItem) => {
     const segUpper = (item.segment || '').toUpperCase();
-    if (segUpper.includes('CRYPTO')) return true;
+    const catUpper = (item.category || '').toUpperCase();
+    const symUpper = (item.symbol || '').toUpperCase().trim();
+    const cleanSym = symUpper.replace(/^(CRYPTO:|BINANCE:|FOREX:|COMEX:|NSE:|BSE:|MCX:|NFO:|US:|US-EQ:)/i, '').replace(/[\/\s\_]/g, '');
+    const CRYPTO_BASES = ['BTC','ETH','DOGE','DODGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC','LINK','UNI','BCH','SHIB','PEPE','TRX','NEAR','SUI','APT','FET','RNDR','INJ','TIA','OP','ARB'];
+
+    if (
+      segUpper.includes('CRYPTO') ||
+      catUpper.includes('CRYPTO') ||
+      !!item.binanceSymbol ||
+      cleanSym.endsWith('USDT') ||
+      CRYPTO_BASES.some(c => cleanSym === c || cleanSym.startsWith(c + 'USDT') || cleanSym === c + 'USD')
+    ) {
+      return true;
+    }
 
     const symName = (item as any).tradingsymbol || item.symbol || item.name || '';
     const segmentId = RiskValidation.resolveTradingHoursSegmentId(symName, item.segment || '');
-
+    if (segmentId === 'crypto') return true;
 
     const th = tradingHours.find(t => t.id === segmentId);
     if (!th) return true; // fallback
@@ -3133,6 +3146,8 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
         window.__searchPriceInterval = setInterval(refreshSearchPrices, 2000);
       }
 
+      var searchMemoryCache = new Map();
+
       function runSearch(query) {
         // Empty query — hide results immediately (no debounce needed)
         if (query.length === 0) {
@@ -3183,6 +3198,15 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
           });
           renderSearchResults(localResults);
 
+          // Check memory cache first (instant 0ms response for retyped/backspaced queries)
+          var cacheKey = query.trim().toLowerCase() + '|' + activeTab;
+          var cachedEntry = searchMemoryCache.get(cacheKey);
+          var now = Date.now();
+          if (cachedEntry && (now - cachedEntry.ts < 60000)) {
+            renderSearchResults(cachedEntry.results);
+            return;
+          }
+
           currentSearchController = new AbortController();
           var signal = currentSearchController.signal;
           var timestamp = new Date().getTime();
@@ -3208,6 +3232,14 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
               if (activeTabLive !== 'All') {
                 merged = merged.filter(function(r) { return getTabForSearchItem(r.segment, r.category) === activeTabLive; });
               }
+
+              // Store in memory cache
+              searchMemoryCache.set(cacheKey, { results: merged, ts: Date.now() });
+              if (searchMemoryCache.size > 100) {
+                var oldest = searchMemoryCache.keys().next().value;
+                if (oldest) searchMemoryCache.delete(oldest);
+              }
+
               renderSearchResults(merged);
             })
             .catch(function(err) {

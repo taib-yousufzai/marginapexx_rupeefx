@@ -22,11 +22,21 @@ export class RiskValidation {
    * based on symbol and dbSegment.
    */
   static resolveTradingHoursSegmentId(symbol: string, dbSegment: string = ''): string {
-    const symUpper = (symbol || '').toUpperCase();
-    const segUpper = (dbSegment || '').toUpperCase();
+    const symUpper = (symbol || '').toUpperCase().trim();
+    const segUpper = (dbSegment || '').toUpperCase().trim();
     const exchangeName = symUpper.includes(':') ? symUpper.split(':')[0] : '';
+    const cleanSym = symUpper.replace(/^(CRYPTO:|BINANCE:|FOREX:|COMEX:|NSE:|BSE:|MCX:|NFO:|US:|US-EQ:)/i, '').replace(/[\/\s\_]/g, '');
 
-    if (segUpper.includes('CRYPTO') || symUpper.startsWith('CRYPTO:') || symUpper.endsWith('USDT')) return 'crypto';
+    const CRYPTO_BASES = ['BTC','ETH','DOGE','DODGE','SOL','XRP','ADA','BNB','DOT','LTC','AVAX','MATIC','LINK','UNI','BCH','SHIB','PEPE','TRX','NEAR','SUI','APT','FET','RNDR','INJ','TIA','OP','ARB'];
+    if (
+      segUpper.includes('CRYPTO') ||
+      symUpper.startsWith('CRYPTO:') ||
+      symUpper.startsWith('BINANCE:') ||
+      cleanSym.endsWith('USDT') ||
+      CRYPTO_BASES.some(c => cleanSym === c || cleanSym.startsWith(c + 'USDT') || cleanSym === c + 'USD')
+    ) {
+      return 'crypto';
+    }
 
     if (
       segUpper.includes('COMEX') ||
@@ -84,6 +94,9 @@ export class RiskValidation {
     }
     const reqUpper = (requestedSegment || '').toUpperCase().trim();
     if (allowedSegments.includes(reqUpper) || allowedSegments.includes(requestedSegment)) {
+      return true;
+    }
+    if ((reqUpper === 'COMEX' || reqUpper === 'COI' || reqUpper.includes('COMEX')) && (allowedSegments.includes('COMEX') || allowedSegments.includes('COI') || allowedSegments.includes('MCX-FUT') || allowedSegments.length >= 8)) {
       return true;
     }
     return false;
