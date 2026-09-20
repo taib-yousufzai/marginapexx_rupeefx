@@ -57,36 +57,12 @@ export default function HistoryPage() {
   const [appliedFromDate, setAppliedFromDate] = useState('');
   const [appliedToDate, setAppliedToDate] = useState('');
   
-  const [historyData, setHistoryData] = useState<HistoryItem[]>(() => {
-    if (typeof window !== 'undefined') {
-      if (window.__historyCache) return window.__historyCache;
-      try {
-        const stored = localStorage.getItem(HISTORY_PERSIST_KEY);
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            window.__historyCache = parsed;
-            return parsed;
-          }
-        }
-      } catch (e) {}
-    }
-    return [];
-  });
+  const [historyData, setHistoryData] = useState<HistoryItem[]>([]);
 
   const historyDataRef = useRef<HistoryItem[]>(historyData);
   historyDataRef.current = historyData;
 
-  const [loading, setLoading] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      if (window.__historyCache !== undefined) return false;
-      try {
-        const stored = localStorage.getItem(HISTORY_PERSIST_KEY);
-        if (stored !== null) return false;
-      } catch (e) {}
-    }
-    return true;
-  });
+  const [loading, setLoading] = useState<boolean>(true);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
   // Scroll reset - runs synchronously before browser paint via ref callback
@@ -598,9 +574,9 @@ export default function HistoryPage() {
 
               <div className="main-content" ref={scrollResetRef}>
                 <div className="history-list">
-                  {loading && historyData.length === 0 ? (
+                  {loading ? (
                     <div style={{ padding: '60px 0', textAlign: 'center' }}>
-                      <AnimatedLoader text="Loading history..." />
+                      <AnimatedLoader text={currentTab === 'position' ? "Loading position history..." : "Loading order history..."} />
                     </div>
                   ) : filteredData.length === 0 ? (
                     <div className="empty-history">
