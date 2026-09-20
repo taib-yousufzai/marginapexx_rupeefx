@@ -171,19 +171,25 @@ export default function HistoryPage() {
       for (const o of formattedOrders) orderMap.set(o.id, o);
       for (const p of formattedPos) posMap.set(p.id, p);
 
-      // Retain any recent optimistic items (<60s) not yet returned by backend DB
+      // Retain any recent in-flight optimistic items (<15s) only if backend hasn't returned records yet
       const existingItems = [
         ...(historyDataRef.current || []),
         ...(typeof window !== 'undefined' && Array.isArray(window.__historyCache) ? window.__historyCache : [])
       ];
 
-      for (const existing of existingItems) {
-        if (Date.now() - (existing.timestamp || 0) < 60000) {
-          if (existing.status === 'closed') {
+      const nowMs = Date.now();
+      if (formattedPos.length === 0) {
+        for (const existing of existingItems) {
+          if (existing && existing.id && existing.status === 'closed' && (nowMs - (existing.timestamp || 0) < 15000)) {
             if (!posMap.has(existing.id)) {
               posMap.set(existing.id, existing);
             }
-          } else {
+          }
+        }
+      }
+      if (formattedOrders.length === 0) {
+        for (const existing of existingItems) {
+          if (existing && existing.id && existing.status !== 'closed' && (nowMs - (existing.timestamp || 0) < 15000)) {
             if (!orderMap.has(existing.id)) {
               orderMap.set(existing.id, existing);
             }
