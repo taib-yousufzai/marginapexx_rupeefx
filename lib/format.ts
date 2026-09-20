@@ -14,47 +14,80 @@
 // ─── Currency & Price ─────────────────────────────────────────────────────────
 
 /**
- * Formats a number as an Indian-locale rupee amount with 2 decimal places.
- * Returns '—' for null / undefined / NaN.
- *
- * @example fmtCurrency(123456.78)  → '₹1,23,456.78'
- * @example fmtCurrency(null)       → '—'
+ * Helper to detect if a symbol, segment, or currency represents USD settlement
  */
-export function fmtCurrency(value: number | null | undefined): string {
+export function isUsdInstrument(currencyOrSymbol?: string | null): boolean {
+  if (!currencyOrSymbol) return false;
+  const clean = currencyOrSymbol.trim().toUpperCase();
+  if (clean === 'USD' || clean === '$' || clean.includes('COMEX')) return true;
+  // Strictly USD instruments: COMEX tickers (XAU, XAG, XTI, XCU, XNG), Crypto, US Equities/Futures, Forex USD pairs
+  return /^(XAU|XAG|XTI|XCU|XNG|BTC|ETH|SOL|BNB|XRP|DOGE|ADA|MATIC|EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD|AAPL|TSLA|NVDA|MSFT|AMZN|GOOGL|META|NFLX|AMD|INTC|SPY|QQQ|DIA|ES=F|NQ=F|YM=F|GC=F|SI=F|CL=F|HG=F|NG=F)/.test(clean);
+}
+
+/**
+ * Helper to detect Forex pairs requiring 4-decimal precision
+ */
+export function isForexInstrument(currencyOrSymbol?: string | null): boolean {
+  if (!currencyOrSymbol) return false;
+  const clean = currencyOrSymbol.trim().toUpperCase();
+  return /^(EURUSD|GBPUSD|USDJPY|USDCHF|AUDUSD|USDCAD|NZDUSD|EURGBP|EURJPY|GBPJPY)/.test(clean);
+}
+
+/**
+ * Formats a number as a currency amount with 2 (or 4 for forex) decimal places.
+ * Returns '—' for null / undefined / NaN.
+ * Always formats with Indian Rupee (₹) sign.
+ *
+ * @example fmtCurrency(123456.78)         → '₹1,23,456.78'
+ * @example fmtCurrency(4306.50, 'XAUUSD') → '₹4,306.50'
+ * @example fmtCurrency(null)              → '—'
+ */
+export function fmtCurrency(value: number | null | undefined, currencyOrSymbol?: string | null): string {
   if (value === null || value === undefined || isNaN(value)) return '—';
-  return '₹' + value.toLocaleString('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+  const prefix = '₹';
+  const locale = 'en-IN';
+  const decimals = isForexInstrument(currencyOrSymbol) ? 4 : 2;
+  return prefix + value.toLocaleString(locale, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   });
 }
 
 /**
  * Formats a price — same as fmtCurrency but returns '--' on null/undefined
  * to match the trading UI convention (dashes instead of em-dash for prices).
+ * Always formats with Indian Rupee (₹) sign.
  *
- * @example fmtPrice(105.50)  → '₹105.50'
- * @example fmtPrice(null)    → '--'
+ * @example fmtPrice(105.50)           → '₹105.50'
+ * @example fmtPrice(4306.50, 'XAUUSD') → '₹4,306.50'
+ * @example fmtPrice(null)             → '--'
  */
-export function fmtPrice(value: number | null | undefined): string {
+export function fmtPrice(value: number | null | undefined, currencyOrSymbol?: string | null): string {
   if (value === null || value === undefined || isNaN(value as number)) return '--';
-  return '₹' + value.toLocaleString('en-IN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+  const prefix = '₹';
+  const locale = 'en-IN';
+  const decimals = isForexInstrument(currencyOrSymbol) ? 4 : 2;
+  return prefix + (value as number).toLocaleString(locale, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
   });
 }
 
 /**
  * Formats a signed P&L value with an explicit +/- prefix.
  * Returns '—' for null / undefined / NaN.
+ * Always formats with Indian Rupee (₹) sign.
  *
- * @example fmtPnl(1234.50)   → '+₹1,234.50'
- * @example fmtPnl(-500)      → '-₹500.00'
- * @example fmtPnl(0)         → '+₹0.00'
+ * @example fmtPnl(1234.50)           → '+₹1,234.50'
+ * @example fmtPnl(-500)              → '-₹500.00'
+ * @example fmtPnl(0)                 → '+₹0.00'
  */
-export function fmtPnl(value: number | null | undefined): string {
+export function fmtPnl(value: number | null | undefined, currencyOrSymbol?: string | null): string {
   if (value === null || value === undefined || isNaN(value)) return '—';
+  const prefix = '₹';
+  const locale = 'en-IN';
   const sign = value >= 0 ? '+' : '-';
-  return sign + '₹' + Math.abs(value).toLocaleString('en-IN', {
+  return sign + prefix + Math.abs(value).toLocaleString(locale, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -273,36 +306,39 @@ export function fmtDuration(seconds: number): string {
 // ─── Symbol & Instrument Formatting ──────────────────────────────────────────
 
 const COMEX_SYMBOL_MAP: Record<string, string> = {
-  'XAUUSD': 'GOLD',
-  'XAGUSD': 'SILVER',
-  'XTIUSD': 'CRUDE OIL',
-  'XCUUSD': 'COPPER',
-  'XNGUSD': 'NATURAL GAS',
-  'GC=F': 'GOLD',
-  'GC': 'GOLD',
-  'SI=F': 'SILVER',
-  'SI': 'SILVER',
-  'CL=F': 'CRUDE OIL',
-  'CL': 'CRUDE OIL',
-  'HG=F': 'COPPER',
-  'HG': 'COPPER',
-  'NG=F': 'NATURAL GAS',
-  'NG': 'NATURAL GAS',
-  'PL=F': 'PLATINUM',
-  'PL': 'PLATINUM',
-  'PA=F': 'PALLADIUM',
-  'PA': 'PALLADIUM',
-  'NQ=F': 'NASDAQ',
-  'NQ': 'NASDAQ',
-  'ES=F': 'S&P 500',
-  'ES': 'S&P 500',
-  'YM=F': 'DOW',
-  'YM': 'DOW',
+  'XAUUSD': 'XAUUSD',
+  'XAGUSD': 'XAGUSD',
+  'XTIUSD': 'XTIUSD',
+  'XCUUSD': 'XCUUSD',
+  'XNGUSD': 'XNGUSD',
+  'XPTUSD': 'XPTUSD',
+  'XPDUSD': 'XPDUSD',
+  'GC=F': 'XAUUSD',
+  'GC': 'XAUUSD',
+  'SI=F': 'XAGUSD',
+  'SI': 'XAGUSD',
+  'CL=F': 'XTIUSD',
+  'CL': 'XTIUSD',
+  'HG=F': 'XCUUSD',
+  'HG': 'XCUUSD',
+  'NG=F': 'XNGUSD',
+  'NG': 'XNGUSD',
+  'PL=F': 'XPTUSD',
+  'PL': 'XPTUSD',
+  'PA=F': 'XPDUSD',
+  'PA': 'XPDUSD',
+  'NQ=F': 'NQ=F',
+  'NQ': 'NQ=F',
+  'ES=F': 'ES=F',
+  'ES': 'ES=F',
+  'YM=F': 'YM=F',
+  'YM': 'YM=F',
 };
 
 /**
  * Returns a clean display name for a trading instrument.
- * Maps COMEX proxy ticker symbols (e.g. 'GC=F', 'SI=F', 'CL=F') to readable names ('GOLD', 'SILVER', 'CRUDE OIL').
+ * COMEX commodities display their standard international symbols (XAUUSD, XAGUSD, XTIUSD, XCUUSD, XNGUSD).
+ * MCX Indian commodities display their Indian contract names (GOLD, SILVER, CRUDEOIL, etc.).
  */
 export function fmtSymbolName(symbol: string | null | undefined, name?: string | null): string {
   if (!symbol && !name) return '—';
@@ -319,6 +355,10 @@ export function fmtSymbolName(symbol: string | null | undefined, name?: string |
   }
 
   if (name && name !== symbol && !name.endsWith('=F') && !name.includes('=F')) {
+    // If the symbol itself is a COMEX symbol (like XAUUSD), do not overwrite with generic "Gold" name
+    if (COMEX_SYMBOL_MAP[rawTicker] || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD', 'XPTUSD', 'XPDUSD'].includes(rawTicker)) {
+      return rawTicker;
+    }
     return name;
   }
 

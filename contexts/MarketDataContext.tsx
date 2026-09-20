@@ -253,6 +253,8 @@ class MarketWSManager {
     if (this.usStockInterval) return;
 
     const pollUSQuotes = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
       const US_STOCKS = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC', 'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F'];
       const usSymbols: string[] = [...US_STOCKS];
       
@@ -300,7 +302,7 @@ class MarketWSManager {
     };
 
     pollUSQuotes();
-    this.usStockInterval = setInterval(pollUSQuotes, 1000);
+    this.usStockInterval = setInterval(pollUSQuotes, 8000);
   }
 
   private comexInterval: ReturnType<typeof setInterval> | null = null;
@@ -310,6 +312,12 @@ class MarketWSManager {
     if (this.comexInterval) return;
 
     const pollCOMEX = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      // Skip HTTP polling if backend WebSocket is active and fresh
+      if (this.ws && this.ws.readyState === WebSocket.OPEN && (Date.now() - this.lastMessageReceivedTime < 6000)) {
+        return;
+      }
+
       const defaultComex = ['XAUUSD', 'GOLD', 'GC=F', 'SILVER', 'XAGUSD', 'SI=F', 'CRUDE', 'XTIUSD', 'CL=F', 'COPPER', 'XCUUSD', 'HG=F', 'NATGAS', 'XNGUSD', 'NG=F'];
       const comexSymbols: string[] = [...defaultComex];
 
@@ -366,7 +374,7 @@ class MarketWSManager {
     };
 
     pollCOMEX();
-    this.comexInterval = setInterval(pollCOMEX, 500);
+    this.comexInterval = setInterval(pollCOMEX, 6000);
   }
 
   private overviewInterval: ReturnType<typeof setInterval> | null = null;
@@ -376,6 +384,8 @@ class MarketWSManager {
     if (this.overviewInterval) return;
 
     const pollOverview = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
       try {
         const res = await fetch('/api/market/overview', { cache: 'no-store' });
         if (!res.ok) return;
@@ -391,7 +401,7 @@ class MarketWSManager {
     };
 
     pollOverview();
-    this.overviewInterval = setInterval(pollOverview, 1000);
+    this.overviewInterval = setInterval(pollOverview, 10000);
   }
 
   public connect() {
@@ -457,6 +467,13 @@ class MarketWSManager {
             this.notifyListeners('quotes', payload.data);
           } else if (payload.type === 'update') {
             this.notifyListeners('update', { symbol: payload.symbol, quote: payload.data });
+          } else if (payload.type === 'ORDER_RESPONSE') {
+            this.notifyListeners('ORDER_RESPONSE', payload);
+          } else if (payload.type === 'ORDER_UPDATE') {
+            this.notifyListeners('ORDER_UPDATE', payload.data);
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('market_order_update', { detail: payload.data }));
+            }
           } else if (payload.type === 'pong') {
             // Heartbeat response handled
           }
@@ -596,6 +613,135 @@ class MarketWSManager {
     }
   }
 
+  public placeOrderFast(orderPayload: any, timeoutMs = 3000): Promise<{ success: boolean; result?: any; error?: string }> {
+    return new Promise((resolve) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        return resolve({ success: false, error: 'WEBSOCKET_NOT_OPEN' });
+      }
+
+      const reqId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      let timer: NodeJS.Timeout | null = null;
+
+      const messageHandler = (type: string, data: any) => {
+        if (type === 'ORDER_RESPONSE' && data?.req_id === reqId) {
+          if (timer) clearTimeout(timer);
+          this.removeListener(messageHandler);
+          resolve({
+            success: data.result?.success ?? false,
+            result: data.result,
+            error: data.result?.error,
+          });
+        }
+      };
+
+      this.addListener(messageHandler);
+
+      timer = setTimeout(() => {
+        this.removeListener(messageHandler);
+        resolve({ success: false, error: 'ORDER_WS_TIMEOUT' });
+      }, timeoutMs);
+
+      try {
+        this.ws.send(JSON.stringify({
+          action: 'order_place',
+          req_id: reqId,
+          order: orderPayload,
+        }));
+      } catch (err: any) {
+        if (timer) clearTimeout(timer);
+        this.removeListener(messageHandler);
+        resolve({ success: false, error: err?.message || 'WS_SEND_FAILED' });
+      }
+    });
+  }
+
+  public closePositionFast(userId: string, positionId: string, exitPrice?: number, timeoutMs = 3000): Promise<{ success: boolean; result?: any; error?: string }> {
+    return new Promise((resolve) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        return resolve({ success: false, error: 'WEBSOCKET_NOT_OPEN' });
+      }
+
+      const reqId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      let timer: NodeJS.Timeout | null = null;
+
+      const messageHandler = (type: string, data: any) => {
+        if (type === 'POSITION_CLOSED' && data?.req_id === reqId) {
+          if (timer) clearTimeout(timer);
+          this.removeListener(messageHandler);
+          resolve({
+            success: data.result?.success ?? false,
+            result: data.result,
+            error: data.result?.error,
+          });
+        }
+      };
+
+      this.addListener(messageHandler);
+
+      timer = setTimeout(() => {
+        this.removeListener(messageHandler);
+        resolve({ success: false, error: 'WS_TIMEOUT' });
+      }, timeoutMs);
+
+      try {
+        this.ws.send(JSON.stringify({
+          action: 'close_position',
+          req_id: reqId,
+          userId,
+          positionId,
+          exitPrice,
+        }));
+      } catch (err: any) {
+        if (timer) clearTimeout(timer);
+        this.removeListener(messageHandler);
+        resolve({ success: false, error: err?.message || 'WS_SEND_FAILED' });
+      }
+    });
+  }
+
+  public closeAllPositionsFast(userId: string, segment?: string, timeoutMs = 4000): Promise<{ success: boolean; result?: any; error?: string }> {
+    return new Promise((resolve) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        return resolve({ success: false, error: 'WEBSOCKET_NOT_OPEN' });
+      }
+
+      const reqId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      let timer: NodeJS.Timeout | null = null;
+
+      const messageHandler = (type: string, data: any) => {
+        if (type === 'ALL_POSITIONS_CLOSED' && data?.req_id === reqId) {
+          if (timer) clearTimeout(timer);
+          this.removeListener(messageHandler);
+          resolve({
+            success: data.result?.success ?? false,
+            result: data.result,
+            error: data.result?.error,
+          });
+        }
+      };
+
+      this.addListener(messageHandler);
+
+      timer = setTimeout(() => {
+        this.removeListener(messageHandler);
+        resolve({ success: false, error: 'WS_TIMEOUT' });
+      }, timeoutMs);
+
+      try {
+        this.ws.send(JSON.stringify({
+          action: 'close_all_positions',
+          req_id: reqId,
+          userId,
+          segment,
+        }));
+      } catch (err: any) {
+        if (timer) clearTimeout(timer);
+        this.removeListener(messageHandler);
+        resolve({ success: false, error: err?.message || 'WS_SEND_FAILED' });
+      }
+    });
+  }
+
   private static instance: MarketWSManager | null = null;
 
   public static getInstance(): MarketWSManager {
@@ -610,7 +756,8 @@ class MarketWSManager {
   }
 }
 
-const wsManager = MarketWSManager.getInstance();
+export const wsManager = MarketWSManager.getInstance();
+export { MarketWSManager };
 
 /**
  * Single authoritative quote normalizer.
@@ -746,16 +893,30 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       .catch(() => {});
   }, []);
 
-  // Flush pending updates every 250ms to reduce render count
+  // Flush pending updates every 400ms to reduce UI render churn
   useEffect(() => {
     const flushQuotes = () => {
       const pending = pendingUpdatesRef.current;
-      if (Object.keys(pending).length > 0) {
-        setQuotes(prev => ({ ...prev, ...pending }));
+      const keys = Object.keys(pending);
+      if (keys.length > 0) {
+        setQuotes(prev => {
+          let hasChange = false;
+          for (let i = 0; i < keys.length; i++) {
+            const k = keys[i];
+            const p = prev[k];
+            const n = pending[k];
+            if (!p || p.last_price !== n.last_price || p.bid !== n.bid || p.ask !== n.ask) {
+              hasChange = true;
+              break;
+            }
+          }
+          if (!hasChange) return prev;
+          return { ...prev, ...pending };
+        });
         pendingUpdatesRef.current = {};
       }
     };
-    const flushInterval = setInterval(flushQuotes, 250);
+    const flushInterval = setInterval(flushQuotes, 400);
     return () => clearInterval(flushInterval);
   }, []);
 
@@ -815,11 +976,10 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       // Prevent concurrent overlapping requests from saturating browser connection pool
       if (isFetchingRef.current) return;
 
-      // More aggressive HTTP fallback for page refresh scenarios
-      // Always try HTTP fallback if WebSocket isn't actively sending ticks
+      // Only try HTTP fallback if WebSocket isn't actively sending ticks
       const shouldUseHttpFallback =
         wsManager.connectionStatus !== 'connected' ||
-        (Date.now() - wsManager.lastMessageReceivedTime > 3000);
+        (Date.now() - wsManager.lastMessageReceivedTime > 5000);
 
       if (!shouldUseHttpFallback) return;
 
@@ -896,7 +1056,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
         fetchInitialQuotes();
       }
-    }, 4000);
+    }, 8000);
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {

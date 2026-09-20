@@ -207,6 +207,25 @@ export async function POST(
   }
 
   if (!pos) {
+    // Check if the position exists for this user and was already closed (e.g. fast-pipe WS already closed it, or concurrent exit)
+    const { data: closedPos } = await admin
+      .from('positions')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('id', positionId)
+      .maybeSingle();
+
+    if (closedPos && (closedPos.status === 'closed' || closedPos.status === 'CLOSED')) {
+      return NextResponse.json({
+        success: true,
+        message: 'Position already closed',
+        position_id: closedPos.id,
+        pnl: closedPos.pnl ?? 0,
+        exit_price: closedPos.exit_price ?? closedPos.ltp ?? 0,
+        already_closed: true,
+      });
+    }
+
     return NextResponse.json({ error: 'Position not found or already closed' }, { status: 404 });
   }
 
@@ -369,15 +388,21 @@ export async function POST(
     return NextResponse.json({ error: rpcErr.message || 'Failed to close position. Please try again.' }, { status: 400 });
   }
 
+  // Invalidate caches synchronously so subsequent client polls receive clean updated state
+  try {
+    const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+    await Promise.all([
+      invalidateUserHistoryCache(user.id),
+      invalidateUserPositionsCache(user.id),
+      invalidateUserOrdersCache(user.id),
+    ]);
+  } catch (cacheErr) {
+    console.warn('[POST /api/positions/[id]/close] Cache invalidation warning:', cacheErr);
+  }
+
   // Cancel any open/pending exit or linked orders for this position/symbol asynchronously
   (async () => {
     try {
-      const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
-      await invalidateUserHistoryCache(user.id);
-      await Promise.all([
-        invalidateUserPositionsCache(user.id),
-        invalidateUserOrdersCache(user.id),
-      ]);
       const { PositionService } = await import('@/lib/trading/PositionService');
       await PositionService.cancelPendingOrdersForClosedPosition(admin, user.id, positionId, pos.symbol);
     } catch (cancelErr) {

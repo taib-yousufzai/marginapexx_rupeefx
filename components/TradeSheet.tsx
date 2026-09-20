@@ -21,7 +21,7 @@ import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { generateRealisticFallbackQuote, FallbackQuote } from '@/lib/quoteFallback';
 import type { TradingInstrument } from '@/lib/types/instrument';
 import { useMyOrders } from '@/hooks/useMyOrders';
-import { fmtSymbolName } from '@/lib/format';
+import { fmtSymbolName, isForexInstrument } from '@/lib/format';
 import TickFlash from '@/components/TickFlash';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 
@@ -57,7 +57,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     Boolean(modifyingOrderId && (modifyingOrderId.startsWith('pos-sl-') || modifyingOrderId.startsWith('pos-target-') || modifyingOrderId.startsWith('pos-gtt-')))
   );
 
-  const { placeOrder, loading: placingOrder } = useOrderEntry();
+  const { placeOrder, closePosition, loading: placingOrder } = useOrderEntry();
 
   const isClosing = false;
   const handleCloseAnimation = () => {
@@ -141,6 +141,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const symCheck = ((item?.symbol || '') + ' ' + (item?.name || '') + ' ' + (item?.kiteSymbol || '')).toUpperCase();
   const isForexUsd = symCheck.includes('GBPUSD') || symCheck.includes('EURUSD') || symCheck.includes('GBP/USD') || symCheck.includes('EUR/USD');
+  const usdInrRate = 1;
   const isUsdItem = false;
   const currencySymbol = '₹';
   const priceLocale = 'en-IN';
@@ -155,7 +156,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       if (isComex || dbSeg === 'COMEX' || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (item?.symbol || '').toUpperCase().includes(c))) {
         return k.startsWith('COMEX:') ? k : `COMEX:${k.replace(/^COMEX:/i, '')}`;
       }
-      if (isCrypto || dbSeg === 'CRYPTO') {
+      if (isCrypto || (dbSeg as string) === 'CRYPTO') {
         return k.startsWith('CRYPTO:') ? k : `CRYPTO:${k.replace(/^CRYPTO:/i, '')}`;
       }
       if ((item?.segment || '').toUpperCase().includes('US-EQ') || (item?.symbol || '').toUpperCase().startsWith('US:')) {
@@ -170,6 +171,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           prefix = 'BFO';
         } else if (['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'NATGAS', 'MCX', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(x => cleanSym.includes(x))) {
           prefix = 'MCX';
+        } else if (['USDINR', 'EURINR', 'GBPINR', 'JPYINR'].some(x => cleanSym.includes(x)) || (item?.segment || '').toUpperCase().includes('CDS')) {
+          prefix = 'CDS';
+        } else if (isForexUsd || ['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'].some(x => cleanSym.includes(x)) || (item?.segment || '').toUpperCase().includes('FOREX')) {
+          prefix = 'FOREX';
         } else if (isOption || isFut) {
           prefix = 'NFO';
         }
@@ -177,7 +182,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
     }
     return k;
-  }, [item?.kiteSymbol, item?.symbol, isComex, isCrypto, dbSeg]);
+  }, [item?.kiteSymbol, item?.symbol, isComex, isCrypto, dbSeg, isForexUsd]);
 
   const marketSymbols = useMemo(() => {
     const list: string[] = [];
@@ -1075,11 +1080,24 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
           const orderAttemptId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `att_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
+          const cachedPos = typeof window !== 'undefined' && (window as any).__lastPositionsMap && currentLinkedPosId ? (window as any).__lastPositionsMap.get(currentLinkedPosId) : null;
+          const targetPos = (currentLinkedPosId ? activePositions.find(p => p.id === currentLinkedPosId) : undefined) || existingPos || cachedPos;
+          
+          let targetPosSide: 'BUY' | 'SELL';
+          let orderExitSide: 'BUY' | 'SELL';
+          if (targetPos?.side) {
+            targetPosSide = targetPos.side as 'BUY' | 'SELL';
+            orderExitSide = targetPosSide === 'BUY' ? 'SELL' : 'BUY';
+          } else {
+            orderExitSide = (placeSide === 'SELL' || placeSide === 'BUY') ? placeSide : 'SELL';
+            targetPosSide = orderExitSide === 'SELL' ? 'BUY' : 'SELL';
+          }
+
           const orderPayload = {
             symbol: item.symbol,
             kite_instrument: computedKiteSymbol || item.symbol,
             segment: isCrypto ? 'CRYPTO' : (dbSeg || item.segment),
-            side: placeSide,
+            side: orderExitSide,
             qty: finalQty,
             lots: finalLots,
             order_type: resolvedOrderType as any,
@@ -1096,12 +1114,25 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
           handleCloseAnimation();
 
-          placeOrder(orderPayload).then(res => {
+          const isMarketExit = resolvedOrderType === 'MARKET' && Boolean(currentLinkedPosId);
+
+          const executionPromise = isMarketExit
+            ? closePosition(
+                currentLinkedPosId!,
+                resolvedClientPrice ?? currentLtp,
+                item.symbol,
+                isCrypto ? 'CRYPTO' : (dbSeg || item.segment),
+                targetPosSide
+              )
+            : placeOrder(orderPayload);
+
+          executionPromise.then(res => {
             if (res.success || (res as any).isProcessing) {
               const isProcessing = Boolean((res as any).isProcessing);
-              showToast(isProcessing ? `Order submitted for ${item.symbol}` : `${placeSide} order executed for ${item.symbol}`);
+              showToast(isProcessing ? `Order submitted for ${item.symbol}` : `Position closed for ${item.symbol}`);
               window.dispatchEvent(new Event('order_placed'));
               window.dispatchEvent(new Event('position-closed'));
+              window.dispatchEvent(new Event('history_updated'));
               if (onSuccess) {
                 try {
                   onSuccess();
@@ -1112,14 +1143,15 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               setTimeout(() => {
                 window.dispatchEvent(new Event('order_placed'));
                 window.dispatchEvent(new Event('position-closed'));
+                window.dispatchEvent(new Event('history_updated'));
               }, 1500);
             } else {
-              const errMsg = res.error || 'Order failed. Please try again.';
+              const errMsg = res.error || 'Exit failed. Please try again.';
               window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
               window.dispatchEvent(new Event('order_failed'));
             }
           }).catch(err => {
-            const errMsg = err.message || 'Order failed. Please try again.';
+            const errMsg = err.message || 'Exit failed. Please try again.';
             window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
             window.dispatchEvent(new Event('order_failed'));
           });
@@ -1255,8 +1287,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     }
   };
 
-  const fmt = (n: number) =>
-    n > 0 ? `${currencySymbol}${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '---';
+  const fmt = (n: number) => {
+    if (!n || n <= 0) return '---';
+    const decimals = isForexUsd || (item?.symbol && isForexInstrument(item.symbol)) ? 4 : 2;
+    return `${currencySymbol}${n.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+  };
 
   return (
     <>

@@ -198,6 +198,8 @@ function savePersistedOptimisticRemovals(removals: Map<string, number>) {
   } catch {}
 }
 
+const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD', 'XPTUSD', 'XPDUSD', 'GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF'];
+
 export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { children: React.ReactNode; refreshInterval?: number }) => {
   const [rawPositions, setRawPositions] = useState<MyPosition[]>(() => {
     if (typeof window !== 'undefined') {
@@ -256,82 +258,62 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       const next = prev.filter(p => p.id !== posId);
       if (typeof window !== 'undefined') {
         try {
-          localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__'))));
-          savePersistedOptimisticPositions(next);
+          localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next));
         } catch {}
       }
       return next;
     });
   }, []);
 
-const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { opt_id?: string }) => {
-  const targetClean = cleanSym(partialPos.symbol || partialPos.kite_instrument || '');
-  const normProdType = (partialPos.product_type || 'INTRADAY').toUpperCase();
-  const qty = partialPos.qty_open || 0;
-  const side = partialPos.side || 'BUY';
+  const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { opt_id?: string }) => {
+    const tempId = partialPos.opt_id || (partialPos.id ? partialPos.id : `__optimistic__${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
+    const now = Date.now();
+    const cleanSymbol = (partialPos.symbol || '').trim();
+    if (!cleanSymbol) return;
 
-  if (partialPos.opt_id) {
-    if (processedOptIdsRef.current.has(partialPos.opt_id)) {
-      return;
-    }
-    processedOptIdsRef.current.add(partialPos.opt_id);
-    if (processedOptIdsRef.current.size > 300) {
-      const first = processedOptIdsRef.current.values().next().value;
-      if (first) processedOptIdsRef.current.delete(first);
-    }
-  } else {
-    const sig = `${targetClean}|${side}|${normProdType}|${qty}`;
-    const nowMs = Date.now();
-    if (lastOptimisticAddRef.current.signature === sig && (nowMs - lastOptimisticAddRef.current.time) < 500) {
-      return;
-    }
-    lastOptimisticAddRef.current = { signature: sig, time: nowMs };
-  }
+    const newPos: MyPosition = {
+      id: tempId,
+      user_id: '',
+      symbol: cleanSymbol,
+      kite_instrument: partialPos.kite_instrument || cleanSymbol,
+      settlement: partialPos.settlement || '',
+      side: (partialPos.side || 'BUY').toUpperCase() as 'BUY' | 'SELL',
+      qty_open: Number(partialPos.qty_open || partialPos.qty_total || 1),
+      qty_total: Number(partialPos.qty_total || partialPos.qty_open || 1),
+      entry_price: Number(partialPos.entry_price || partialPos.avg_price || partialPos.ltp || 0),
+      avg_price: Number(partialPos.avg_price || partialPos.entry_price || partialPos.ltp || 0),
+      ltp: Number(partialPos.ltp || partialPos.entry_price || 0),
+      product_type: (partialPos.product_type || 'INTRADAY') as any,
+      status: 'open',
+      created_at: new Date(now).toISOString(),
+      entry_time: new Date(now).toISOString(),
+      updated_at: new Date(now).toISOString(),
+      created_time_ms: now,
+      brokerage: 0,
+      pnl: 0,
+      locked_margin: (partialPos as any).locked_margin || 0,
+    } as any;
 
-  const createdMs = Date.now();
-  const tempId = partialPos.opt_id ? `__optimistic__${partialPos.opt_id}` : `__optimistic__${createdMs}_${Math.random().toString(36).substring(2, 6)}`;
-  const now = new Date().toISOString();
-  const optimisticPos: MyPosition = {
-    id: tempId,
-    user_id: '',
-    symbol: partialPos.symbol || '',
-    settlement: partialPos.settlement || '',
-    side: partialPos.side || 'BUY',
-    qty_open: partialPos.qty_open || 0,
-    lots: (partialPos as any).lots || 0,
-    entry_price: partialPos.entry_price || 0,
-    avg_price: partialPos.avg_price || partialPos.entry_price || 0,
-    ltp: partialPos.ltp || partialPos.entry_price || 0,
-    status: 'open',
-    kite_instrument: partialPos.kite_instrument || partialPos.symbol || '',
-    entry_time: now,
-    locked_margin: partialPos.locked_margin || 0,
-    brokerage: 0,
-    opt_id: partialPos.opt_id,
-    created_time_ms: createdMs,
-    ...partialPos,
-    product_type: normProdType as any,
-  } as MyPosition;
+    optimisticPositionIds.current.add(tempId);
 
-  optimisticPositionIds.current.add(tempId);
-  setRawPositions(prev => {
-    const next = [optimisticPos, ...prev.filter(p => p.id !== tempId)];
-    savePersistedOptimisticPositions(next);
-    return next;
-  });
-}, []);
+    setRawPositions(prev => {
+      if (prev.some(p => p.id === tempId)) return prev;
+      const next = [newPos, ...prev];
+      if (typeof window !== 'undefined') {
+        savePersistedOptimisticPositions(next);
+      }
+      return next;
+    });
+  }, []);
 
   const removeOptimisticPosition = useCallback((optIdOrTempId: string) => {
-    if (!optIdOrTempId) return;
+    optimisticPositionIds.current.delete(optIdOrTempId);
     setRawPositions(prev => {
-      const target = prev.find(p => p.id === optIdOrTempId || p.id.includes(optIdOrTempId) || (p as any).opt_id === optIdOrTempId);
-      if (target) {
-        optimisticPositionIds.current.delete(target.id);
-        const next = prev.filter(p => p.id !== target.id);
+      const next = prev.filter(p => p.id !== optIdOrTempId);
+      if (typeof window !== 'undefined') {
         savePersistedOptimisticPositions(next);
-        return next;
       }
-      return prev;
+      return next;
     });
   }, []);
 
@@ -347,9 +329,7 @@ const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { o
     });
   }, []);
 
-const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD', 'XPTUSD', 'XPDUSD', 'GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF'];
-
-  const fetchPositions = useCallback(async () => {
+  const fetchPositions = useCallback(async (options?: { fresh?: boolean }) => {
     try {
       // Ensure we have an active session token before fetching
       let { token } = getSharedSessionSync();
@@ -365,146 +345,102 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const data = await api.get<{ positions: MyPosition[] }>('/api/positions', {
+      const queryUrl = options?.fresh ? `/api/positions?_t=${Date.now()}` : '/api/positions';
+      const data = await api.get<{ positions: MyPosition[] }>(queryUrl, {
         signal: controller.signal,
       });
 
-      // The DB is the single source of truth. Apply the server snapshot directly.
       const rawPositionsFromServer: MyPosition[] = data.positions || [];
-      const serverRawIds = new Set(rawPositionsFromServer.map(p => p.id));
 
-      if (typeof window !== 'undefined') {
-        if (!(window as any).__lastPositionsMap) {
-          (window as any).__lastPositionsMap = new Map<string, MyPosition>();
-        }
-        rawPositionsFromServer.forEach(p => (window as any).__lastPositionsMap.set(p.id, p));
-      }
-
-      // Clean up optimisticallyRemovedIds for positions that the server DB no longer returns
-      // or after 30 seconds have passed to prevent indefinite suppressions
+      // Clean up optimisticallyRemovedIds strictly based on 30s TTL
       const now = Date.now();
       for (const id of Array.from(optimisticallyRemovedIds.current)) {
         const removedAt = optimisticallyRemovedTimes.current.get(id) || 0;
-        if (!serverRawIds.has(id) || (now - removedAt > 30000)) {
+        if (now - removedAt > 30000) {
           optimisticallyRemovedIds.current.delete(id);
           optimisticallyRemovedTimes.current.delete(id);
         }
       }
 
-      // Filter out any IDs that are still in the optimistic-removal set (exit in flight).
-      let newPositions: MyPosition[] = rawPositionsFromServer.filter(
+      // Filter out any IDs that are in optimistic removal in the last 30s
+      let basePositions: MyPosition[] = rawPositionsFromServer.filter(
         p => !optimisticallyRemovedIds.current.has(p.id)
       );
 
-      // Precompute static properties for any newly loaded positions
-      const staticProps = staticPositionPropsRef.current;
-      newPositions.forEach(p => {
-        if (!staticProps[p.id]) {
-          const dbSeg = mapSegmentWithSymbol(p.settlement || '', p.symbol);
-          const segUpper = dbSeg.toUpperCase();
-          const cleanSymUpper = (p.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
-          const isComex = (p as any).preferredView === 'comex' || segUpper.includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || NON_CRYPTO_USD_SYMBOLS.slice(0, 7).some(c => cleanSymUpper.includes(c))));
-          const isCrypto = !isComex && (segUpper.includes('CRYPTO') || (p.symbol && (p.symbol.endsWith('USDT') || (p.symbol.endsWith('USD') && !NON_CRYPTO_USD_SYMBOLS.includes(cleanSymUpper)))));
-
-          let binanceSymbol = '';
-          if (isCrypto) {
-            binanceSymbol = (p.symbol || '').replace(/^(CRYPTO:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
-            if (binanceSymbol === 'DODGE' || binanceSymbol === 'DODGEUSDT') {
-              binanceSymbol = 'DOGEUSDT';
-            } else if (binanceSymbol.endsWith('USD') && !binanceSymbol.endsWith('USDT')) {
-              binanceSymbol = binanceSymbol.slice(0, -3) + 'USDT';
-            } else if (!binanceSymbol.endsWith('USDT')) {
-              binanceSymbol += 'USDT';
-            }
-          }
-
-          staticProps[p.id] = {
-            entryTimeMs: new Date(p.entry_time).getTime(),
-            dbSeg,
-            resolvedKiteSymbol: resolveKitePrefix(p.kite_instrument || p.symbol, p.settlement || ''),
-            isCrypto: Boolean(isCrypto),
-            isComex: Boolean(isComex),
-            binanceSymbol
-          };
-        }
-      });
+      // Reconcile optimistic positions with server response
+      const persistedOpt = getPersistedOptimisticPositions();
 
       setRawPositions(prev => {
-        const prevOpenIds = new Set(prev.map(p => p.id));
-        let posClosedOnBackend = false;
-        for (const id of prevOpenIds) {
-          // Skip optimistic placeholders — they are not real DB IDs
-          if (id.startsWith('__optimistic__')) continue;
-          if (!serverRawIds.has(id) && !optimisticallyRemovedIds.current.has(id)) {
-            posClosedOnBackend = true;
-            break;
-          }
-        }
-        if (posClosedOnBackend) {
-          setTimeout(() => {
-            window.dispatchEvent(new Event('position-closed'));
-          }, 0);
-        }
-
-        // Group server positions by (cleanSymbol, side, product_type)
-        const serverGroups = new Map<string, MyPosition[]>();
-        for (const sp of newPositions) {
-          const symKey = cleanSym(sp.symbol || sp.kite_instrument || '');
-          const prodKey = (sp.product_type || 'INTRADAY').toUpperCase();
-          const groupKey = `${symKey}|${sp.side}|${prodKey}`;
-          if (!serverGroups.has(groupKey)) {
-            serverGroups.set(groupKey, []);
-          }
-          serverGroups.get(groupKey)!.push(sp);
-        }
-
-        // Group prev optimistic positions by (cleanSymbol, side, product_type)
-        // and filter out expired placeholders (after 15 seconds)
-        const now = Date.now();
-        const prevOptPositions = prev.filter(p => {
-          if (!p.id.startsWith('__optimistic__')) return false;
-          const idParts = p.id.split('_');
-          const timeMs = parseInt(idParts[2] || '0', 10);
-          if (timeMs > 0 && now - timeMs > 15000) return false;
-          return true;
+        const existingOptMap = new Map<string, MyPosition>();
+        [...persistedOpt, ...prev.filter(p => p.id.startsWith('__optimistic__') || p.id.startsWith('opt_'))].forEach(p => {
+          existingOptMap.set(p.id, p);
         });
 
-        // Set of known server IDs that were already present in prev
-        const prevKnownServerIds = new Set(
-          prev.filter(p => !p.id.startsWith('__optimistic__')).map(p => p.id)
-        );
-
-        // Group unexpired optimistic positions
-        const optGroups = new Map<string, MyPosition[]>();
-        for (const op of prevOptPositions) {
-          const symKey = cleanSym(op.symbol || op.kite_instrument || '');
-          const prodKey = (op.product_type || 'INTRADAY').toUpperCase();
-          const groupKey = `${symKey}|${op.side}|${prodKey}`;
-          if (!optGroups.has(groupKey)) {
-            optGroups.set(groupKey, []);
+        const activeOptPositions: MyPosition[] = [];
+        for (const [optId, optPos] of existingOptMap.entries()) {
+          const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
+          if (now - createdTime > 20000) {
+            optimisticPositionIds.current.delete(optId);
+            continue;
           }
-          optGroups.get(groupKey)!.push(op);
+          // Check if server already has a matching position for this symbol & side
+          const hasMatchingServerPos = basePositions.some(sp => {
+            const sameSym = cleanSym(sp.symbol || sp.kite_instrument) === cleanSym(optPos.symbol || optPos.kite_instrument);
+            const sameSide = (sp.side || '').toUpperCase() === (optPos.side || '').toUpperCase();
+            const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
+            return sameSym && sameSide && (spTime >= createdTime - 5000);
+          });
+
+          if (hasMatchingServerPos) {
+            optimisticPositionIds.current.delete(optId);
+          } else {
+            activeOptPositions.push(optPos);
+          }
         }
 
-        // Reconcile optimistic positions against new server positions per group
-        const unreplacedOptimistic: MyPosition[] = [];
-        for (const [groupKey, optList] of optGroups.entries()) {
-          const serverList = serverGroups.get(groupKey) || [];
-          // Count how many server positions in this group are newly arrived
-          const newlyArrivedServerCount = serverList.filter(sp => !prevKnownServerIds.has(sp.id)).length;
-          // Drop matching number of optimistic positions (oldest first)
-          const remainingOptimistic = optList.slice(newlyArrivedServerCount);
-          unreplacedOptimistic.push(...remainingOptimistic);
-        }
+        const merged = [...activeOptPositions, ...basePositions];
 
-        const finalPositions = [...unreplacedOptimistic, ...newPositions];
+        // Precompute static properties for any newly loaded positions
+        const staticProps = staticPositionPropsRef.current;
+        merged.forEach(p => {
+          if (!staticProps[p.id]) {
+            const dbSeg = mapSegmentWithSymbol(p.settlement || '', p.symbol);
+            const segUpper = dbSeg.toUpperCase();
+            const cleanSymUpper = (p.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+            const isComex = (p as any).preferredView === 'comex' || segUpper.includes('COMEX') || (p.symbol && (p.symbol.endsWith('=F') || NON_CRYPTO_USD_SYMBOLS.slice(0, 7).some(c => cleanSymUpper.includes(c))));
+            const isCrypto = !isComex && (segUpper.includes('CRYPTO') || (p.symbol && (p.symbol.endsWith('USDT') || (p.symbol.endsWith('USD') && !NON_CRYPTO_USD_SYMBOLS.includes(cleanSymUpper)))));
+
+            let binanceSymbol = '';
+            if (isCrypto) {
+              binanceSymbol = (p.symbol || '').replace(/^(CRYPTO:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+              if (binanceSymbol === 'DODGE' || binanceSymbol === 'DODGEUSDT') {
+                binanceSymbol = 'DOGEUSDT';
+              } else if (binanceSymbol.endsWith('USD') && !binanceSymbol.endsWith('USDT')) {
+                binanceSymbol = binanceSymbol.slice(0, -3) + 'USDT';
+              } else if (!binanceSymbol.endsWith('USDT')) {
+                binanceSymbol += 'USDT';
+              }
+            }
+
+            staticProps[p.id] = {
+              entryTimeMs: new Date(p.entry_time).getTime(),
+              dbSeg,
+              resolvedKiteSymbol: resolveKitePrefix(p.kite_instrument || p.symbol, p.settlement || ''),
+              isCrypto: Boolean(isCrypto),
+              isComex: Boolean(isComex),
+              binanceSymbol
+            };
+          }
+        });
+
         if (typeof window !== 'undefined') {
           try {
-            localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(finalPositions.filter(p => !p.id.startsWith('__optimistic__'))));
-            savePersistedOptimisticPositions(finalPositions);
+            localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(merged.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
+            savePersistedOptimisticPositions(merged);
           } catch {}
         }
-        return finalPositions;
+
+        return merged;
       });
     } catch (err: any) {
       if (err instanceof Error && err.name === 'AbortError') return;
@@ -526,23 +462,21 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
       optimisticallyRemovedTimes.current.clear();
     }
     savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
-    fetchPositions();
+    fetchPositions({ fresh: true });
   }, [fetchPositions]);
 
   useEffect(() => {
     // One-shot eviction: clear the legacy localStorage cache written by the old code.
-    // Existing users may still have stale positions under this key; remove it so they
-    // never seed the UI from a ghost snapshot again.
     try { localStorage.removeItem('cached_open_positions'); } catch (_) {}
 
     fetchPositions();
     let isSubscribed = false;
     const channelName = `my-positions-realtime-${Math.random().toString(36).slice(2)}`;
 
-    const debouncedFetch = (delay = 300) => {
+    const debouncedFetch = (delay = 300, fresh = true) => {
       if (fetchDebounceRef.current) clearTimeout(fetchDebounceRef.current);
       fetchDebounceRef.current = setTimeout(() => {
-        fetchPositions();
+        fetchPositions({ fresh });
       }, delay);
     };
 
@@ -552,7 +486,7 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
         'postgres_changes',
         { event: '*', schema: 'public', table: 'positions' },
         () => {
-          debouncedFetch(200);
+          debouncedFetch(200, true);
         }
       );
 
@@ -569,7 +503,6 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
           const now = Date.now();
 
           setRawPositions(prev => {
-            // Find all candidate matching positions with matching symbol or linked position ID
             const matchingPositions = prev.filter(p => {
               if (detail.linked_position_id && p.id === detail.linked_position_id) return true;
               if (targetClean && cleanSym(p.symbol || p.kite_instrument || '') === targetClean) return true;
@@ -581,7 +514,6 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
             const totalQty = matchingPositions.reduce((sum, p) => sum + (p.qty_open || 0), 0);
 
             if (!exitQty || exitQty >= totalQty) {
-              // Full exit: optimistically remove all matching positions immediately
               matchingPositions.forEach(p => {
                 optimisticallyRemovedIds.current.add(p.id);
                 optimisticallyRemovedTimes.current.set(p.id, now);
@@ -589,13 +521,15 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
               savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
               const removeIds = new Set(matchingPositions.map(p => p.id));
               const next = prev.filter(p => !removeIds.has(p.id));
-              savePersistedOptimisticPositions(next);
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
+                  savePersistedOptimisticPositions(next);
+                } catch {}
+              }
               return next;
             } else {
-              // Partial exit: FIFO consume matching positions starting with linked_position_id (if present)
               let remExit = exitQty;
-
-              // Sort so linked_position_id is prioritized first
               const sortedMatching = [...matchingPositions].sort((a, b) => {
                 if (detail.linked_position_id) {
                   if (a.id === detail.linked_position_id) return -1;
@@ -629,7 +563,12 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
                 }
                 return p;
               }).filter((p): p is MyPosition => p !== null);
-              savePersistedOptimisticPositions(next);
+              if (typeof window !== 'undefined') {
+                try {
+                  localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
+                  savePersistedOptimisticPositions(next);
+                } catch {}
+              }
               return next;
             }
           });
@@ -637,37 +576,54 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
           addOptimisticPosition(detail);
         }
       }
-      // Immediate fetch — scalp mode needs instant position update
-      fetchPositions();
-      // Follow-up fetch in 800ms to catch any async DB propagation
-      debouncedFetch(800);
+      // Immediate fetch with fresh cache buster
+      fetchPositions({ fresh: true });
+      // Follow-up fetch in 800ms
+      debouncedFetch(800, true);
     };
 
     const handleOrderPlaced = () => {
-      // Immediate fetch for fast position panel update
-      fetchPositions();
-      // Follow-up fetch in 800ms
-      debouncedFetch(800);
+      fetchPositions({ fresh: true });
+      debouncedFetch(800, true);
     };
 
     const handleOrderFailed = () => {
       optimisticallyRemovedIds.current.clear();
       optimisticallyRemovedTimes.current.clear();
       savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
-      fetchPositions();
+      fetchPositions({ fresh: true });
+    };
+
+    const handlePositionClosedOptimistic = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const positions = detail?.positions || (detail?.position ? [detail.position] : []);
+      const now = Date.now();
+      positions.forEach((p: any) => {
+        if (p?.id) {
+          optimisticallyRemovedIds.current.add(p.id);
+          optimisticallyRemovedTimes.current.set(p.id, now);
+        }
+      });
+      savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
+      setRawPositions(prev => {
+        const closedIdSet = new Set(positions.map((p: any) => p?.id).filter(Boolean));
+        const next = prev.filter(p => !closedIdSet.has(p.id));
+        savePersistedOptimisticPositions(next);
+        return next;
+      });
     };
     
     window.addEventListener('order_placed', handleOrderPlaced);
     window.addEventListener('order_placed_with_data', handleOrderPlacedWithData);
+    window.addEventListener('position_closed_optimistic', handlePositionClosedOptimistic);
     window.addEventListener('order_failed', handleOrderFailed);
     window.addEventListener('position-closed', handleOrderPlaced);
     window.addEventListener('position_closed', handleOrderPlaced);
     window.addEventListener('position_updated', handleOrderPlaced);
     window.addEventListener('order_executed', handleOrderPlaced);
 
-    // Active polling fallback: event listeners handle instant user actions (0ms).
-    // Polling is a background safety net relaxed to 25s to minimize Supabase IO.
-    const pollTime = Math.max(refreshInterval, 25000);
+    // Responsive 5s polling fallback for open positions
+    const pollTime = refreshInterval || 5000;
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') {
         fetchPositions();
@@ -676,14 +632,14 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
 
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
-        fetchPositions();
+        fetchPositions({ fresh: true });
       }
     };
     document.addEventListener('visibilitychange', handleVisibility);
 
     const { data: { subscription: authSub } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session) {
-        fetchPositions();
+        fetchPositions({ fresh: true });
       }
     });
 
@@ -694,13 +650,14 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
       authSub.unsubscribe();
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('order_placed_with_data', handleOrderPlacedWithData);
+      window.removeEventListener('position_closed_optimistic', handlePositionClosedOptimistic);
       window.removeEventListener('order_failed', handleOrderFailed);
       window.removeEventListener('position-closed', handleOrderPlaced);
       window.removeEventListener('position_closed', handleOrderPlaced);
       window.removeEventListener('position_updated', handleOrderPlaced);
       window.removeEventListener('order_executed', handleOrderPlaced);
     };
-  }, [fetchPositions, refreshInterval]);
+  }, [fetchPositions, refreshInterval, addOptimisticPosition]);
 
   const { kiteKeys, binanceKeys, comexKeys } = useMemo(() => {
     const kite: string[] = [];
@@ -744,7 +701,7 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
   const enrichedPositions = useMemo(() => {
     const settingsMap = new Map<string, any>();
     for (const s of segmentSettings) {
-      settingsMap.set(`${s.segment}|${s.side}`, s);
+      settingsMap.set(`${(s.segment || '').toUpperCase()}|${(s.side || '').toUpperCase()}`, s);
     }
 
     const props = staticPositionPropsRef.current;
@@ -813,9 +770,8 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
         }
       }
 
-      // Use pos.settlement directly — this is what close/route.ts uses when
-      // looking up segment settings, so the buffer value matches exactly.
-      const settingsKey = `${p.settlement ?? ''}|${p.side}`;
+      // Use pos.settlement / dbSeg for segment settings lookup
+      const settingsKey = `${(p.settlement || dbSeg || '').toUpperCase()}|${(p.side || '').toUpperCase()}`;
       const sideSetting = settingsMap.get(settingsKey);
       
       let unrealised = 0;
@@ -831,19 +787,17 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
       const investment = avgPrice * p.qty_open; 
       const pnl_percent = investment > 0 ? (total_pnl / investment) * 100 : 0;
 
-      const profitHoldSec = sideSetting ? Number(sideSetting.profit_hold_sec) : 120;
+      const profitHoldSec = sideSetting?.profit_hold_sec != null ? Number(sideSetting.profit_hold_sec) : 0;
+      const lossHoldSec = sideSetting?.loss_hold_sec != null ? Number(sideSetting.loss_hold_sec) : 0;
       const elapsedSec = Math.floor((Date.now() - entryTimeMs) / 1000);
 
       const isInProfit = unrealised > 0;
-      // Lock when in profit and within hold window.
-      // When segmentSettings haven't loaded yet (segmentSettingsLoaded = false) we
-      // still apply the lock using the 120s default — this prevents a flash of
-      // "exit allowed" on first render while settings are still fetching.
+      const requiredHoldSec = isInProfit ? profitHoldSec : lossHoldSec;
       const isLocked = !contractExpired
         && (p.status === 'open' || p.status === 'active')
-        && elapsedSec < profitHoldSec
-        && isInProfit;
-      const remainingSec = isLocked ? (profitHoldSec - elapsedSec) : 0;
+        && requiredHoldSec > 0
+        && elapsedSec < requiredHoldSec;
+      const remainingSec = isLocked ? (requiredHoldSec - elapsedSec) : 0;
 
       return {
         ...p,
@@ -854,7 +808,7 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
         pnl_percent: parseFloat(pnl_percent.toFixed(2)),
         hold_lock_active: isLocked,
         remaining_hold_seconds: remainingSec,
-        required_hold_seconds: profitHoldSec
+        required_hold_seconds: requiredHoldSec
       } as EnrichedPosition;
     });
   }, [

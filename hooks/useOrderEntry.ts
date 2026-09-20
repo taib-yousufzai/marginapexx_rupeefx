@@ -6,10 +6,13 @@
 
 import { useState, useCallback } from 'react';
 import { api, ApiError } from '@/lib/api';
+import { getSession } from '@/lib/auth';
+import { wsManager } from '@/contexts/MarketDataContext';
 import { soundEngine } from '@/lib/audio';
 import { useOrdersData } from '@/contexts/OrdersContext';
 import { useBalanceData } from '@/contexts/BalanceContext';
 import { usePositionsData, cleanSym } from '@/contexts/PositionsContext';
+import { fmtDateTime, fmtDate } from '@/lib/format';
 import type { MyOrder } from '@/lib/types/order';
 
 export type OrderSide = 'BUY' | 'SELL';
@@ -75,7 +78,8 @@ export function useOrderEntry() {
       client_price: state.client_price,
       brokerage: 0,
       created_at: new Date().toISOString(),
-    };
+      created_time_ms: Date.now(),
+    } as any;
 
     if (ordersContext?.addOptimisticOrder) {
       ordersContext.addOptimisticOrder(optimisticOrder);
@@ -217,6 +221,23 @@ export function useOrderEntry() {
           };
 
           optimisticClosedPositions.push(optimisticClosedPos);
+          if (p.id) {
+            if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+              (window as any).__lastPositionsMap.delete(p.id);
+            }
+            if (positionsContext?.removePositionLocally) {
+              positionsContext.removePositionLocally(p.id);
+            }
+          }
+        }
+
+        if (effectiveLinkedPosId) {
+          if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+            (window as any).__lastPositionsMap.delete(effectiveLinkedPosId);
+          }
+          if (positionsContext?.removePositionLocally) {
+            positionsContext.removePositionLocally(effectiveLinkedPosId);
+          }
         }
 
         const avgEntryPrice = totalClosedQty > 0 ? weightedEntrySum / totalClosedQty : 0;
@@ -233,8 +254,8 @@ export function useOrderEntry() {
           entryPrice: avgEntryPrice,
           exitPrice: exitPrice || avgEntryPrice,
           pnl: totalPnl,
-          date: new Date(sortedMatching[0]?.entry_time || (sortedMatching[0] as any)?.created_at || now).toLocaleString(),
-          exitDate: new Date(now).toLocaleDateString(),
+          date: fmtDateTime(sortedMatching[0]?.entry_time || (sortedMatching[0] as any)?.created_at || new Date(now).toISOString()),
+          exitDate: fmtDate(new Date(now).toISOString()),
           status: 'closed',
           brokerage: totalBrokerage,
           closedBy: 'USER_ACTION',
@@ -262,8 +283,8 @@ export function useOrderEntry() {
           entryPrice: exitPrice,
           exitPrice: exitPrice,
           pnl: 0,
-          date: new Date(now).toLocaleString(),
-          exitDate: new Date(now).toLocaleDateString(),
+          date: fmtDateTime(new Date(now).toISOString()),
+          exitDate: fmtDate(new Date(now).toISOString()),
           status: 'closed',
           brokerage: 0,
           closedBy: 'USER_ACTION',
@@ -292,22 +313,6 @@ export function useOrderEntry() {
       }
 
       if (typeof window !== 'undefined' && optimisticHistoryItems.length > 0) {
-        try {
-          const existingHistory = (window as any).__historyCache || [];
-          const closedIds = new Set(optimisticHistoryItems.map(i => i.id));
-          const updatedHistory = [...optimisticHistoryItems, ...existingHistory.filter((h: any) => !closedIds.has(h.id))];
-          (window as any).__historyCache = updatedHistory;
-          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-        } catch {}
-
-        try {
-          const existingClosed = (window as any).__closedPositionsCache || [];
-          const closedIds = new Set(optimisticClosedPositions.map(p => p.id));
-          const updatedClosed = [...optimisticClosedPositions, ...existingClosed.filter((p: any) => !closedIds.has(p.id))];
-          (window as any).__closedPositionsCache = updatedClosed;
-          localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
-        } catch {}
-
         window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
           detail: {
             positions: optimisticClosedPositions,
@@ -340,13 +345,49 @@ export function useOrderEntry() {
     soundEngine.playOrderExecuted();
 
     try {
-      // Direct fast API dispatch (25000ms max timeout to prevent premature abort race conditions)
       const submitPayload = {
         ...state,
         is_exit: effectiveIsExit,
         linked_position_id: effectiveLinkedPosId,
       };
-      const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>('/api/orders', submitPayload, { timeout: 25000 });
+
+      let result: { order_id: string; status: string; fill_price: number; message?: string } | null = null;
+
+      // ── Sub-Second Execution Pipeline: WebSocket Fast-Pipe ───────────────
+      // If WebSocket connection to the ticker daemon engine is active, dispatch
+      // the order directly via in-memory order engine for <20ms execution.
+      try {
+        const session = await getSession();
+        const userId = session?.user?.id;
+        if (userId && wsManager.isConnectingOrOpen) {
+          const fastPayload = {
+            ...submitPayload,
+            id: tempId,
+            user_id: userId,
+            client_click_time: state.client_click_time || Date.now(),
+          };
+          const wsResp = await wsManager.placeOrderFast(fastPayload, 2000);
+          if (wsResp.success && wsResp.result) {
+            result = {
+              order_id: wsResp.result.orderId || tempId,
+              status: wsResp.result.status || 'EXECUTED',
+              fill_price: wsResp.result.fill_price || state.client_price,
+              message: `Executed in ${wsResp.result.execution_latency_ms || 15}ms via FastEngine`,
+            };
+          }
+        }
+      } catch (wsErr) {
+        // Fast-pipe failed or timed out — fall through to standard API route
+      }
+
+      // Fallback: Standard API route
+      if (!result) {
+        result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>(
+          '/api/orders',
+          submitPayload,
+          { timeout: 25000 }
+        );
+      }
 
       if (balanceContext?.releaseOptimisticMargin) {
         balanceContext.releaseOptimisticMargin(tempId);
@@ -450,18 +491,6 @@ export function useOrderEntry() {
           } catch {}
           if (effectiveIsExit && optimisticHistoryItems.length > 0) {
             const closedIds = new Set(optimisticHistoryItems.map(i => i.id));
-            try {
-              const existingHistory = (window as any).__historyCache || [];
-              const updatedHistory = existingHistory.filter((h: any) => !closedIds.has(h.id));
-              (window as any).__historyCache = updatedHistory;
-              localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-            } catch {}
-            try {
-              const existingClosed = (window as any).__closedPositionsCache || [];
-              const updatedClosed = existingClosed.filter((p: any) => !closedIds.has(p.id));
-              (window as any).__closedPositionsCache = updatedClosed;
-              localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
-            } catch {}
             window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: Array.from(closedIds) } }));
           }
         }
@@ -480,92 +509,59 @@ export function useOrderEntry() {
     setLoading(true);
     setError(null);
 
-    const cachedPos = typeof window !== 'undefined' && (window as any).__lastPositionsMap ? (window as any).__lastPositionsMap.get(positionId) : null;
-    const contextPos = positionsContext?.positions?.find(p => p.id === positionId);
-    const posToClose = contextPos || cachedPos;
+    // Capture position before removing locally for optimistic history update
+    const existingPos = positionsContext?.positions?.find(p => p.id === positionId);
+    const now = Date.now();
+    const resolvedExitPrice = clientPrice || existingPos?.current_ltp || existingPos?.entry_price || 0;
+    const entryPrice = Number(existingPos?.entry_price || existingPos?.avg_price || 0);
+    const qty = Number(existingPos?.qty_total || existingPos?.qty_open || (existingPos as any)?.qty || 1);
+    const posSide = (existingPos?.side || side || 'BUY').toUpperCase();
+    const isBuy = posSide === 'BUY';
+    const pnl = entryPrice > 0 ? (isBuy ? (resolvedExitPrice - entryPrice) * qty : (entryPrice - resolvedExitPrice) * qty) : 0;
 
-    // Optimistically remove position locally in 0ms
+    const optimisticHistoryItem = {
+      id: positionId,
+      scriptName: existingPos?.symbol || symbol || 'UNKNOWN',
+      type: posSide as 'BUY' | 'SELL',
+      orderType: existingPos?.product_type || 'INTRADAY',
+      qty,
+      price: resolvedExitPrice,
+      entryPrice,
+      exitPrice: resolvedExitPrice,
+      pnl,
+      date: new Date(existingPos?.created_at || now).toLocaleString(),
+      exitDate: new Date(now).toLocaleDateString(),
+      status: 'closed',
+      brokerage: Number(existingPos?.brokerage || 0),
+      closedBy: 'USER_ACTION',
+      productType: existingPos?.product_type || 'INTRADAY',
+      settlement: existingPos?.settlement || settlement || 'NSE',
+      settlementAmount: 0,
+      timestamp: now,
+    };
+
+    const optimisticClosedPos = {
+      id: positionId,
+      symbol: existingPos?.symbol || symbol || 'UNKNOWN',
+      side: posSide,
+      status: 'closed',
+      exit_price: resolvedExitPrice,
+      pnl,
+      total_pnl: pnl,
+      pnl_percent: entryPrice > 0 ? ((resolvedExitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
+      qty_total: qty,
+      qty_open: 0,
+      closed_at: new Date(now).toISOString(),
+      exit_time: new Date(now).toISOString(),
+      updated_at: new Date(now).toISOString(),
+    };
+
+    // Optimistically remove position locally in 0ms for instant UI responsiveness
     if (positionsContext?.removePositionLocally) {
       positionsContext.removePositionLocally(positionId);
     }
 
-    // Optimistically generate closed position and history entry for instant UI
     if (typeof window !== 'undefined') {
-      const now = Date.now();
-      const posSymbol = posToClose?.symbol || symbol || '';
-      const entryPrice = Number(posToClose?.avg_price || posToClose?.entry_price || clientPrice || 0);
-      const exitPrice = Number(clientPrice || posToClose?.current_ltp || posToClose?.ltp || entryPrice);
-      const qty = Number(posToClose?.qty_open || posToClose?.qty_total || (posToClose as any)?.qty || 1);
-      const posSide = (posToClose?.side || side || 'BUY') as 'BUY' | 'SELL';
-      const pnl = (posToClose?.total_pnl !== undefined && posToClose?.total_pnl !== null)
-        ? Number(posToClose.total_pnl)
-        : (posSide === 'BUY' ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty);
-      const pnlPercent = (entryPrice * qty > 0) ? (pnl / (entryPrice * qty)) * 100 : 0;
-
-      const rawSettlement = posToClose?.settlement || settlement || '';
-      let derivedSettlement = rawSettlement;
-      if (!derivedSettlement) {
-        const sym: string = (posSymbol).toUpperCase();
-        if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
-        else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
-        else if (sym.includes('MCX')) derivedSettlement = 'MCX';
-        else derivedSettlement = 'NSE';
-      }
-
-      const optimisticHistoryItem = {
-        id: positionId,
-        scriptName: posSymbol,
-        type: posSide,
-        orderType: posToClose?.product_type || 'INTRADAY',
-        qty,
-        price: exitPrice,
-        entryPrice,
-        exitPrice,
-        pnl,
-        date: new Date(posToClose?.entry_time || (posToClose as any)?.created_at || now).toLocaleString(),
-        exitDate: new Date(now).toLocaleDateString(),
-        status: 'closed',
-        brokerage: Number((posToClose as any)?.brokerage || 0),
-        closedBy: 'USER_ACTION',
-        productType: posToClose?.product_type || 'INTRADAY',
-        settlement: derivedSettlement,
-        settlementAmount: Math.abs(Number((posToClose as any)?.settlement_amount || 0)),
-        timestamp: now,
-      };
-
-      const optimisticClosedPos = {
-        ...(posToClose || {}),
-        id: positionId,
-        symbol: posSymbol,
-        side: posSide,
-        status: 'closed',
-        exit_price: exitPrice,
-        pnl,
-        total_pnl: pnl,
-        pnl_percent: pnlPercent,
-        qty_total: qty,
-        qty_open: 0,
-        closed_at: new Date(now).toISOString(),
-        exit_time: new Date(now).toISOString(),
-        updated_at: new Date(now).toISOString(),
-      };
-
-      try {
-        const existingHistory = (window as any).__historyCache || [];
-        const filteredHistory = existingHistory.filter((h: any) => h.id !== positionId);
-        const updatedHistory = [optimisticHistoryItem, ...filteredHistory];
-        (window as any).__historyCache = updatedHistory;
-        localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-      } catch {}
-
-      try {
-        const existingClosed = (window as any).__closedPositionsCache || [];
-        const filteredClosed = existingClosed.filter((p: any) => p.id !== positionId);
-        const updatedClosed = [optimisticClosedPos, ...filteredClosed];
-        (window as any).__closedPositionsCache = updatedClosed;
-        localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
-      } catch {}
-
       window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
         detail: {
           positions: [optimisticClosedPos],
@@ -579,40 +575,41 @@ export function useOrderEntry() {
     soundEngine.playOrderExecuted();
 
     try {
-      const result = await api.post<Record<string, unknown>>(`/api/positions/${positionId}/close`, {
-        client_price: clientPrice,
-        symbol,
-        settlement,
-        side
-      }, { timeout: 20000 });
+      let result: any = null;
+
+      // 1. Try Fast-Pipe WebSocket Exit (< 20ms)
+      try {
+        const session = await getSession();
+        const userId = session?.user?.id;
+        if (userId && wsManager.isConnectingOrOpen) {
+          const wsResp = await wsManager.closePositionFast(userId, positionId, clientPrice, 2000);
+          if (wsResp.success) {
+            result = { success: true, ...wsResp.result };
+          }
+        }
+      } catch (wsErr) {
+        // Fast-pipe fallback
+      }
+
+      // 2. Fallback to REST API route
+      if (!result) {
+        result = await api.post<Record<string, unknown>>(`/api/positions/${positionId}/close`, {
+          client_price: clientPrice,
+          symbol,
+          settlement,
+          side
+        }, { timeout: 20000 });
+      }
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
-        window.dispatchEvent(new Event('position-closed')); // Backward compatibility for some components
+        window.dispatchEvent(new Event('position-closed'));
         window.dispatchEvent(new Event('position_closed'));
         window.dispatchEvent(new Event('history_updated'));
       }
 
       return { success: true, ...result };
     } catch (err) {
-      if (positionsContext?.restorePositionLocally) {
-        positionsContext.restorePositionLocally(positionId);
-      }
-      if (typeof window !== 'undefined') {
-        try {
-          const existingHistory = (window as any).__historyCache || [];
-          const updatedHistory = existingHistory.filter((h: any) => h.id !== positionId);
-          (window as any).__historyCache = updatedHistory;
-          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-        } catch {}
-        try {
-          const existingClosed = (window as any).__closedPositionsCache || [];
-          const updatedClosed = existingClosed.filter((p: any) => p.id !== positionId);
-          (window as any).__closedPositionsCache = updatedClosed;
-          localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
-        } catch {}
-        window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: [positionId] } }));
-      }
       let message = 'Unknown error';
       if (err instanceof ApiError) {
         message = (err.details as { error?: string } | null)?.error ?? err.message ?? `ApiError ${err.status}`;
@@ -627,6 +624,27 @@ export function useOrderEntry() {
           message = errMessage;
         }
       }
+
+      // If position is already closed (e.g. concurrent exit or fast-pipe already closed it), treat as success
+      if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('order_placed'));
+          window.dispatchEvent(new Event('position-closed'));
+          window.dispatchEvent(new Event('position_closed'));
+          window.dispatchEvent(new Event('history_updated'));
+        }
+        return { success: true, alreadyClosed: true };
+      }
+
+      if (positionsContext?.restorePositionLocally) {
+        positionsContext.restorePositionLocally(positionId);
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('position_closed_rollback', {
+          detail: { positionIds: [positionId] }
+        }));
+      }
+
       setError(message);
       return { success: false, error: message };
     } finally {
@@ -638,70 +656,50 @@ export function useOrderEntry() {
     setLoading(true);
     setError(null);
 
-    const cachedMap = typeof window !== 'undefined' && (window as any).__lastPositionsMap ? (window as any).__lastPositionsMap : null;
-    const positionsToClose = positionIds.map(id => {
-      return positionsContext?.positions?.find(p => p.id === id) || (cachedMap ? cachedMap.get(id) : null) || { id };
-    });
+    const now = Date.now();
+    const optHistoryItems: any[] = [];
+    const optClosedPositions: any[] = [];
 
-    // Optimistically remove positions locally in 0ms
-    if (positionsContext?.removePositionLocally) {
-      positionIds.forEach(id => positionsContext.removePositionLocally(id));
-    }
+    (positionIds || []).forEach(id => {
+      const existingPos = positionsContext?.positions?.find(p => p.id === id);
+      if (existingPos) {
+        const exitPrice = existingPos.current_ltp || existingPos.entry_price || 0;
+        const entryPrice = Number(existingPos.entry_price || existingPos.avg_price || 0);
+        const qty = Number(existingPos.qty_total || existingPos.qty_open || (existingPos as any)?.qty || 1);
+        const posSide = (existingPos.side || 'BUY').toUpperCase();
+        const isBuy = posSide === 'BUY';
+        const pnl = entryPrice > 0 ? (isBuy ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty) : 0;
 
-    if (typeof window !== 'undefined' && positionsToClose.length > 0) {
-      const now = Date.now();
-      const newHistoryItems: any[] = [];
-      const newClosedPositions: any[] = [];
-
-      for (const pos of positionsToClose) {
-        const entryPrice = Number(pos.avg_price || pos.entry_price || 0);
-        const exitPrice = Number(pos.current_ltp || pos.ltp || entryPrice);
-        const qty = Number(pos.qty_open || pos.qty_total || (pos as any).qty || 1);
-        const posSide = (pos.side || 'BUY') as 'BUY' | 'SELL';
-        const pnl = (pos.total_pnl !== undefined && pos.total_pnl !== null)
-          ? Number(pos.total_pnl)
-          : (posSide === 'BUY' ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty);
-        const pnlPercent = (entryPrice * qty > 0) ? (pnl / (entryPrice * qty)) * 100 : 0;
-
-        const rawSettlement = pos.settlement || '';
-        let derivedSettlement = rawSettlement;
-        if (!derivedSettlement) {
-          const sym: string = (pos.symbol || '').toUpperCase();
-          if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
-          else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
-          else if (sym.includes('MCX')) derivedSettlement = 'MCX';
-          else derivedSettlement = 'NSE';
-        }
-
-        newHistoryItems.push({
-          id: pos.id,
-          scriptName: pos.symbol || '',
+        optHistoryItems.push({
+          id,
+          scriptName: existingPos.symbol || 'UNKNOWN',
           type: posSide,
-          orderType: pos.product_type || 'INTRADAY',
+          orderType: existingPos.product_type || 'INTRADAY',
           qty,
           price: exitPrice,
           entryPrice,
           exitPrice,
           pnl,
-          date: new Date(pos.entry_time || (pos as any).created_at || now).toLocaleString(),
+          date: new Date(existingPos.created_at || now).toLocaleString(),
           exitDate: new Date(now).toLocaleDateString(),
           status: 'closed',
-          brokerage: Number((pos as any).brokerage || 0),
+          brokerage: Number(existingPos.brokerage || 0),
           closedBy: 'USER_ACTION',
-          productType: pos.product_type || 'INTRADAY',
-          settlement: derivedSettlement,
-          settlementAmount: Math.abs(Number((pos as any).settlement_amount || 0)),
+          productType: existingPos.product_type || 'INTRADAY',
+          settlement: existingPos.settlement || 'NSE',
+          settlementAmount: 0,
           timestamp: now,
         });
 
-        newClosedPositions.push({
-          ...pos,
-          id: pos.id,
+        optClosedPositions.push({
+          id,
+          symbol: existingPos.symbol,
+          side: posSide,
           status: 'closed',
           exit_price: exitPrice,
           pnl,
           total_pnl: pnl,
-          pnl_percent: pnlPercent,
+          pnl_percent: 0,
           qty_total: qty,
           qty_open: 0,
           closed_at: new Date(now).toISOString(),
@@ -709,29 +707,20 @@ export function useOrderEntry() {
           updated_at: new Date(now).toISOString(),
         });
       }
+    });
 
-      try {
-        const existingHistory = (window as any).__historyCache || [];
-        const existingIdSet = new Set(positionIds);
-        const updatedHistory = [...newHistoryItems, ...existingHistory.filter((h: any) => !existingIdSet.has(h.id))];
-        (window as any).__historyCache = updatedHistory;
-        localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-      } catch {}
+    // Optimistically remove positions locally in 0ms
+    if (positionsContext?.removePositionLocally) {
+      positionIds.forEach(id => positionsContext.removePositionLocally(id));
+    }
 
-      try {
-        const existingClosed = (window as any).__closedPositionsCache || [];
-        const existingIdSet = new Set(positionIds);
-        const updatedClosed = [...newClosedPositions, ...existingClosed.filter((p: any) => !existingIdSet.has(p.id))];
-        (window as any).__closedPositionsCache = updatedClosed;
-        localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
-      } catch {}
-
+    if (typeof window !== 'undefined' && optHistoryItems.length > 0) {
       window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
         detail: {
-          positions: newClosedPositions,
-          historyItems: newHistoryItems,
-          position: newClosedPositions[0],
-          historyItem: newHistoryItems[0],
+          positions: optClosedPositions,
+          historyItems: optHistoryItems,
+          position: optClosedPositions[0],
+          historyItem: optHistoryItems[0],
         }
       }));
     }
@@ -739,7 +728,26 @@ export function useOrderEntry() {
     soundEngine.playOrderExecuted();
 
     try {
-      const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 20000 });
+      let result: any = null;
+
+      // 1. Try Fast-Pipe WebSocket Exit All (< 35ms)
+      try {
+        const session = await getSession();
+        const userId = session?.user?.id;
+        if (userId && wsManager.isConnectingOrOpen) {
+          const wsResp = await wsManager.closeAllPositionsFast(userId, undefined, 3000);
+          if (wsResp.success) {
+            result = { success: true, ...wsResp.result };
+          }
+        }
+      } catch (wsErr) {
+        // Fallback
+      }
+
+      // 2. Fallback to REST API route
+      if (!result) {
+        result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 20000 });
+      }
 
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('order_placed'));
@@ -750,25 +758,6 @@ export function useOrderEntry() {
 
       return { success: true, ...result };
     } catch (err) {
-      if (positionsContext?.restorePositionLocally) {
-        positionIds.forEach(id => positionsContext.restorePositionLocally(id));
-      }
-      if (typeof window !== 'undefined') {
-        const existingIdSet = new Set(positionIds);
-        try {
-          const existingHistory = (window as any).__historyCache || [];
-          const updatedHistory = existingHistory.filter((h: any) => !existingIdSet.has(h.id));
-          (window as any).__historyCache = updatedHistory;
-          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-        } catch {}
-        try {
-          const existingClosed = (window as any).__closedPositionsCache || [];
-          const updatedClosed = existingClosed.filter((p: any) => !existingIdSet.has(p.id));
-          (window as any).__closedPositionsCache = updatedClosed;
-          localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(updatedClosed));
-        } catch {}
-        window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds } }));
-      }
       let message = 'Unknown error';
       if (err instanceof ApiError) {
         message = (err.details as { error?: string } | null)?.error ?? `ApiError ${err.status}`;
@@ -783,6 +772,27 @@ export function useOrderEntry() {
           message = errMessage;
         }
       }
+
+      // If positions are already closed, treat as success
+      if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('order_placed'));
+          window.dispatchEvent(new Event('position-closed'));
+          window.dispatchEvent(new Event('position_closed'));
+          window.dispatchEvent(new Event('history_updated'));
+        }
+        return { success: true, alreadyClosed: true };
+      }
+
+      if (positionsContext?.restorePositionLocally) {
+        positionIds.forEach(id => positionsContext.restorePositionLocally(id));
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('position_closed_rollback', {
+          detail: { positionIds }
+        }));
+      }
+
       setError(message);
       return { success: false, error: message };
     } finally {
