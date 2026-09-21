@@ -383,21 +383,30 @@ export default function HistoryPage() {
       return item.status !== 'closed';
     });
 
-    if (appliedFromDate) {
-      const from = new Date(appliedFromDate);
-      from.setHours(0, 0, 0, 0);
-      base = base.filter(item => item.timestamp >= from.getTime());
+    const activeFrom = appliedFromDate || fromDate;
+    const activeTo = appliedToDate || toDate;
+
+    if (activeFrom) {
+      const parts = activeFrom.split('-').map(Number);
+      if (parts.length === 3 && !parts.some(isNaN)) {
+        const [y, m, d] = parts;
+        const fromTs = new Date(y, m - 1, d, 0, 0, 0, 0).getTime();
+        base = base.filter(item => (item.timestamp || 0) >= fromTs);
+      }
     }
-    if (appliedToDate) {
-      const to = new Date(appliedToDate);
-      to.setHours(23, 59, 59, 999);
-      base = base.filter(item => item.timestamp <= to.getTime());
+    if (activeTo) {
+      const parts = activeTo.split('-').map(Number);
+      if (parts.length === 3 && !parts.some(isNaN)) {
+        const [y, m, d] = parts;
+        const toTs = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+        base = base.filter(item => (item.timestamp || 0) <= toTs);
+      }
     }
 
     base.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     return base;
-  }, [historyData, currentTab, appliedFromDate, appliedToDate]);
+  }, [historyData, currentTab, appliedFromDate, appliedToDate, fromDate, toDate]);
 
   const summary = useMemo(() => {
     const posHistory = filteredData.filter(h => h.status === 'closed');
@@ -466,7 +475,11 @@ export default function HistoryPage() {
                         type="date"
                         className="date-input-compact"
                         value={fromDate}
-                        onChange={(e) => setFromDate(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFromDate(val);
+                          setAppliedFromDate(val);
+                        }}
                       />
                     </div>
                   </div>
@@ -479,7 +492,11 @@ export default function HistoryPage() {
                         type="date"
                         className="date-input-compact"
                         value={toDate}
-                        onChange={(e) => setToDate(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setToDate(val);
+                          setAppliedToDate(val);
+                        }}
                       />
                     </div>
                   </div>
@@ -522,7 +539,11 @@ export default function HistoryPage() {
                       type="date"
                       className="date-input-compact"
                       value={fromDate}
-                      onChange={(e) => setFromDate(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFromDate(val);
+                        setAppliedFromDate(val);
+                      }}
                     />
                   </div>
                   <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>to</span>
@@ -532,7 +553,11 @@ export default function HistoryPage() {
                       type="date"
                       className="date-input-compact"
                       value={toDate}
-                      onChange={(e) => setToDate(e.target.value)}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setToDate(val);
+                        setAppliedToDate(val);
+                      }}
                     />
                   </div>
                   <div className="filter-buttons" style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
