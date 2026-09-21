@@ -905,7 +905,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             const k = keys[i];
             const p = prev[k];
             const n = pending[k];
-            if (!p || p.last_price !== n.last_price || p.bid !== n.bid || p.ask !== n.ask) {
+            if (!p || p.lastPrice !== n.lastPrice || p.bid !== n.bid || p.ask !== n.ask) {
               hasChange = true;
               break;
             }

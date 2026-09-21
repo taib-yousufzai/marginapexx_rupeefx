@@ -23,6 +23,9 @@ const mapSegmentToDbSegment = (s: string): string => {
   return trimmed;
 };
 
+let _cachedAutoSqoff = 90;
+let _hasFetchedAutoSqoff = false;
+
 interface FooterProps {
   activeTab: 'home' | 'watchlist' | 'order' | 'position' | 'history' | 'profile';
   hideDrawer?: boolean;
@@ -48,13 +51,17 @@ const Footer: React.FC<FooterProps> = ({ activeTab, hideDrawer = false, position
 
   // Balance and settlement from the global BalanceDataProvider
   const { balance, settlementAmount } = useBalance();
-  const [autoSqoffPercent, setAutoSqoffPercent] = useState(90);
+  const [autoSqoffPercent, setAutoSqoffPercent] = useState(_cachedAutoSqoff);
 
   useEffect(() => {
     let cancelled = false;
     let channel: any = null;
 
     const initAutoSqoff = async () => {
+      if (_hasFetchedAutoSqoff) {
+        setAutoSqoffPercent(_cachedAutoSqoff);
+        return;
+      }
       const { data: { session } } = await supabase.auth.getSession();
       if (!session || cancelled) return;
 
@@ -65,16 +72,17 @@ const Footer: React.FC<FooterProps> = ({ activeTab, hideDrawer = false, position
           .eq('id', session.user.id)
           .single();
         if (profile && !cancelled) {
-          setAutoSqoffPercent(Number((profile as any).showcase_auto_sqoff ?? 85));
+          const val = Number((profile as any).showcase_auto_sqoff ?? 85);
+          _cachedAutoSqoff = val;
+          _hasFetchedAutoSqoff = true;
+          setAutoSqoffPercent(val);
         }
       } catch (err) {
         console.error('Failed to fetch profile settings in Footer', err);
       }
 
-      // Subscribe to realtime profile changes for auto_sqoff only
-      // (balance and settlement are handled by BalanceDataProvider)
       channel = supabase
-        .channel(`profile-realtime-footer-sqoff-${Date.now()}`)
+        .channel(`profile-realtime-footer-sqoff-${session.user.id}`)
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${session.user.id}` },
@@ -82,7 +90,9 @@ const Footer: React.FC<FooterProps> = ({ activeTab, hideDrawer = false, position
             if (cancelled) return;
             const updated = payload.new as any;
             if (updated) {
-              setAutoSqoffPercent(Number(updated.showcase_auto_sqoff ?? 85));
+              const val = Number(updated.showcase_auto_sqoff ?? 85);
+              _cachedAutoSqoff = val;
+              setAutoSqoffPercent(val);
             }
           }
         )
