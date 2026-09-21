@@ -134,7 +134,6 @@ export function useOrderEntry() {
         const existingHistory = (window as any).__historyCache || [];
         const updatedHistory = [optimisticHistoryOrder, ...existingHistory.filter((h: any) => h.id !== tempId)];
         (window as any).__historyCache = updatedHistory;
-        localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
       } catch {}
       window.dispatchEvent(new CustomEvent('order_placed_optimistic', { detail: { order: optimisticOrder } }));
     }
@@ -315,7 +314,7 @@ export function useOrderEntry() {
       if (typeof window !== 'undefined' && optimisticHistoryItems.length > 0) {
         try {
           const existingHistory = (window as any).__historyCache || [];
-          const newIds = new Set(optimisticHistoryItems.map(i => i.id));
+          const newIds = new Set(optimisticHistoryItems.map((i: any) => i.id));
           const updatedHistory = [...optimisticHistoryItems, ...existingHistory.filter((h: any) => !newIds.has(h.id))];
           (window as any).__historyCache = updatedHistory;
         } catch {}
@@ -629,7 +628,7 @@ export function useOrderEntry() {
     } catch (err) {
       let message = 'Unknown error';
       if (err instanceof ApiError) {
-        message = (err.details as { error?: string } | null)?.error ?? err.message ?? `ApiError ${err.status}`;
+        message = (err.details as { error?: string } | null)?.error ?? (typeof err.details === 'string' && err.details.trim() ? err.details : null) ?? err.message ?? `ApiError ${err.status}`;
       } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
         const errName = (err as any).name;
         const errMessage = (err as any).message || String(err);
@@ -661,7 +660,6 @@ export function useOrderEntry() {
           const existingHistory = (window as any).__historyCache || [];
           const updatedHistory = existingHistory.filter((h: any) => h.id !== positionId);
           (window as any).__historyCache = updatedHistory;
-          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
         } catch {}
         window.dispatchEvent(new CustomEvent('position_closed_rollback', {
           detail: { positionIds: [positionId] }
@@ -743,7 +741,6 @@ export function useOrderEntry() {
         const optIds = new Set(optHistoryItems.map((i: any) => i.id));
         const updatedHistory = [...optHistoryItems, ...existingHistory.filter((h: any) => !optIds.has(h.id))];
         (window as any).__historyCache = updatedHistory;
-        localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
       } catch {}
       window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
         detail: {
@@ -790,7 +787,7 @@ export function useOrderEntry() {
     } catch (err) {
       let message = 'Unknown error';
       if (err instanceof ApiError) {
-        message = (err.details as { error?: string } | null)?.error ?? `ApiError ${err.status}`;
+        message = (err.details as { error?: string } | null)?.error ?? (typeof err.details === 'string' && err.details.trim() ? err.details : null) ?? err.message ?? `ApiError ${err.status}`;
       } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
         const errName = (err as any).name;
         const errMessage = (err as any).message || String(err);
@@ -823,7 +820,6 @@ export function useOrderEntry() {
           const existingHistory = (window as any).__historyCache || [];
           const updatedHistory = existingHistory.filter((h: any) => !failedIds.has(h.id));
           (window as any).__historyCache = updatedHistory;
-          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
         } catch {}
         window.dispatchEvent(new CustomEvent('position_closed_rollback', {
           detail: { positionIds }

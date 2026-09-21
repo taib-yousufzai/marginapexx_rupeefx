@@ -208,12 +208,29 @@ export async function POST(
 
   if (!pos) {
     // Check if the position exists for this user and was already closed (e.g. fast-pipe WS already closed it, or concurrent exit)
-    const { data: closedPos } = await admin
-      .from('positions')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('id', positionId)
-      .maybeSingle();
+    let closedPos: any = null;
+    if (positionId) {
+      const { data } = await admin
+        .from('positions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('id', positionId)
+        .maybeSingle();
+      closedPos = data;
+    }
+
+    if (!closedPos && body?.symbol) {
+      const targetClean = cleanSym(body.symbol);
+      const { data: recentClosed } = await admin
+        .from('positions')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('status', ['closed', 'CLOSED'])
+        .order('updated_at', { ascending: false })
+        .limit(5);
+
+      closedPos = recentClosed?.find((p: any) => cleanSym(p.symbol || p.kite_instrument) === targetClean) ?? null;
+    }
 
     if (closedPos && (closedPos.status === 'closed' || closedPos.status === 'CLOSED')) {
       return NextResponse.json({
@@ -259,6 +276,24 @@ export async function POST(
                 ltp: lastP,
                 bid: mt5Q.bid || lastP,
                 ask: mt5Q.ask || lastP,
+              } as any;
+            }
+          } catch {}
+        }
+        const isUSStock = dbSegment === 'US-EQ' || dbSegment === 'US' ||
+          (pos.settlement || '').toUpperCase().includes('US') ||
+          ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'INTC', 'SPY', 'QQQ', 'DIA', 'ES=F', 'NQ=F', 'YM=F'].some(c => (pos.symbol || '').toUpperCase().includes(c)) ||
+          (pos.symbol || '').toUpperCase().includes('APPLE') || (pos.symbol || '').toUpperCase().includes('TESLA');
+        if (isUSStock) {
+          try {
+            const { fetchUSStockQuote } = await import('@/lib/datafeed/USStockService');
+            const usQ = await fetchUSStockQuote(pos.symbol);
+            const lastP = (usQ as any)?.price ?? (usQ as any)?.lastPrice ?? 0;
+            if (usQ && lastP > 0) {
+              return {
+                ltp: lastP,
+                bid: usQ.bid || lastP,
+                ask: usQ.ask || lastP,
               } as any;
             }
           } catch {}
@@ -348,8 +383,9 @@ export async function POST(
   const requiredHold = pnlValue >= 0 ? profitHoldSec : lossHoldSec;
 
   if (durationSec < requiredHold) {
+    const remaining = requiredHold - durationSec;
     return NextResponse.json({
-      error: `Anti-Scalping: Minimum hold time of ${requiredHold}s required for this trade. Elapsed: ${durationSec}s.`,
+      error: `Minimum hold time of ${requiredHold}s required (Anti-Scalping). Please wait ${remaining}s before exiting.`,
     }, { status: 403 });
   }
 
@@ -384,6 +420,19 @@ export async function POST(
   }
 
   if (rpcErr) {
+    const isAlreadyClosed = rpcErr.message && (
+      rpcErr.message.toLowerCase().includes('already closed') ||
+      rpcErr.message.toLowerCase().includes('not found')
+    );
+    if (isAlreadyClosed) {
+      return NextResponse.json({
+        success: true,
+        message: 'Position already closed',
+        already_closed: true,
+        pnl: Number(pos.pnl || 0),
+        exit_price: Number(pos.exit_price || exitPrice),
+      }, { status: 200 });
+    }
     console.error('[POST /api/positions/[id]/close] RPC error:', rpcErr);
     return NextResponse.json({ error: rpcErr.message || 'Failed to close position. Please try again.' }, { status: 400 });
   }

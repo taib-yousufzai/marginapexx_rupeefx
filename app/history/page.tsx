@@ -635,11 +635,12 @@ export default function HistoryPage() {
                     filteredData.filter(Boolean).map((item) => {
                       const itemType = (item.type || 'BUY').toLowerCase();
                       const scriptName = item.scriptName || 'UNKNOWN';
+                      const displaySymbol = (scriptName || '').replace(/^(COMEX:|CRYPTO:|BINANCE:|FOREX:|NSE:|BSE:|MCX:|NFO:|US:|US-EQ:)/i, '');
                       return (
                         <div key={item.id} className="history-card" style={{ cursor: 'pointer' }} onClick={() => router.push(`/watchlist?symbol=${encodeURIComponent(scriptName)}&action=detail`)}>
                           <div className="history-card-header">
                             <div className="script-info">
-                              <span className="script-name">{scriptName}</span>
+                              <span className="script-name">{displaySymbol}</span>
                               <div className="script-badges">
                                 <span className={`order-type-badge ${itemType}`}>
                                   {item.type || 'BUY'}

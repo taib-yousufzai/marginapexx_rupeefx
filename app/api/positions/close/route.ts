@@ -53,7 +53,7 @@ async function fetchQuoteBatch(
   try {
     const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
     const params = new URLSearchParams({ symbols: Array.from(missing).join(',') });
-    const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
+    const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
     if (resTicker.ok) {
       const json = await resTicker.json();
       if (json.success && json.data) {
@@ -88,7 +88,7 @@ async function fetchQuoteBatch(
         missingKite.forEach(i => params.append('i', i));
         const res = await fetch(`https://api.kite.trade/quote?${params}`, {
           headers: { 'X-Kite-Version': '3', Authorization: `token ${apiKey}:${session.accessToken}` },
-          cache: 'no-store', signal: AbortSignal.timeout(200),
+          cache: 'no-store', signal: AbortSignal.timeout(1500),
         });
         if (res && res.ok) {
           const data = await res.json() as { data?: Record<string, any> };
@@ -203,6 +203,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const { data: positions, error: posErr } = posResult;
     if (posErr || !positions || positions.length === 0) {
+      // Check if these positions were already closed (e.g. concurrent exit or fast-pipe WS)
+      const { data: alreadyClosed } = await admin
+        .from('positions')
+        .select('id, status, pnl, exit_price')
+        .in('id', positionIds)
+        .eq('user_id', user.id)
+        .in('status', ['closed', 'CLOSED']);
+
+      if (alreadyClosed && alreadyClosed.length > 0) {
+        return NextResponse.json({
+          success: true,
+          message: 'Positions already closed',
+          already_closed: true,
+          results: alreadyClosed.map(p => ({
+            positionId: p.id,
+            success: true,
+            already_closed: true,
+            pnl: p.pnl ?? 0,
+            exit_price: p.exit_price ?? 0
+          }))
+        }, { status: 200 });
+      }
+
       return NextResponse.json({ error: 'No open positions found matching the specified IDs' }, { status: 404 });
     }
 
@@ -366,9 +389,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         let rpcErr: any;
         
         for (let attempt = 1; attempt <= 2; attempt++) {
+          const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
           const result = await admin.rpc('close_position_v2', {
             p_position_id:        pos.id,
-            p_close_qty:          Number(pos.qty_open),
+            p_close_qty:          closeQty,
             p_close_price:        exitPrice,
             p_closed_by:          'USER',
             p_expected_brokerage: carryBrokerage,
@@ -388,8 +412,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
 
         if (rpcErr) {
+          const isAlreadyClosed = rpcErr.message && (
+            rpcErr.message.toLowerCase().includes('already closed') ||
+            rpcErr.message.toLowerCase().includes('not found')
+          );
+          if (isAlreadyClosed) {
+            results.push({ positionId: pos.id, success: true, already_closed: true });
+            continue;
+          }
           console.error(`[POST /api/positions/close] RPC error for position ${pos.id}:`, rpcErr);
-          results.push({ positionId: pos.id, success: false, error: `RPC Error: ${rpcErr.message || JSON.stringify(rpcErr)}` });
+          results.push({ positionId: pos.id, success: false, error: rpcErr.message || 'RPC Error' });
           continue;
         }
 
@@ -402,6 +434,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Cancel open pending orders for all successfully closed positions/symbols
     const successfulPosIds = results.filter(r => r.success).map(r => r.positionId);
     if (successfulPosIds.length > 0) {
+      try {
+        const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+        const { invalidateUserPositionsCache, invalidateUserOrdersCache } = await import('@/lib/redisSettingsCache');
+        await Promise.all([
+          invalidateUserHistoryCache(user.id),
+          invalidateUserPositionsCache(user.id),
+          invalidateUserOrdersCache(user.id),
+        ]);
+      } catch (cacheErr) {
+        console.warn('[POST /api/positions/close] Cache invalidation warning:', cacheErr);
+      }
+
       (async () => {
         try {
           const { PositionService } = await import('@/lib/trading/PositionService');
@@ -412,10 +456,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         } catch (cancelErr) {
           console.warn('[POST /api/positions/close] Non-fatal error cleaning up pending orders:', cancelErr);
         }
-        try {
-          const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
-          await invalidateUserHistoryCache(user.id);
-        } catch { /* ignore */ }
       })();
     }
 
