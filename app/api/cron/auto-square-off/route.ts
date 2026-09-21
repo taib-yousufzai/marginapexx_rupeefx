@@ -16,14 +16,14 @@ function getAdmin() {
 
 // Helper for fetching live bid/ask quote
 async function fetchQuote(symbol: string, settlement: string): Promise<{ bid: number; ask: number } | null> {
-  const cleanSym = symbol.replace('/', '').toUpperCase();
+  const cleanSym = symbol.replace(/^(CRYPTO:|BINANCE:|FOREX:|COMEX:|NSE:|BSE:|MCX:|NFO:|US:|US-EQ:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
   const isCrypto = (settlement || '').toUpperCase().includes('CRYPTO') || cleanSym.endsWith('USDT');
 
   if (isCrypto) {
     try {
       const sym = cleanSym.endsWith('USDT') ? cleanSym : `${cleanSym}USDT`;
       // Try Binance bookTicker first (authoritative bid/ask)
-      const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(50) });
+      const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
       if (res.ok) {
         const data = await res.json();
         const bid = parseFloat(data.bidPrice);
@@ -31,42 +31,76 @@ async function fetchQuote(symbol: string, settlement: string): Promise<{ bid: nu
         if (bid > 0 && ask > 0) return { bid, ask };
       }
     } catch { return null; }
-  } else {
-    try {
-      let fullSymbol = symbol;
-      if (!symbol.includes(':')) {
-        let exchange = 'NSE';
-        const s = (settlement || '').toUpperCase();
-        if (s.includes('MCX')) exchange = 'MCX';
-        else if (s.includes('CDS') || s.includes('FOREX')) exchange = 'CDS';
-        else if (s.includes('OPT') || s.includes('FUT') || s.includes('NFO')) exchange = 'NFO';
-        else if (s.includes('BSE')) exchange = 'BSE';
-        fullSymbol = `${exchange}:${symbol}`;
-      }
-      const apiKey = process.env.KITE_API_KEY;
-      if (!apiKey) return null;
-      const session = await getSharedKiteSession();
-      if (!session) return null;
+  }
 
-      const params = new URLSearchParams({ i: fullSymbol });
-      const res = await fetch(`https://api.kite.trade/quote?${params}`, {
-        headers: {
-          'X-Kite-Version': '3',
-          Authorization: `token ${apiKey}:${session.accessToken}`,
-        },
-        cache: 'no-store',
-      });
-      if (res.ok) {
-        const data = await res.json() as any;
-        const quote = data.data?.[fullSymbol];
-        if (quote) {
-          const bid = Number(quote.depth?.buy?.[0]?.price ?? 0);
-          const ask = Number(quote.depth?.sell?.[0]?.price ?? 0);
-          if (bid > 0 && ask > 0) return { bid, ask };
-        }
+  const isComex = (settlement || '').toUpperCase().includes('COMEX') ||
+    ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => cleanSym.includes(c));
+
+  if (isComex) {
+    try {
+      const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');
+      const mt5Q = await fetchMT5StockQuote(cleanSym);
+      if (mt5Q) {
+        const price = (mt5Q as any).price ?? (mt5Q as any).lastPrice ?? 0;
+        const bid = mt5Q.bid || price;
+        const ask = mt5Q.ask || price;
+        if (bid > 0 && ask > 0) return { bid, ask };
       }
     } catch { return null; }
   }
+
+  const isUS = (settlement || '').toUpperCase().includes('US') ||
+    ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'SPY', 'QQQ'].some(c => cleanSym.includes(c));
+
+  if (isUS) {
+    try {
+      const { fetchUSStockQuote } = await import('@/lib/datafeed/USStockService');
+      const usQ = await fetchUSStockQuote(cleanSym);
+      if (usQ) {
+        const price = (usQ as any).price ?? (usQ as any).lastPrice ?? 0;
+        const bid = usQ.bid || price;
+        const ask = usQ.ask || price;
+        if (bid > 0 && ask > 0) return { bid, ask };
+      }
+    } catch { return null; }
+  }
+
+  try {
+    let fullSymbol = symbol;
+    if (!symbol.includes(':')) {
+      let exchange = 'NSE';
+      const s = (settlement || '').toUpperCase();
+      if (s.includes('MCX')) exchange = 'MCX';
+      else if (s.includes('CDS') || s.includes('FOREX')) exchange = 'CDS';
+      else if (s.includes('OPT') || s.includes('FUT') || s.includes('NFO')) exchange = 'NFO';
+      else if (s.includes('BSE')) exchange = 'BSE';
+      fullSymbol = `${exchange}:${symbol}`;
+    }
+    const apiKey = process.env.KITE_API_KEY;
+    if (!apiKey) return null;
+    const session = await getSharedKiteSession();
+    if (!session) return null;
+
+    const params = new URLSearchParams({ i: fullSymbol });
+    const res = await fetch(`https://api.kite.trade/quote?${params}`, {
+      headers: {
+        'X-Kite-Version': '3',
+        Authorization: `token ${apiKey}:${session.accessToken}`,
+      },
+      cache: 'no-store',
+      signal: AbortSignal.timeout(1500),
+    });
+    if (res.ok) {
+      const data = await res.json() as any;
+      const quote = data.data?.[fullSymbol];
+      if (quote) {
+        const bid = Number(quote.depth?.buy?.[0]?.price ?? 0);
+        const ask = Number(quote.depth?.sell?.[0]?.price ?? 0);
+        if (bid > 0 && ask > 0) return { bid, ask };
+      }
+    }
+  } catch { return null; }
+
   return null;
 }
 
@@ -210,9 +244,10 @@ export async function GET(request: Request) {
           });
         }
         
+        const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
         const { error: rpcErr } = await admin.rpc('close_position_v2', {
           p_position_id:        pos.id,
-          p_close_qty:          Number(pos.qty_open),
+          p_close_qty:          closeQty,
           p_close_price:        exitPrice,
           p_closed_by:          'SYSTEM',
           p_expected_brokerage: carryBrokerage,

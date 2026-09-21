@@ -1150,6 +1150,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             target: resolvedTarget,
             is_exit: true,
             linked_position_id: currentLinkedPosId || undefined,
+            expected_margin: 0,
+            expected_brokerage: calculatedBrokerage,
             orderAttemptId,
             ...diagnosticFields,
           };
@@ -1282,6 +1284,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             target: resolvedTarget,
             is_exit: (placeSide === 'BUY' && hasSellPos) || (placeSide === 'SELL' && hasBuyPos),
             linked_position_id: currentLinkedPosId || undefined,
+            expected_margin: marginPortion,
+            expected_brokerage: calculatedBrokerage,
             orderAttemptId,
             ...diagnosticFields,
           };
