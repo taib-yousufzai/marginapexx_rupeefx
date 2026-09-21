@@ -50,12 +50,29 @@ export default function HistoryPage() {
   const [appliedFromDate, setAppliedFromDate] = useState('');
   const [appliedToDate, setAppliedToDate] = useState('');
   
-  const [historyData, setHistoryData] = useState<HistoryItem[]>([]);
+  const [historyData, setHistoryData] = useState<HistoryItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        if (Array.isArray((window as any).__historyCache) && (window as any).__historyCache.length > 0) {
+          return (window as any).__historyCache;
+        }
+        const sessionStored = sessionStorage.getItem('history_cache_v2');
+        if (sessionStored) {
+          const parsed = JSON.parse(sessionStored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            (window as any).__historyCache = parsed;
+            return parsed;
+          }
+        }
+      } catch (_) {}
+    }
+    return [];
+  });
   const historyDataRef = useRef<HistoryItem[]>(historyData);
   historyDataRef.current = historyData;
 
-  const [initialLoaded, setInitialLoaded] = useState(false);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [initialLoaded, setInitialLoaded] = useState(() => historyData.length > 0);
+  const [loading, setLoading] = useState<boolean>(() => historyData.length === 0);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
   // Scroll reset - runs synchronously before browser paint via ref callback
@@ -221,6 +238,9 @@ export default function HistoryPage() {
 
       if (typeof window !== 'undefined') {
         (window as any).__historyCache = merged;
+        try {
+          sessionStorage.setItem('history_cache_v2', JSON.stringify(merged));
+        } catch (_) {}
       }
 
       setHistoryData(merged);
@@ -233,7 +253,7 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    fetchHistory();
+    fetchHistory(historyDataRef.current.length > 0);
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let followUpTimer: ReturnType<typeof setTimeout> | null = null;
@@ -261,6 +281,9 @@ export default function HistoryPage() {
         const updated = [...items, ...filtered];
         if (typeof window !== 'undefined') {
           (window as any).__historyCache = updated;
+          try {
+            sessionStorage.setItem('history_cache_v2', JSON.stringify(updated));
+          } catch (_) {}
         }
         return updated;
       });
@@ -300,6 +323,9 @@ export default function HistoryPage() {
         const updated = [historyItem, ...filtered];
         if (typeof window !== 'undefined') {
           (window as any).__historyCache = updated;
+          try {
+            sessionStorage.setItem('history_cache_v2', JSON.stringify(updated));
+          } catch (_) {}
         }
         return updated;
       });
@@ -316,6 +342,9 @@ export default function HistoryPage() {
         const filtered = prev.filter(x => !idSet.has(x.id));
         if (typeof window !== 'undefined') {
           (window as any).__historyCache = filtered;
+          try {
+            sessionStorage.setItem('history_cache_v2', JSON.stringify(filtered));
+          } catch (_) {}
         }
         return filtered;
       });

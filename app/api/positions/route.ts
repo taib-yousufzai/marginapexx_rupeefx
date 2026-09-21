@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
     const responsePayload = { positions };
     try {
       const redis = getRedisClient();
-      const ttl = isClosedQuery ? 30 : 3;
+      const ttl = isClosedQuery ? 3600 : 3;
       await redis.setex(cacheKey, ttl, JSON.stringify(responsePayload));
     } catch (_) {}
 
