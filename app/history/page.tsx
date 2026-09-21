@@ -40,8 +40,6 @@ interface HistoryItem {
   timestamp: number;
 }
 
-const HISTORY_PERSIST_KEY = 'marginApex_history_items_persisted';
-
 export default function HistoryPage() {
   useAuth();
   const router = useRouter();
@@ -69,29 +67,6 @@ export default function HistoryPage() {
   };
 
   useEffect(() => {
-    // 0ms instant hydration from memory cache and localStorage
-    if (typeof window !== 'undefined') {
-      try {
-        const memCache = (window as any).__historyCache;
-        if (Array.isArray(memCache) && memCache.length > 0) {
-          setHistoryData(memCache);
-          setLoading(false);
-          setInitialLoaded(true);
-        } else {
-          const persisted = localStorage.getItem(HISTORY_PERSIST_KEY);
-          if (persisted) {
-            const parsed = JSON.parse(persisted);
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              (window as any).__historyCache = parsed;
-              setHistoryData(parsed);
-              setLoading(false);
-              setInitialLoaded(true);
-            }
-          }
-        }
-      } catch {}
-    }
-
     const syncTheme = () => applyTheme(getSavedTheme());
     syncTheme();
     window.addEventListener('themeChanged', syncTheme);
@@ -251,9 +226,6 @@ export default function HistoryPage() {
 
       if (typeof window !== 'undefined') {
         (window as any).__historyCache = merged;
-        try {
-          localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(merged));
-        } catch {}
       }
 
       setHistoryData(merged);
@@ -294,7 +266,6 @@ export default function HistoryPage() {
         const updated = [...items, ...filtered];
         if (typeof window !== 'undefined') {
           (window as any).__historyCache = updated;
-          try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(updated)); } catch {}
         }
         return updated;
       });
@@ -334,7 +305,6 @@ export default function HistoryPage() {
         const updated = [historyItem, ...filtered];
         if (typeof window !== 'undefined') {
           (window as any).__historyCache = updated;
-          try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(updated)); } catch {}
         }
         return updated;
       });
@@ -351,7 +321,6 @@ export default function HistoryPage() {
         const filtered = prev.filter(x => !idSet.has(x.id));
         if (typeof window !== 'undefined') {
           (window as any).__historyCache = filtered;
-          try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(filtered)); } catch {}
         }
         return filtered;
       });
