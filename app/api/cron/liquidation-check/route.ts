@@ -33,7 +33,8 @@ function getAdmin() {
 
 async function fetchLtp(symbol: string, settlement: string): Promise<number | null> {
   const seg = (settlement || '').toUpperCase();
-  const isCrypto = seg.includes('CRYPTO') || symbol.endsWith('USDT');
+  const cleanSym = symbol.replace(/^(CRYPTO:|BINANCE:|FOREX:|COMEX:|NSE:|BSE:|MCX:|NFO:|US:|US-EQ:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+  const isCrypto = seg.includes('CRYPTO') || cleanSym.endsWith('USDT');
 
   if (isCrypto) {
     const sym = symbol.replace('/', '').toUpperCase();
@@ -68,6 +69,34 @@ async function fetchLtp(symbol: string, settlement: string): Promise<number | nu
     } catch { /* fall through */ }
 
     return null;
+  }
+
+  const isComex = seg.includes('COMEX') ||
+    ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => cleanSym.includes(c));
+
+  if (isComex) {
+    try {
+      const { fetchMT5StockQuote } = await import('@/lib/datafeed/MT5StockService');
+      const mt5Q = await fetchMT5StockQuote(cleanSym);
+      if (mt5Q) {
+        const price = (mt5Q as any).price ?? (mt5Q as any).lastPrice ?? (mt5Q as any).bid ?? 0;
+        if (price > 0) return price;
+      }
+    } catch { /* fall through */ }
+  }
+
+  const isUS = seg.includes('US') ||
+    ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'NFLX', 'AMD', 'SPY', 'QQQ'].some(c => cleanSym.includes(c));
+
+  if (isUS) {
+    try {
+      const { fetchUSStockQuote } = await import('@/lib/datafeed/USStockService');
+      const usQ = await fetchUSStockQuote(cleanSym);
+      if (usQ) {
+        const price = (usQ as any).price ?? (usQ as any).lastPrice ?? (usQ as any).bid ?? 0;
+        if (price > 0) return price;
+      }
+    } catch { /* fall through */ }
   }
 
   // Non-crypto: Ticker Daemon first, then Kite REST
