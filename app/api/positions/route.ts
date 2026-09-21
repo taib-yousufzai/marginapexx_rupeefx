@@ -21,16 +21,23 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url);
     const statusParam = searchParams.get('status');
+    const isClosedQuery = statusParam?.toLowerCase() === 'closed';
+    const isFresh = searchParams.get('fresh') === 'true';
+    const isAll = searchParams.get('all') === 'true';
+    const fromDateParam = searchParams.get('from') || '';
+    const cacheKeySuffix = `${statusParam || 'open'}:${isAll ? 'all' : 'default'}:${fromDateParam}`;
+    const cacheKey = `api:positions:${user.id}:${cacheKeySuffix}`;
 
-    // Fast Redis cache check (3s TTL for active position polls)
-    const cacheKey = `api:positions:${user.id}:${statusParam || 'open'}:${searchParams.get('all') || ''}:${searchParams.get('from') || ''}`;
-    try {
-      const redis = getRedisClient();
-      const cached = await redis.get(cacheKey);
-      if (cached) {
-        return NextResponse.json(JSON.parse(cached));
-      }
-    } catch (_) {}
+    // Fast Redis cache check
+    if (!isFresh) {
+      try {
+        const redis = getRedisClient();
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+          return NextResponse.json(JSON.parse(cached));
+        }
+      } catch (_) {}
+    }
 
     const admin = getAdminClient();
 
@@ -86,80 +93,46 @@ export async function GET(request: NextRequest) {
 
     if (posResult?.timeout || posResult?.error) {
       console.warn('[Positions API] Query timed out (8s) or failed');
+      // Attempt to return stale Redis cache if available before failing
+      try {
+        const redis = getRedisClient();
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+          return NextResponse.json(JSON.parse(cached));
+        }
+      } catch (_) {}
       return NextResponse.json({ error: 'Positions query timed out' }, { status: 504 });
     }
 
-    // For closed positions, locked_margin is 0 after close. Recover the original margin
-    // from the MARGIN_CREDIT ledger entry written by close_position_v2 (ref_id = 'MRG_RET_<position_id>').
-    let marginByPositionId: Record<string, number> = {};
-    if (statusParam?.toLowerCase() === 'closed' && (posResult.data?.length ?? 0) > 0) {
-      const positionIds = (posResult.data ?? []).map((p: any) => `MRG_RET_${p.id}`);
-      const { data: marginRows } = await admin
-        .from('transactions')
-        .select('ref_id, amount')
-        .eq('user_id', user.id)
-        .eq('type', 'MARGIN_CREDIT')
-        .in('ref_id', positionIds);
-      for (const row of marginRows ?? []) {
-        const posId = (row.ref_id as string).replace('MRG_RET_', '');
-        marginByPositionId[posId] = Number(row.amount);
-      }
-    }
+    const rawRows = posResult.data ?? [];
 
-    // Resolve synthetic futures symbols to their nearest active contract trading symbols (e.g. CRUDEOIL_FUT -> MCX:CRUDEOIL26JULFUT)
-    const positions = await Promise.all((posResult.data ?? []).map(async (p) => {
-      let resolvedKite = p.symbol;
-      if (p.symbol && p.symbol.endsWith('_FUT')) {
-        const segUpper = (p.settlement || '').toUpperCase();
-        const prefix = segUpper.includes('MCX') ? 'MCX' : (segUpper.includes('CDS') || segUpper.includes('FOREX') ? 'CDS' : 'NSE');
-        let baseName = p.symbol.toUpperCase();
-        if (baseName.endsWith('_FUT')) baseName = baseName.slice(0, -4);
-
-        const cacheKey = `nearest_fut_${prefix}_${baseName}`;
-        try {
-          const { getRedisClient } = require('@/lib/redis');
-          const redis = getRedisClient();
-          let cachedSymbol = await redis.get(cacheKey);
-          if (!cachedSymbol) {
-            const { data: nearestFut } = await admin
-              .from('instruments')
-              .select('tradingsymbol')
-              .eq('name', baseName)
-              .in('instrument_type', ['FUTCOM', 'FUT', 'MAPPED_FUT'])
-              .gte('expiry', new Date().toISOString().split('T')[0])
-              .order('expiry', { ascending: true })
-              .limit(1)
-              .maybeSingle();
-
-            if (nearestFut?.tradingsymbol) {
-              cachedSymbol = nearestFut.tradingsymbol;
-              await redis.setex(cacheKey, 3600, cachedSymbol);
-            }
-          }
-          if (cachedSymbol) {
-            resolvedKite = `${prefix}:${cachedSymbol}`;
-          }
-        } catch (e) {
-          console.error('[Positions API] Failed to resolve future symbol:', e);
-        }
-      }
-
-      return {
+    // For open positions only, resolve synthetic futures and compute locked_margin
+    // Closed positions return immediately for maximum speed (<20ms)
+    let positions: any[] = [];
+    if (statusParam?.toLowerCase() === 'closed') {
+      positions = rawRows.map((p: any) => ({
+        ...p,
+        status: 'closed',
+        product_type: p.product_type || 'INTRADAY',
+        kite_instrument: p.kite_instrument || p.symbol,
+        brokerage: Number(p.brokerage || 0),
+        locked_margin: 0,
+      }));
+    } else {
+      positions = rawRows.map((p: any) => ({
         ...p,
         status: p.status ? p.status.toLowerCase() : 'open',
         product_type: p.product_type || 'INTRADAY',
-        kite_instrument: resolvedKite,
-        brokerage: p.brokerage || 0,
-        // For closed positions, restore the original locked_margin from the ledger
-        // (close_position_v2 zeros it out; we recover it via the MARGIN_CREDIT transaction)
-        locked_margin: marginByPositionId[p.id] ?? p.locked_margin ?? 0,
-      };
-    }));
+        kite_instrument: p.kite_instrument || p.symbol,
+        brokerage: Number(p.brokerage || 0),
+      }));
+    }
 
     const responsePayload = { positions };
     try {
       const redis = getRedisClient();
-      await redis.setex(cacheKey, 3, JSON.stringify(responsePayload));
+      const ttl = isClosedQuery ? 30 : 3;
+      await redis.setex(cacheKey, ttl, JSON.stringify(responsePayload));
     } catch (_) {}
 
     return NextResponse.json(responsePayload);

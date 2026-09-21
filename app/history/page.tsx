@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
+import { fmtDate, fmtDateTime } from '@/lib/format';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import './page.css';
 
@@ -39,13 +40,7 @@ interface HistoryItem {
   timestamp: number;
 }
 
-declare global {
-  interface Window {
-    __historyCache?: HistoryItem[];
-  }
-}
-
-const HISTORY_PERSIST_KEY = 'marginApex_history_cache_persisted';
+const HISTORY_PERSIST_KEY = 'marginApex_history_items_persisted';
 
 export default function HistoryPage() {
   useAuth();
@@ -58,10 +53,10 @@ export default function HistoryPage() {
   const [appliedToDate, setAppliedToDate] = useState('');
   
   const [historyData, setHistoryData] = useState<HistoryItem[]>([]);
-
   const historyDataRef = useRef<HistoryItem[]>(historyData);
   historyDataRef.current = historyData;
 
+  const [initialLoaded, setInitialLoaded] = useState(false);
   const [loading, setLoading] = useState<boolean>(true);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
@@ -74,6 +69,29 @@ export default function HistoryPage() {
   };
 
   useEffect(() => {
+    // 0ms instant hydration from memory cache and localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const memCache = (window as any).__historyCache;
+        if (Array.isArray(memCache) && memCache.length > 0) {
+          setHistoryData(memCache);
+          setLoading(false);
+          setInitialLoaded(true);
+        } else {
+          const persisted = localStorage.getItem(HISTORY_PERSIST_KEY);
+          if (persisted) {
+            const parsed = JSON.parse(persisted);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              (window as any).__historyCache = parsed;
+              setHistoryData(parsed);
+              setLoading(false);
+              setInitialLoaded(true);
+            }
+          }
+        }
+      } catch {}
+    }
+
     const syncTheme = () => applyTheme(getSavedTheme());
     syncTheme();
     window.addEventListener('themeChanged', syncTheme);
@@ -90,95 +108,124 @@ export default function HistoryPage() {
 
   const fetchHistory = useCallback(async (silent = false) => {
     try {
-      if (!silent && historyDataRef.current.length === 0 && !(typeof window !== 'undefined' && (window.__historyCache?.length || localStorage.getItem(HISTORY_PERSIST_KEY)))) {
+      if (!silent && historyDataRef.current.length === 0) {
         setLoading(true);
       }
-      // Fetch both orders and positions history — full history
-      const now = Date.now();
-      const [ordersData, posData] = await Promise.all([
-        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500&fresh=true&_t=${now}`).catch(() => ({ orders: [] })),
-        api.get<{ positions: any[] }>(`/api/positions?status=closed&all=true&fresh=true&_t=${now}`).catch(() => ({ positions: [] })),
+      // Fetch both orders and positions history with isolated error handling
+      const [ordersRes, posRes] = await Promise.allSettled([
+        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500`),
+        api.get<{ positions: any[] }>(`/api/positions?status=closed&all=true`),
       ]);
 
-      const ordersList = Array.isArray(ordersData?.orders) ? ordersData.orders : [];
-      const positionsList = Array.isArray(posData?.positions) ? posData.positions : [];
+      const ordersData = ordersRes.status === 'fulfilled' ? ordersRes.value : null;
+      const posData = posRes.status === 'fulfilled' ? posRes.value : null;
 
-      // If API returned empty on a background/silent poll while we already have items, do not overwrite
-      if (ordersList.length === 0 && positionsList.length === 0 && historyDataRef.current.length > 0) {
+      const ordersList = Array.isArray(ordersData?.orders) ? ordersData.orders : null;
+      const positionsList = Array.isArray(posData?.positions) ? posData.positions : null;
+
+      // If both API calls failed or timed out, never wipe out existing history
+      if (ordersList === null && positionsList === null) {
         return;
       }
 
-      const formattedOrders: HistoryItem[] = ordersList.map((o: any) => ({
-        id: o.id,
-        scriptName: o.symbol,
-        type: o.side,
-        orderType: o.order_type,
-        qty: o.qty,
-        price: o.fill_price || 0,
-        pnl: 0,
-        date: new Date(o.created_at).toLocaleString(),
-        status: o.status,
-        brokerage: o.brokerage || 0,
-        intraday_brokerage: o.intraday_brokerage || 0,
-        carry_brokerage: o.carry_brokerage || 0,
-        gtt_brokerage: o.gtt_brokerage || 0,
-        timestamp: new Date(o.created_at).getTime()
-      }));
-
-      const formattedPos: HistoryItem[] = positionsList.map((p: any) => {
-        // Derive settlement label, falling back for old positions with none stored
-        const rawSettlement = p.settlement || '';
-        let settlement = rawSettlement;
-        if (!settlement) {
-          const sym: string = (p.symbol || '').toUpperCase();
-          if (sym.endsWith('USDT') || sym.includes('CRYPTO')) settlement = 'Crypto';
-          else if (sym.endsWith('=F') || sym.includes('COMEX')) settlement = 'COMEX';
-          else if (sym.includes('MCX')) settlement = 'MCX';
-          else settlement = 'NSE';
-        }
-        const exitTime = p.closed_at || p.exit_time || p.updated_at || p.created_at;
-        return {
-          id: p.id,
-          scriptName: p.symbol,
-          type: p.side,
-          orderType: p.product_type || 'INTRADAY',
-          qty: p.qty_total || p.qty_open || p.qty || 1,
-          price: p.exit_price || 0,
-          entryPrice: p.entry_price || p.avg_price || 0,
-          exitPrice: p.exit_price || 0,
-          pnl: p.pnl || 0,
-          date: new Date(p.created_at).toLocaleString(),
-          exitDate: exitTime ? new Date(exitTime).toLocaleDateString() : '---',
-          status: 'closed',
-          brokerage: p.brokerage || 0,
-          entry_intraday_brokerage: p.entry_intraday_brokerage || 0,
-          entry_carry_brokerage: p.entry_carry_brokerage || 0,
-          entry_gtt_brokerage: p.entry_gtt_brokerage || 0,
-          exit_intraday_brokerage: p.exit_intraday_brokerage || 0,
-          exit_carry_brokerage: p.exit_carry_brokerage || 0,
-          exit_gtt_brokerage: p.exit_gtt_brokerage || 0,
-          closedBy: p.closed_by || 'USER_ACTION',
-          productType: p.product_type || 'INTRADAY',
-          settlement,
-          settlementAmount: Math.abs(Number(p.settlement_amount || 0)),
-          entry_brokerage: p.entry_brokerage || 0,
-          timestamp: exitTime ? new Date(exitTime).getTime() : new Date(p.created_at).getTime(),
-        };
-      });
-
       const orderMap = new Map<string, HistoryItem>();
       const posMap = new Map<string, HistoryItem>();
-      for (const o of formattedOrders) orderMap.set(o.id, o);
-      for (const p of formattedPos) posMap.set(p.id, p);
+
+      // Populate positions: if positions query succeeded and returned items, format them
+      if (positionsList !== null && positionsList.length > 0) {
+        const formattedPos: HistoryItem[] = positionsList.filter(Boolean).map((p: any) => {
+          const rawSettlement = p.settlement || '';
+          let settlement = rawSettlement;
+          if (!settlement) {
+            const sym: string = (p.symbol || '').toUpperCase();
+            if (sym.endsWith('USDT') || sym.includes('CRYPTO')) settlement = 'Crypto';
+            else if (sym.endsWith('=F') || sym.includes('COMEX')) settlement = 'COMEX';
+            else if (sym.includes('MCX')) settlement = 'MCX';
+            else settlement = 'NSE';
+          }
+          const exitTime = p.closed_at || p.exit_time || p.updated_at || p.created_at;
+          const exitTs = exitTime ? new Date(exitTime).getTime() : Date.now();
+          return {
+            id: p.id || `pos_${Math.random()}`,
+            scriptName: p.symbol || 'UNKNOWN',
+            type: (p.side || 'BUY').toUpperCase() as 'BUY' | 'SELL',
+            orderType: p.product_type || 'INTRADAY',
+            qty: Number(p.qty_total || p.qty_open || p.qty || 1),
+            price: Number(p.exit_price || 0),
+            entryPrice: Number(p.entry_price || p.avg_price || 0),
+            exitPrice: Number(p.exit_price || 0),
+            pnl: Number(p.pnl || 0),
+            date: fmtDateTime(p.created_at),
+            exitDate: fmtDate(exitTime),
+            status: 'closed',
+            brokerage: Number(p.brokerage || 0),
+            entry_intraday_brokerage: Number(p.entry_intraday_brokerage || 0),
+            entry_carry_brokerage: Number(p.entry_carry_brokerage || 0),
+            entry_gtt_brokerage: Number(p.entry_gtt_brokerage || 0),
+            exit_intraday_brokerage: Number(p.exit_intraday_brokerage || 0),
+            exit_carry_brokerage: Number(p.exit_carry_brokerage || 0),
+            exit_gtt_brokerage: Number(p.exit_gtt_brokerage || 0),
+            closedBy: p.closed_by || 'USER_ACTION',
+            productType: p.product_type || 'INTRADAY',
+            settlement,
+            settlementAmount: Math.abs(Number(p.settlement_amount || 0)),
+            entry_brokerage: Number(p.entry_brokerage || 0),
+            timestamp: isNaN(exitTs) ? Date.now() : exitTs,
+          };
+        });
+        for (const p of formattedPos) {
+          if (p && p.id) posMap.set(p.id, p);
+        }
+      } else {
+        // If positions query failed OR returned empty but we already had closed positions, retain existing closed positions
+        for (const item of historyDataRef.current || []) {
+          if (item && item.status === 'closed' && item.id) {
+            posMap.set(item.id, item);
+          }
+        }
+      }
+
+      // Populate orders: if orders query succeeded, format them; otherwise preserve existing orders
+      if (ordersList !== null && ordersList.length > 0) {
+        const formattedOrders: HistoryItem[] = ordersList.filter(Boolean).map((o: any) => {
+          const createTs = o.created_at ? new Date(o.created_at).getTime() : Date.now();
+          return {
+            id: o.id || `ord_${Math.random()}`,
+            scriptName: o.symbol || 'UNKNOWN',
+            type: (o.side || 'BUY').toUpperCase() as 'BUY' | 'SELL',
+            orderType: o.order_type || 'MARKET',
+            qty: Number(o.qty || 0),
+            price: Number(o.fill_price || 0),
+            pnl: 0,
+            date: fmtDateTime(o.created_at),
+            status: o.status || 'unknown',
+            brokerage: Number(o.brokerage || 0),
+            intraday_brokerage: Number(o.intraday_brokerage || 0),
+            carry_brokerage: Number(o.carry_brokerage || 0),
+            gtt_brokerage: Number(o.gtt_brokerage || 0),
+            timestamp: isNaN(createTs) ? Date.now() : createTs,
+          };
+        });
+        for (const o of formattedOrders) {
+          if (o && o.id) orderMap.set(o.id, o);
+        }
+      } else {
+        // Retain existing orders on transient error or empty
+        for (const item of historyDataRef.current || []) {
+          if (item && item.status !== 'closed' && item.id) {
+            orderMap.set(item.id, item);
+          }
+        }
+      }
 
       // Retain any recent in-flight optimistic items (<15s) only if backend hasn't returned records yet
       const existingItems = [
         ...(historyDataRef.current || []),
-        ...(typeof window !== 'undefined' && Array.isArray(window.__historyCache) ? window.__historyCache : [])
+        ...(typeof window !== 'undefined' && Array.isArray((window as any).__historyCache) ? (window as any).__historyCache : [])
       ];
 
       const nowMs = Date.now();
-      if (formattedPos.length === 0) {
+      if (positionsList === null || positionsList.length === 0) {
         for (const existing of existingItems) {
           if (existing && existing.id && existing.status === 'closed' && (nowMs - (existing.timestamp || 0) < 15000)) {
             if (!posMap.has(existing.id)) {
@@ -187,7 +234,7 @@ export default function HistoryPage() {
           }
         }
       }
-      if (formattedOrders.length === 0) {
+      if (ordersList === null || ordersList.length === 0) {
         for (const existing of existingItems) {
           if (existing && existing.id && existing.status !== 'closed' && (nowMs - (existing.timestamp || 0) < 15000)) {
             if (!orderMap.has(existing.id)) {
@@ -200,18 +247,20 @@ export default function HistoryPage() {
       const merged = [
         ...Array.from(posMap.values()),
         ...Array.from(orderMap.values())
-      ].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      ].filter(Boolean).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
       if (typeof window !== 'undefined') {
-        window.__historyCache = merged;
+        (window as any).__historyCache = merged;
         try {
           localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(merged));
-        } catch (e) {}
+        } catch {}
       }
+
       setHistoryData(merged);
     } catch (err) {
       console.warn('Failed to fetch history:', err);
     } finally {
+      setInitialLoaded(true);
       setLoading(false);
     }
   }, []);
@@ -244,11 +293,13 @@ export default function HistoryPage() {
         const filtered = prev.filter(x => !itemIds.has(x.id));
         const updated = [...items, ...filtered];
         if (typeof window !== 'undefined') {
-          window.__historyCache = updated;
+          (window as any).__historyCache = updated;
           try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(updated)); } catch {}
         }
         return updated;
       });
+      setInitialLoaded(true);
+      setLoading(false);
       triggerRefresh(150);
     };
 
@@ -282,11 +333,13 @@ export default function HistoryPage() {
         const filtered = prev.filter(x => x.id !== historyItem.id);
         const updated = [historyItem, ...filtered];
         if (typeof window !== 'undefined') {
-          window.__historyCache = updated;
+          (window as any).__historyCache = updated;
           try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(updated)); } catch {}
         }
         return updated;
       });
+      setInitialLoaded(true);
+      setLoading(false);
       triggerRefresh(150);
     };
 
@@ -297,7 +350,7 @@ export default function HistoryPage() {
       setHistoryData(prev => {
         const filtered = prev.filter(x => !idSet.has(x.id));
         if (typeof window !== 'undefined') {
-          window.__historyCache = filtered;
+          (window as any).__historyCache = filtered;
           try { localStorage.setItem(HISTORY_PERSIST_KEY, JSON.stringify(filtered)); } catch {}
         }
         return filtered;
@@ -340,12 +393,12 @@ export default function HistoryPage() {
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleFocus);
 
-    // Active polling fallback every 5 seconds when visible
+    // Active polling fallback every 3 seconds when visible
     const pollInterval = setInterval(() => {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
         fetchHistory(true);
       }
-    }, 5000);
+    }, 3000);
 
     // Supabase Realtime channel
     const channel = supabase
@@ -615,21 +668,22 @@ export default function HistoryPage() {
                       <p>No history found</p>
                     </div>
                   ) : (
-                    filteredData.map((item) => {
-
+                    filteredData.filter(Boolean).map((item) => {
+                      const itemType = (item.type || 'BUY').toLowerCase();
+                      const scriptName = item.scriptName || 'UNKNOWN';
                       return (
-                        <div key={item.id} className="history-card" style={{ cursor: 'pointer' }} onClick={() => router.push(`/watchlist?symbol=${encodeURIComponent(item.scriptName)}&action=detail`)}>
+                        <div key={item.id} className="history-card" style={{ cursor: 'pointer' }} onClick={() => router.push(`/watchlist?symbol=${encodeURIComponent(scriptName)}&action=detail`)}>
                           <div className="history-card-header">
                             <div className="script-info">
-                              <span className="script-name">{item.scriptName}</span>
+                              <span className="script-name">{scriptName}</span>
                               <div className="script-badges">
-                                <span className={`order-type-badge ${item.type.toLowerCase()}`}>
-                                  {item.type}
+                                <span className={`order-type-badge ${itemType}`}>
+                                  {item.type || 'BUY'}
                                 </span>
-                                <span style={{ fontSize: '0.55rem', color: '#9AA4BF' }}>{item.orderType}</span>
+                                <span style={{ fontSize: '0.55rem', color: '#9AA4BF' }}>{item.orderType || 'INTRADAY'}</span>
                                 {currentTab === 'order' && (
                                   <span className={`order-type-badge ${item.status === 'executed' ? 'completed' : 'pending'}`}>
-                                    {item.status}
+                                    {item.status || 'unknown'}
                                   </span>
                                 )}
                               </div>
