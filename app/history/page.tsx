@@ -386,19 +386,24 @@ export default function HistoryPage() {
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleFocus);
 
-    // Active polling fallback every 3 seconds when visible
+    // Active polling fallback every 15 seconds when visible (Realtime handles instant changes)
     const pollInterval = setInterval(() => {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
         fetchHistory(true);
       }
-    }, 3000);
+    }, 15000);
 
-    // Supabase Realtime channel
-    const channel = supabase
-      .channel(`history-realtime-${Date.now()}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'positions' }, () => handleCloseOrOrderEvent())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => handleCloseOrOrderEvent())
-      .subscribe();
+    // Supabase Realtime channel with user-specific filtering
+    let channel: any = null;
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      const userId = session?.user?.id;
+      if (!userId) return;
+      channel = supabase
+        .channel(`user-history-${userId}-${Date.now()}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'positions', filter: `user_id=eq.${userId}` }, () => handleCloseOrOrderEvent())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `user_id=eq.${userId}` }, () => handleCloseOrOrderEvent())
+        .subscribe();
+    });
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -407,7 +412,9 @@ export default function HistoryPage() {
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleFocus);
       eventList.forEach(evt => window.removeEventListener(evt, handleCloseOrOrderEvent));
-      supabase.removeChannel(channel);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [fetchHistory]);
 

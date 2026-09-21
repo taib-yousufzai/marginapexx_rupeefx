@@ -1,17 +1,20 @@
 import { getRedisClient } from './redis';
 
-const HISTORY_CACHE_TTL_SEC = 3600; // 1 hour sliding TTL for history cache
+const HISTORY_CACHE_TTL_SEC = 3600; // 1 hour sliding TTL for historical records
+const ACTIVE_CACHE_TTL_SEC = 30;    // 30s TTL for active/open orders
 
 /**
  * Get cached user orders list from Redis
  */
-export async function getCachedUserOrders(userId: string): Promise<any[] | null> {
+export async function getCachedUserOrders(userId: string, isHistory = false): Promise<any[] | null> {
   try {
     const redis = getRedisClient();
-    const cached = await redis.get(`api:orders:${userId}:full_history`);
+    const key = isHistory ? `api:orders:${userId}:history` : `api:orders:${userId}:active`;
+    const cached = await redis.get(key);
     if (cached) {
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed)) return parsed;
+      if (parsed && Array.isArray(parsed.orders)) return parsed.orders;
     }
   } catch (err) {
     console.warn('[getCachedUserOrders] Redis read error:', err);
@@ -22,14 +25,12 @@ export async function getCachedUserOrders(userId: string): Promise<any[] | null>
 /**
  * Set cached user orders list in Redis
  */
-export async function setCachedUserOrders(userId: string, orders: any[]): Promise<void> {
+export async function setCachedUserOrders(userId: string, orders: any[], isHistory = false): Promise<void> {
   try {
     const redis = getRedisClient();
-    await redis.setex(
-      `api:orders:${userId}:full_history`,
-      HISTORY_CACHE_TTL_SEC,
-      JSON.stringify(orders)
-    );
+    const key = isHistory ? `api:orders:${userId}:history` : `api:orders:${userId}:active`;
+    const ttl = isHistory ? HISTORY_CACHE_TTL_SEC : ACTIVE_CACHE_TTL_SEC;
+    await redis.setex(key, ttl, JSON.stringify(orders));
   } catch (err) {
     console.warn('[setCachedUserOrders] Redis write error:', err);
   }
@@ -40,7 +41,8 @@ export async function setCachedUserOrders(userId: string, orders: any[]): Promis
  */
 export async function appendOrderToCache(userId: string, order: any): Promise<void> {
   try {
-    const existing = await getCachedUserOrders(userId);
+    const isHistory = ['EXECUTED', 'executed', 'REJECTED', 'rejected', 'CANCELLED', 'cancelled'].includes(order.status);
+    const existing = await getCachedUserOrders(userId, isHistory);
     let updated: any[] = [];
     if (Array.isArray(existing) && existing.length > 0) {
       updated = [order, ...existing.filter((o: any) => o && o.id !== order.id)];
@@ -48,7 +50,7 @@ export async function appendOrderToCache(userId: string, order: any): Promise<vo
       updated = [order];
     }
     if (updated.length > 500) updated = updated.slice(0, 500);
-    await setCachedUserOrders(userId, updated);
+    await setCachedUserOrders(userId, updated, isHistory);
   } catch (err) {
     console.warn('[appendOrderToCache] Error:', err);
   }
@@ -65,6 +67,15 @@ export async function getCachedUserPositions(userId: string, keySuffix: string =
       const parsed = JSON.parse(cached);
       if (Array.isArray(parsed)) return parsed;
       if (parsed && Array.isArray(parsed.positions)) return parsed.positions;
+    }
+    // Secondary fallback
+    if (keySuffix !== 'closed_all') {
+      const fallback = await redis.get(`api:positions:${userId}:closed_all`);
+      if (fallback) {
+        const parsed = JSON.parse(fallback);
+        if (Array.isArray(parsed)) return parsed;
+        if (parsed && Array.isArray(parsed.positions)) return parsed.positions;
+      }
     }
   } catch (err) {
     console.warn('[getCachedUserPositions] Redis read error:', err);
@@ -126,7 +137,7 @@ export async function invalidateUserHistoryCache(userId: string): Promise<void> 
     const redis = getRedisClient();
     const orderKeys = (await redis.keys(`api:orders:${userId}:*`)) || [];
     const posKeys = (await redis.keys(`api:positions:${userId}:*`)) || [];
-    const allKeys = [...orderKeys, ...posKeys, `api:orders:${userId}:full_history`];
+    const allKeys = [...orderKeys, ...posKeys, `api:orders:${userId}:history`, `api:orders:${userId}:active`];
     const uniqueKeys = Array.from(new Set(allKeys));
     if (uniqueKeys.length > 0) {
       await redis.del(...uniqueKeys);
