@@ -123,8 +123,8 @@ export default function HistoryPage() {
       const orderMap = new Map<string, HistoryItem>();
       const posMap = new Map<string, HistoryItem>();
 
-      // Populate positions: if query succeeded (even if empty), use backend state
-      if (positionsList !== null) {
+      // Populate positions: if query succeeded, use real DB state
+      if (positionsList !== null && positionsList.length > 0) {
         const formattedPos: HistoryItem[] = positionsList.filter(Boolean).map((p: any) => {
           const rawSettlement = p.settlement || '';
           let settlement = rawSettlement;
@@ -169,7 +169,7 @@ export default function HistoryPage() {
           if (p && p.id) posMap.set(p.id, p);
         }
       } else {
-        // If positions query failed (network error / offline), retain existing state to prevent blank screen
+        // If positions query returned empty or failed, retain existing state to prevent blank screen
         for (const item of historyDataRef.current || []) {
           if (item && item.status === 'closed' && item.id) {
             posMap.set(item.id, item);
@@ -178,7 +178,7 @@ export default function HistoryPage() {
       }
 
       // Populate orders: if query succeeded (even if empty), use backend state
-      if (ordersList !== null) {
+      if (ordersList !== null && ordersList.length > 0) {
         const formattedOrders: HistoryItem[] = ordersList.filter(Boolean).map((o: any) => {
           const createTs = o.created_at ? new Date(o.created_at).getTime() : Date.now();
           return {
@@ -202,7 +202,7 @@ export default function HistoryPage() {
           if (o && o.id) orderMap.set(o.id, o);
         }
       } else {
-        // If orders query failed (network error / offline), retain existing state
+        // If orders query returned empty or failed, retain existing state
         for (const item of historyDataRef.current || []) {
           if (item && item.status !== 'closed' && item.id) {
             orderMap.set(item.id, item);
@@ -210,7 +210,7 @@ export default function HistoryPage() {
         }
       }
 
-      // Retain any recent in-flight optimistic items (<15s) not yet returned by backend DB
+      // Retain any recent in-flight optimistic items (<30s) not yet returned by backend DB
       const existingItems = [
         ...(historyDataRef.current || []),
         ...(typeof window !== 'undefined' && Array.isArray((window as any).__historyCache) ? (window as any).__historyCache : [])
@@ -218,7 +218,7 @@ export default function HistoryPage() {
 
       const nowMs = Date.now();
       for (const existing of existingItems) {
-        if (existing && existing.id && (nowMs - (existing.timestamp || 0) < 15000)) {
+        if (existing && existing.id && (nowMs - (existing.timestamp || 0) < 30000)) {
           if (existing.status === 'closed') {
             if (!posMap.has(existing.id)) {
               posMap.set(existing.id, existing);

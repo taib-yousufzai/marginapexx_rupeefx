@@ -130,10 +130,24 @@ async function fetchBinanceQuote(symbol: string): Promise<number | null> {
       }
     } catch (_) {}
 
-    // 2. Fallback to REST API with 1.5s timeout
+    // 1b. Check Ticker Daemon endpoint (<5ms)
+    try {
+      const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
+      const params = new URLSearchParams({ symbols: clean });
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(600) });
+      if (resTicker.ok) {
+        const json = await resTicker.json();
+        if (json.success && json.data && json.data[clean]) {
+          const ltp = Number(json.data[clean].last_price || json.data[clean].ltp || 0);
+          if (ltp > 0) return ltp;
+        }
+      }
+    } catch (_) {}
+
+    // 2. Fallback to REST API with 1.2s timeout
     const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${clean}`, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(1200),
     });
     if (res.ok) {
       const data = await res.json();
