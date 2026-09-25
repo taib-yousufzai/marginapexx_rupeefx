@@ -116,7 +116,32 @@ async function fetchQuoteBatch(
   if (missingCrypto.length > 0) {
     await Promise.all(missingCrypto.map(async (sym) => {
       try {
-        const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
+        let clean = sym.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+        if (clean === 'DODGE' || clean === 'DODGEUSDT') clean = 'DOGEUSDT';
+        if (!clean.endsWith('USDT')) clean = clean + 'USDT';
+
+        // Try Ticker Daemon first
+        try {
+          const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
+          const params = new URLSearchParams({ symbols: clean });
+          const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(600) });
+          if (resTicker.ok) {
+            const json = await resTicker.json();
+            if (json.success && json.data && json.data[clean]) {
+              const q = json.data[clean];
+              const ltp = Number(q.last_price || q.ltp || 0);
+              const bid = Number(q.bid || q.buy_price || ltp);
+              const ask = Number(q.ask || q.sell_price || ltp);
+              if (ltp > 0 || bid > 0 || ask > 0) {
+                quotesMap[sym] = { bid, ask, ltp: ltp > 0 ? ltp : undefined };
+                missing.delete(sym);
+                return;
+              }
+            }
+          }
+        } catch (_) {}
+
+        const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${clean}`, { cache: 'no-store', signal: AbortSignal.timeout(1200) });
         if (res.ok) {
           const data = await res.json();
           const bid = parseFloat(data.bidPrice);
@@ -128,12 +153,12 @@ async function fetchQuoteBatch(
           }
         } else {
           // Fallback to /ticker/price if bookTicker fails
-          const resPrice = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
+          const resPrice = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${clean}`, { cache: 'no-store', signal: AbortSignal.timeout(1200) });
           if (resPrice.ok) {
             const pData = await resPrice.json();
             const ltp = parseFloat(pData.price);
             if (ltp > 0) {
-              quotesMap[sym] = { bid: 0, ask: 0, ltp };
+              quotesMap[sym] = { bid: ltp, ask: ltp, ltp };
               missing.delete(sym);
             }
           }

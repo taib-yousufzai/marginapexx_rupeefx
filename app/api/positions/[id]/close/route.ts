@@ -17,10 +17,29 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
-import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
-import { RiskValidation } from '@/lib/trading/RiskValidation';
-import { cleanSym } from '@/contexts/PositionsContext';
 import type { ClosePositionResponse } from '@/lib/types/order';
+
+function cleanSym(s?: string | null): string {
+  if (!s) return '';
+  let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '')
+             .replace(/[\/\s\_\-]/g, '')
+             .replace(/(PERP|\.P|FUT)$/i, '')
+             .toUpperCase();
+  if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC', 'GOLD'].includes(str)) return 'XAUUSD';
+  if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI', 'SILVER'].includes(str)) return 'XAGUSD';
+  if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI', 'CRUDE', 'CRUDEOIL'].includes(str)) return 'XTIUSD';
+  if (['XCUUSD', 'COMEX:XCUUSD', 'HG=F', 'HG', 'COPPER'].includes(str)) return 'XCUUSD';
+  if (['XNGUSD', 'COMEX:XNGUSD', 'NG=F', 'NG', 'NATGAS', 'NATURALGAS'].includes(str)) return 'XNGUSD';
+  if (str === 'DODGE' || str === 'DODGEUSDT' || str === 'DOGE' || str === 'DOGEUSDT') return 'DOGEUSDT';
+  const nonCrypto = ['GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF', 'XAUUSD', 'XAGUSD', 'XTIUSD', 'XNGUSD', 'XCUUSD', 'GOLD', 'SILVER', 'COPPER', 'CRUDE', 'NATGAS'];
+  const knownBaseCrypto = ['BTC', 'ETH', 'DOGE', 'SOL', 'XRP', 'ADA', 'BNB', 'DOT', 'LTC', 'AVAX', 'MATIC', 'LINK', 'UNI', 'BCH', 'SHIB', 'PEPE', 'TRX', 'NEAR', 'SUI', 'APT', 'FET', 'RNDR', 'INJ', 'TIA', 'OP', 'ARB'];
+  if (knownBaseCrypto.includes(str)) {
+    str += 'USDT';
+  } else if (str.endsWith('USD') && !str.endsWith('USDT') && !nonCrypto.includes(str)) {
+    str = str.slice(0, -3) + 'USDT';
+  }
+  return str;
+}
 
 
 /**
@@ -163,59 +182,72 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const user = await getUserFromRequest(request);
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-
-  let body: any = null;
   try {
-    body = await request.json();
-  } catch (_) {}
+    const user = await getUserFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
-  const { id: positionId } = await params;
-  if (!positionId && !body?.symbol) {
-    return NextResponse.json({ error: 'Missing position id' }, { status: 400 });
-  }
+    let body: any = null;
+    try {
+      body = await request.json();
+    } catch (_) {}
 
+    const { id: positionId } = await params;
+    if (!positionId && !body?.symbol) {
+      return NextResponse.json({ error: 'Missing position id' }, { status: 400 });
+    }
+
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(positionId);
   const admin = getAdminClient();
 
-  // 1. Parallel fetch position and cached profile
+  // 1. Parallel fetch position (if valid UUID) and cached profile
   const [posResult, cachedProfile] = await Promise.all([
-    admin.from('positions')
-      .select('*')
-      .eq('id', positionId)
-      .eq('user_id', user.id)
-      .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-      .maybeSingle(),
+    isUuid
+      ? admin.from('positions')
+          .select('*')
+          .eq('id', positionId)
+          .eq('user_id', user.id)
+          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
     getCachedUserProfile(user.id, () => admin),
   ]);
 
   let pos = posResult?.data;
-  let resolvedPositionId = positionId;
+  let resolvedPositionId = isUuid ? positionId : '';
 
-  // Fallback: If position was not found by exact ID (e.g. optimistic placeholder or lot grouping), look up by symbol
+  // Fallback: If position was not found by exact UUID (e.g. optimistic client ID or newly opened trade),
+  // look up by symbol/side among user's open positions with a short retry for in-flight DB commits.
   if (!pos) {
-    const { data: userOpenPositions } = await admin
-      .from('positions')
-      .select('*')
-      .eq('user_id', user.id)
-      .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-      .order('created_at', { ascending: false });
+    const targetSymbol = body?.symbol || (positionId && !isUuid ? positionId : '');
+    const targetClean = cleanSym(targetSymbol);
 
-    if (userOpenPositions && userOpenPositions.length > 0) {
-      if (body?.symbol) {
-        const targetClean = cleanSym(body.symbol);
-        pos = userOpenPositions.find((p: any) => 
-          cleanSym(p.symbol || p.kite_instrument) === targetClean && 
-          (!body.side || p.side === body.side)
-        ) ?? userOpenPositions.find((p: any) => cleanSym(p.symbol || p.kite_instrument) === targetClean) ?? null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const { data: userOpenPositions } = await admin
+        .from('positions')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+        .order('created_at', { ascending: false });
+
+      if (userOpenPositions && userOpenPositions.length > 0) {
+        if (targetClean) {
+          pos = userOpenPositions.find((p: any) => 
+            cleanSym(p.symbol || p.kite_instrument) === targetClean && 
+            (!body?.side || p.side === body.side)
+          ) ?? userOpenPositions.find((p: any) => cleanSym(p.symbol || p.kite_instrument) === targetClean) ?? null;
+        }
+        if (!pos && isUuid) {
+          pos = userOpenPositions.find((p: any) => p.id === positionId) ?? null;
+        }
+        if (pos) {
+          resolvedPositionId = pos.id;
+          break;
+        }
       }
-      if (!pos && positionId) {
-        pos = userOpenPositions.find((p: any) => p.id === positionId) ?? null;
-      }
-      if (pos) {
-        resolvedPositionId = pos.id;
+      if (attempt < 2) {
+        await new Promise(r => setTimeout(r, 100));
       }
     }
   }
@@ -223,7 +255,7 @@ export async function POST(
   if (!pos) {
     // Check if the position exists for this user and was already closed (e.g. fast-pipe WS already closed it, or concurrent exit)
     let closedPos: any = null;
-    if (positionId) {
+    if (isUuid) {
       const { data } = await admin
         .from('positions')
         .select('*')
@@ -480,4 +512,8 @@ export async function POST(
   };
 
   return NextResponse.json(response, { status: 200 });
+} catch (error: any) {
+  console.error('[POST /api/positions/[id]/close] Unhandled error:', error);
+  return NextResponse.json({ error: error?.message || 'Failed to close position. Please try again.' }, { status: 500 });
+}
 }

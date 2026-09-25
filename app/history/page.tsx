@@ -98,22 +98,30 @@ export default function HistoryPage() {
     return () => window.removeEventListener('themeChanged', syncTheme);
   }, []);
 
+  const fetchSeqRef = useRef<number>(0);
+
   const fetchHistory = useCallback(async (silent = false) => {
+    const seq = ++fetchSeqRef.current;
     try {
       if (!silent && historyDataRef.current.length === 0) {
         setLoading(true);
       }
-      // Fetch both orders and positions history with isolated error handling
+      // Fetch both orders and positions history with fresh bypass and isolated error handling
       const [ordersRes, posRes] = await Promise.allSettled([
-        api.get<{ orders: any[] }>(`/api/orders?status=executed,rejected,cancelled&limit=500`),
-        api.get<{ positions: any[] }>(`/api/positions?status=closed&all=true`),
+        api.get<{ orders: any[]; error?: string }>(`/api/orders?status=executed,rejected,cancelled&limit=500&fresh=true`),
+        api.get<{ positions: any[]; error?: string }>(`/api/positions?status=closed&all=true&fresh=true`),
       ]);
+
+      // If a newer request was dispatched while this was running, ignore this stale response
+      if (seq !== fetchSeqRef.current) {
+        return;
+      }
 
       const ordersData = ordersRes.status === 'fulfilled' ? ordersRes.value : null;
       const posData = posRes.status === 'fulfilled' ? posRes.value : null;
 
-      const ordersList = Array.isArray(ordersData?.orders) ? ordersData.orders : null;
-      const positionsList = Array.isArray(posData?.positions) ? posData.positions : null;
+      const ordersList = (ordersData && !ordersData.error && Array.isArray(ordersData.orders)) ? ordersData.orders : null;
+      const positionsList = (posData && !posData.error && Array.isArray(posData.positions)) ? posData.positions : null;
 
       // If both API calls failed or timed out, never wipe out existing history
       if (ordersList === null && positionsList === null) {
@@ -169,7 +177,7 @@ export default function HistoryPage() {
           if (p && p.id) posMap.set(p.id, p);
         }
       } else {
-        // If positions query returned empty or failed, retain existing state to prevent blank screen
+        // If positions query returned empty or failed, retain existing state so history never flashes empty
         for (const item of historyDataRef.current || []) {
           if (item && item.status === 'closed' && item.id) {
             posMap.set(item.id, item);
@@ -177,7 +185,7 @@ export default function HistoryPage() {
         }
       }
 
-      // Populate orders: if query succeeded (even if empty), use backend state
+      // Populate orders: if query succeeded, use real DB state
       if (ordersList !== null && ordersList.length > 0) {
         const formattedOrders: HistoryItem[] = ordersList.filter(Boolean).map((o: any) => {
           const createTs = o.created_at ? new Date(o.created_at).getTime() : Date.now();
@@ -190,7 +198,7 @@ export default function HistoryPage() {
             price: Number(o.fill_price || 0),
             pnl: 0,
             date: fmtDateTime(o.created_at),
-            status: o.status || 'unknown',
+            status: o.status ? String(o.status).toLowerCase() : 'unknown',
             brokerage: Number(o.brokerage || 0),
             intraday_brokerage: Number(o.intraday_brokerage || 0),
             carry_brokerage: Number(o.carry_brokerage || 0),
@@ -210,7 +218,8 @@ export default function HistoryPage() {
         }
       }
 
-      // Retain any recent in-flight optimistic items (<30s) not yet returned by backend DB
+      // Reconcile pending in-flight optimistic items (<30s):
+      // Only keep an optimistic item if it hasn't landed in posMap / orderMap yet and isn't a duplicate.
       const existingItems = [
         ...(historyDataRef.current || []),
         ...(typeof window !== 'undefined' && Array.isArray((window as any).__historyCache) ? (window as any).__historyCache : [])
@@ -218,13 +227,28 @@ export default function HistoryPage() {
 
       const nowMs = Date.now();
       for (const existing of existingItems) {
-        if (existing && existing.id && (nowMs - (existing.timestamp || 0) < 30000)) {
-          if (existing.status === 'closed') {
-            if (!posMap.has(existing.id)) {
+        if (!existing || !existing.id) continue;
+        const isRecent = (nowMs - (existing.timestamp || 0) < 30000);
+        if (!isRecent) continue;
+
+        if (existing.status === 'closed') {
+          // If the position ID is already in posMap, the real DB data takes precedence (do not overwrite)
+          const isTempId = String(existing.id).startsWith('opt_') || String(existing.id).startsWith('pos_opt_');
+          if (!posMap.has(existing.id)) {
+            const hasMatchingDbPos = isTempId && Array.from(posMap.values()).some(p => 
+              p.scriptName === existing.scriptName && Math.abs((p.timestamp || 0) - (existing.timestamp || 0)) < 30000
+            );
+            if (!hasMatchingDbPos) {
               posMap.set(existing.id, existing);
             }
-          } else {
-            if (!orderMap.has(existing.id)) {
+          }
+        } else {
+          const isTempId = String(existing.id).startsWith('opt_');
+          if (!orderMap.has(existing.id)) {
+            const hasMatchingDbOrder = isTempId && Array.from(orderMap.values()).some(o =>
+              o.scriptName === existing.scriptName && Math.abs((o.timestamp || 0) - (existing.timestamp || 0)) < 30000
+            );
+            if (!hasMatchingDbOrder) {
               orderMap.set(existing.id, existing);
             }
           }
@@ -235,6 +259,8 @@ export default function HistoryPage() {
         ...Array.from(posMap.values()),
         ...Array.from(orderMap.values())
       ].filter(Boolean).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+      if (seq !== fetchSeqRef.current) return;
 
       if (typeof window !== 'undefined') {
         (window as any).__historyCache = merged;
@@ -247,8 +273,10 @@ export default function HistoryPage() {
     } catch (err) {
       console.warn('Failed to fetch history:', err);
     } finally {
-      setInitialLoaded(true);
-      setLoading(false);
+      if (seq === fetchSeqRef.current) {
+        setInitialLoaded(true);
+        setLoading(false);
+      }
     }
   }, []);
 
