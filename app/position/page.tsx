@@ -19,7 +19,7 @@ import PullToRefresh from '@/components/PullToRefresh';
 import { ErrorModal } from '@/components/ErrorModal';
 import HoldLockCountdown from '@/components/HoldLockCountdown';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
-import { fmtSymbolName, isUsdInstrument } from '@/lib/format';
+import { fmtSymbolName, isUsdInstrument, fmtTime, fmtDate, fmtDateTime, fmtTimestamp } from '@/lib/format';
 import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import TickFlash from '@/components/TickFlash';
 import './page.css';
@@ -71,33 +71,16 @@ export default function PositionPage() {
   }, [refresh]);
 
   // Closed positions are fetched separately (the main hook only returns open/active)
-  const [closedPositions, setClosedPositions] = useState<EnrichedPosition[]>(() => {
-    if (typeof window !== 'undefined') {
-      if ((window as any).__closedPositionsCache) return (window as any).__closedPositionsCache;
-      try {
-        const stored = localStorage.getItem('marginApex_closed_positions_persisted');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) {
-            (window as any).__closedPositionsCache = parsed;
-            return parsed;
-          }
-        }
-      } catch (e) {}
-    }
-    return [];
-  });
+  const [closedPositions, setClosedPositions] = useState<EnrichedPosition[]>([]);
   const [closedLoading, setClosedLoading] = useState(false);
 
   const fetchClosed = async () => {
-    if (closedPositions.length === 0 && !(typeof window !== 'undefined' && (window as any).__closedPositionsCache)) {
+    if (closedPositions.length === 0) {
       setClosedLoading(true);
     }
     try {
-      const data = await api.get<{ positions: any[] }>('/api/positions?status=closed');
+      const data = await api.get<{ positions: any[] }>('/api/positions?status=closed&all=true&fresh=true');
       // Enrich closed positions with the computed fields expected by the UI.
-      // Closed positions from the raw API don't go through useMyPositions enrichment,
-      // so we derive the missing EnrichedPosition fields here.
       const enriched = (data.positions || []).map((p: any): EnrichedPosition => {
         const pnl = Number(p.pnl || 0);
         const qtyTotal = Number(p.qty_total || p.qty_open || p.qty || 1);
@@ -124,46 +107,18 @@ export default function PositionPage() {
       // Sort newest to oldest closed positions by updated_at (closure date)
       enriched.sort((a: any, b: any) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime());
       
-      setClosedPositions(prev => {
-        const map = new Map<string, any>();
-        for (const p of enriched) map.set(p.id, p);
-        for (const p of prev) {
-          if (!map.has(p.id) && (Date.now() - new Date(p.exit_time || p.updated_at || p.created_at || 0).getTime() < 60000)) {
-            map.set(p.id, p);
-          }
-        }
-        const cached = (typeof window !== 'undefined' && Array.isArray((window as any).__closedPositionsCache))
-          ? (window as any).__closedPositionsCache
-          : [];
-        for (const p of cached) {
-          if (!map.has(p.id) && (Date.now() - new Date(p.exit_time || p.updated_at || p.created_at || 0).getTime() < 60000)) {
-            map.set(p.id, p);
-          }
-        }
-        const result = Array.from(map.values()).sort((a: any, b: any) => 
-          new Date(b.updated_at || b.exit_time || b.created_at || 0).getTime() - new Date(a.updated_at || a.exit_time || a.created_at || 0).getTime()
-        );
-        if (typeof window !== 'undefined') {
-          (window as any).__closedPositionsCache = result;
-          try { localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(result)); } catch {}
-        }
-        return result;
-      });
+      setClosedPositions(enriched);
     } catch { /* non-critical */ } finally {
       setClosedLoading(false);
     }
   };
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && (window as any).__closedPositionsCache && (window as any).__closedPositionsCache.length > 0) {
-      setClosedPositions((window as any).__closedPositionsCache);
-    }
-    refresh(); // <---- Immediately refresh open positions when navigating to this page
+    refresh(); // Immediately refresh open positions when navigating to this page
     fetchClosed();
-    // Closed positions don't need rapid polling — refresh on events + slow fallback
+    // Closed positions refresh on events + 30s slow fallback
     const iv = setInterval(fetchClosed, 30000);
     const onOrderPlaced = () => {
-      // Refresh open positions immediately + follow-up to catch DB propagation
       refresh();
       setTimeout(() => { refresh(); fetchClosed(); }, 200);
     };
@@ -174,12 +129,7 @@ export default function PositionPage() {
       setClosedPositions(prev => {
         const ids = new Set(posList.map((p: any) => p.id));
         const filtered = prev.filter(p => !ids.has(p.id));
-        const merged = [...posList, ...filtered];
-        if (typeof window !== 'undefined') {
-          (window as any).__closedPositionsCache = merged;
-          try { localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(merged)); } catch {}
-        }
-        return merged;
+        return [...posList, ...filtered];
       });
     };
 
@@ -187,24 +137,23 @@ export default function PositionPage() {
       const ids: string[] = e.detail?.positionIds || [];
       if (ids.length === 0) return;
       const idSet = new Set(ids);
-      setClosedPositions(prev => {
-        const filtered = prev.filter(p => !idSet.has(p.id));
-        if (typeof window !== 'undefined') {
-          (window as any).__closedPositionsCache = filtered;
-          try { localStorage.setItem('marginApex_closed_positions_persisted', JSON.stringify(filtered)); } catch {}
-        }
-        return filtered;
-      });
+      setClosedPositions(prev => prev.filter(p => !idSet.has(p.id)));
     };
 
     window.addEventListener('order_placed', onOrderPlaced);
     window.addEventListener('order_placed_with_data', onOrderPlaced);
+    window.addEventListener('position-closed', onOrderPlaced);
+    window.addEventListener('position_closed', onOrderPlaced);
+    window.addEventListener('history_updated', onOrderPlaced);
     window.addEventListener('position_closed_optimistic', handleOptimisticClosedPos);
     window.addEventListener('position_closed_rollback', handleOptimisticRollbackPos);
     return () => {
       clearInterval(iv);
       window.removeEventListener('order_placed', onOrderPlaced);
       window.removeEventListener('order_placed_with_data', onOrderPlaced);
+      window.removeEventListener('position-closed', onOrderPlaced);
+      window.removeEventListener('position_closed', onOrderPlaced);
+      window.removeEventListener('history_updated', onOrderPlaced);
       window.removeEventListener('position_closed_optimistic', handleOptimisticClosedPos);
       window.removeEventListener('position_closed_rollback', handleOptimisticRollbackPos);
     };
@@ -668,9 +617,6 @@ export default function PositionPage() {
     setExitingSet(new Set(exitingPosIds.current));
 
     const posToClose = positions.find(p => p.id === posId);
-    if (removePositionLocally) {
-      removePositionLocally(posId);
-    }
 
     // Close sheet immediately for snappy UI
     closeSheet();
@@ -690,14 +636,14 @@ export default function PositionPage() {
         const errMsg = res.error || 'Failed to exit position';
         setErrorModalMsg(errMsg);
         if (posToClose && restorePositionLocally) {
-          restorePositionLocally(posId);
+          restorePositionLocally(posId, posToClose);
         } else if (posToClose) refresh();
       }
     }).catch((err: any) => {
       const errMsg = err?.message || 'Failed to exit position';
       setErrorModalMsg(errMsg);
       if (posToClose && restorePositionLocally) {
-        restorePositionLocally(posId);
+        restorePositionLocally(posId, posToClose);
       } else if (posToClose) refresh();
     }).finally(() => {
       exitingPosIds.current.delete(posId);
@@ -738,46 +684,63 @@ export default function PositionPage() {
   const groupedOpenPositions: GroupedPosition[] = useMemo(() => {
     const map = new Map<string, GroupedPosition>();
 
-    for (const pos of openPositions) {
-      const rawSymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : pos.symbol;
+    for (const pos of openPositions.filter(p => p && p.id)) {
+      const rawSymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : (pos.symbol || '');
       const displaySymbol = fmtSymbolName(rawSymbol, pos.name || (pos as any).instrument_name);
       const symKey = cleanSym(pos.symbol || rawSymbol);
-      const key = `${symKey}|${pos.side}|${pos.product_type}`;
+      const key = `${symKey}|${pos.side || 'BUY'}|${pos.product_type || 'INTRADAY'}`;
       const existing = map.get(key);
       if (!existing) {
         map.set(key, {
           key,
           symbol: displaySymbol,
-          side: pos.side,
+          side: (pos.side || 'BUY') as 'BUY' | 'SELL',
           product_type: pos.product_type || 'INTRADAY',
           settlement: pos.settlement || '',
-          qty_open: pos.qty_open,
-          avg_price: pos.avg_price || pos.entry_price,
-          current_ltp: pos.current_ltp,
-          total_pnl: pos.total_pnl,
-          pnl_percent: pos.pnl_percent,
-          hold_lock_active: pos.hold_lock_active,
+          qty_open: Number(pos.qty_open || 0),
+          avg_price: Number(pos.avg_price || pos.entry_price || 0),
+          current_ltp: Number(pos.current_ltp || 0),
+          total_pnl: Number(pos.total_pnl || 0),
+          pnl_percent: Number(pos.pnl_percent || 0),
+          hold_lock_active: Boolean(pos.hold_lock_active),
           ids: [pos.id],
           representativePos: pos,
           is_closing: pos.is_closing,
         });
       } else {
-        const newQty = existing.qty_open + pos.qty_open;
+        const newQty = existing.qty_open + Number(pos.qty_open || 0);
         const newAvg = newQty > 0
-          ? (existing.avg_price * existing.qty_open + (pos.avg_price || pos.entry_price) * pos.qty_open) / newQty
+          ? (existing.avg_price * existing.qty_open + Number(pos.avg_price || pos.entry_price || 0) * Number(pos.qty_open || 0)) / newQty
           : existing.avg_price;
-        const newPnl = existing.total_pnl + pos.total_pnl;
+        const newPnl = existing.total_pnl + Number(pos.total_pnl || 0);
         const investment = newAvg * newQty;
         existing.qty_open = newQty;
         existing.avg_price = newAvg;
-        existing.current_ltp = pos.current_ltp; // same symbol, LTP is same
+        existing.current_ltp = Number(pos.current_ltp || existing.current_ltp || 0);
         existing.total_pnl = newPnl;
         existing.pnl_percent = investment > 0 ? parseFloat(((newPnl / investment) * 100).toFixed(2)) : 0;
-        existing.hold_lock_active = existing.hold_lock_active || pos.hold_lock_active;
-        existing.is_closing = existing.is_closing || pos.is_closing;
+        existing.is_closing = existing.is_closing || Boolean(pos.is_closing);
         existing.ids.push(pos.id);
       }
     }
+
+    // Cumulative group hold_lock_active must strictly evaluate against the net aggregate PnL
+    for (const group of map.values()) {
+      if (group.ids.length > 1) {
+        // Multi-trade cumulative group:
+        // Only lock if the net group PnL is positive AND at least one constituent lot is still within its hold window
+        const isGroupInProfit = group.total_pnl > 0;
+        if (!isGroupInProfit) {
+          group.hold_lock_active = false;
+        } else {
+          group.hold_lock_active = group.ids.some(id => {
+            const p = openPositions.find(op => op.id === id);
+            return Boolean(p?.hold_lock_active);
+          });
+        }
+      }
+    }
+
     return Array.from(map.values());
   }, [openPositions]);
 
@@ -805,10 +768,10 @@ export default function PositionPage() {
 
   const groupedClosedPositions: GroupedClosedPosition[] = useMemo(() => {
     const map = new Map<string, GroupedClosedPosition>();
-    for (const pos of closedPositions) {
-      const rawSymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : pos.symbol;
+    for (const pos of closedPositions.filter(p => p && p.id)) {
+      const rawSymbol = pos.kite_instrument ? pos.kite_instrument.split(':').pop() || pos.symbol : (pos.symbol || '');
       const displaySymbol = fmtSymbolName(rawSymbol, pos.name || (pos as any).instrument_name);
-      const key = `${displaySymbol}|${pos.side}|${pos.product_type}`;
+      const key = `${displaySymbol}|${pos.side || 'BUY'}|${pos.product_type || 'INTRADAY'}`;
       const existing = map.get(key);
       const posBrokerage = Number((pos as any).brokerage || 0);
       const posQty = Number(pos.qty_total || pos.qty_open || (pos as any).qty || 1);
@@ -951,12 +914,12 @@ export default function PositionPage() {
 
     const posIds = exitablePositions.map(p => p.id);
     if (removePositionLocally) {
-      posIds.forEach(id => removePositionLocally(id));
+      exitablePositions.forEach(p => removePositionLocally(p.id, p));
     }
 
     showToast(`Closing ${posIds.length} position(s)...`);
 
-    closePositionsBatch(posIds).then(result => {
+    closePositionsBatch(exitablePositions).then(result => {
       if (result.success && result.results) {
         let firstError = '';
         const successfulIds = new Set(result.results.filter((r: any) => r.success).map((r: any) => r.positionId));
@@ -1004,13 +967,18 @@ export default function PositionPage() {
     setGroupExitModalGroup(null);
 
     const posIds = group.ids;
+    const groupPositions = positions.filter(p => group.ids.includes(p.id));
     if (removePositionLocally) {
-      posIds.forEach(id => removePositionLocally(id));
+      if (groupPositions.length > 0) {
+        groupPositions.forEach(p => removePositionLocally(p.id, p));
+      } else {
+        posIds.forEach(id => removePositionLocally(id));
+      }
     }
 
     showToast(`Closing ${group.symbol} position(s)...`);
 
-    closePositionsBatch(posIds).then(result => {
+    closePositionsBatch(groupPositions.length > 0 ? groupPositions : posIds).then(result => {
       if (result.success) {
         const successfulIds = new Set((result.results || []).filter((r: any) => r.success).map((r: any) => r.positionId));
         let hadFailures = false;
@@ -1389,9 +1357,8 @@ export default function PositionPage() {
                           <i className="fas fa-list" />
                           <p>No trades available</p>
                         </div>
-                      ) : detailedTickets.map(pos => {
-                        const entryDate = new Date(pos.entry_time);
-                        const timeStr = entryDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                      ) : detailedTickets.filter(Boolean).map(pos => {
+                        const timeStr = fmtTime(pos.entry_time);
                         const actualPos = pos;
 
                         return (
@@ -1509,11 +1476,9 @@ export default function PositionPage() {
                           <i className="fas fa-history" />
                           <p>No closed positions</p>
                         </div>
-                      ) : closedPositions.map(pos => {
-                        const entryDate = new Date(pos.entry_time || (pos as any).created_at || Date.now());
-                        const exitDate = new Date(pos.exit_time || (pos as any).closed_at || (pos as any).updated_at || entryDate);
-                        const entryTimeStr = entryDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-                        const exitTimeStr = exitDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+                      ) : closedPositions.filter(Boolean).map(pos => {
+                        const entryTimeStr = fmtTime(pos.entry_time || (pos as any).created_at);
+                        const exitTimeStr = fmtTime(pos.exit_time || (pos as any).closed_at || (pos as any).updated_at || pos.entry_time);
 
                         return (
                           <div
@@ -1745,7 +1710,7 @@ export default function PositionPage() {
                           <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary, #1A1A1A)' }}>
                             {(() => {
                               const tStr = (selectedPos as any).is_cumulative_group ? ((selectedPos as any).first_entry_time || selectedPos.entry_time) : selectedPos.entry_time;
-                              return tStr ? new Date(tStr).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+                              return fmtTimestamp(tStr);
                             })()}
                           </div>
                         </div>
@@ -1756,7 +1721,7 @@ export default function PositionPage() {
                           <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary, #1A1A1A)' }}>
                             {(() => {
                               const tStr = (selectedPos as any).is_cumulative_group ? ((selectedPos as any).last_exit_time || selectedPos.exit_time) : selectedPos.exit_time;
-                              return tStr ? new Date(tStr).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true }) : '—';
+                              return fmtTimestamp(tStr);
                             })()}
                           </div>
                         </div>

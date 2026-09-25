@@ -698,58 +698,69 @@ export function useOrderEntry() {
     const optHistoryItems: any[] = [];
     const optClosedPositions: any[] = [];
 
-    (positionIds || []).forEach(id => {
-      const existingPos = positionsContext?.positions?.find(p => p.id === id);
-      if (existingPos) {
-        const exitPrice = existingPos.current_ltp || existingPos.entry_price || 0;
-        const entryPrice = Number(existingPos.entry_price || existingPos.avg_price || 0);
-        const qty = Number(existingPos.qty_total || existingPos.qty_open || (existingPos as any)?.qty || 1);
-        const posSide = (existingPos.side || 'BUY').toUpperCase();
-        const isBuy = posSide === 'BUY';
-        const pnl = entryPrice > 0 ? (isBuy ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty) : 0;
+    const rawList = Array.isArray(positionIds) ? positionIds : [positionIds];
+    const ids = rawList.map((p: any) => (typeof p === 'string' ? p : p?.id)).filter(Boolean);
 
-        optHistoryItems.push({
-          id,
-          scriptName: existingPos.symbol || 'UNKNOWN',
-          type: posSide,
-          orderType: existingPos.product_type || 'INTRADAY',
-          qty,
-          price: exitPrice,
-          entryPrice,
-          exitPrice,
-          pnl,
-          date: new Date(existingPos.created_at || now).toLocaleString(),
-          exitDate: new Date(now).toLocaleDateString(),
-          status: 'closed',
-          brokerage: Number(existingPos.brokerage || 0),
-          closedBy: 'USER_ACTION',
-          productType: existingPos.product_type || 'INTRADAY',
-          settlement: existingPos.settlement || 'NSE',
-          settlementAmount: 0,
-          timestamp: now,
-        });
-
-        optClosedPositions.push({
-          id,
-          symbol: existingPos.symbol,
-          side: posSide,
-          status: 'closed',
-          exit_price: exitPrice,
-          pnl,
-          total_pnl: pnl,
-          pnl_percent: 0,
-          qty_total: qty,
-          qty_open: 0,
-          closed_at: new Date(now).toISOString(),
-          exit_time: new Date(now).toISOString(),
-          updated_at: new Date(now).toISOString(),
-        });
+    ids.forEach(id => {
+      let existingPos = positionsContext?.positions?.find(p => p.id === id);
+      if (!existingPos && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+        existingPos = (window as any).__lastPositionsMap.get(id);
       }
+      if (!existingPos) {
+        existingPos = rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id);
+      }
+
+      const exitPrice = existingPos?.current_ltp || existingPos?.ltp || existingPos?.entry_price || 0;
+      const entryPrice = Number(existingPos?.entry_price || existingPos?.avg_price || 0);
+      const qty = Number(existingPos?.qty_total || existingPos?.qty_open || (existingPos as any)?.qty || 1);
+      const posSide = (existingPos?.side || 'BUY').toUpperCase();
+      const isBuy = posSide === 'BUY';
+      const pnl = entryPrice > 0 ? (isBuy ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty) : 0;
+
+      optHistoryItems.push({
+        id,
+        scriptName: existingPos?.symbol || 'UNKNOWN',
+        type: posSide as 'BUY' | 'SELL',
+        orderType: existingPos?.product_type || 'INTRADAY',
+        qty,
+        price: exitPrice,
+        entryPrice,
+        exitPrice,
+        pnl,
+        date: new Date(existingPos?.created_at || now).toLocaleString(),
+        exitDate: new Date(now).toLocaleDateString(),
+        status: 'closed',
+        brokerage: Number(existingPos?.brokerage || 0),
+        closedBy: 'USER_ACTION',
+        productType: existingPos?.product_type || 'INTRADAY',
+        settlement: existingPos?.settlement || 'NSE',
+        settlementAmount: 0,
+        timestamp: now,
+      });
+
+      optClosedPositions.push({
+        id,
+        symbol: existingPos?.symbol || 'UNKNOWN',
+        side: posSide,
+        status: 'closed',
+        exit_price: exitPrice,
+        pnl,
+        total_pnl: pnl,
+        pnl_percent: entryPrice > 0 ? ((exitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
+        qty_total: qty,
+        qty_open: 0,
+        closed_at: new Date(now).toISOString(),
+        exit_time: new Date(now).toISOString(),
+        updated_at: new Date(now).toISOString(),
+      });
     });
 
     // Optimistically remove positions locally in 0ms
     if (positionsContext?.removePositionLocally) {
-      positionIds.forEach(id => positionsContext.removePositionLocally(id));
+      ids.forEach(id => {
+        const pObj = rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id);
+        positionsContext.removePositionLocally(id, pObj);
+      });
     }
 
     if (typeof window !== 'undefined' && optHistoryItems.length > 0) {

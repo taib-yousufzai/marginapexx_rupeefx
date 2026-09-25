@@ -188,7 +188,7 @@ export default function HistoryPage() {
       } else {
         // If positions query returned empty or failed, retain existing state so history never flashes empty
         for (const item of historyDataRef.current || []) {
-          if (item && item.status === 'closed' && item.id) {
+          if (item && String(item.status || '').toLowerCase() === 'closed' && item.id) {
             posMap.set(item.id, item);
           }
         }
@@ -221,13 +221,13 @@ export default function HistoryPage() {
       } else {
         // If orders query returned empty or failed, retain existing state
         for (const item of historyDataRef.current || []) {
-          if (item && item.status !== 'closed' && item.id) {
+          if (item && String(item.status || '').toLowerCase() !== 'closed' && item.id) {
             orderMap.set(item.id, item);
           }
         }
       }
 
-      // Reconcile pending in-flight optimistic items (<30s):
+      // Reconcile pending in-flight optimistic items (<60s):
       // Only keep an optimistic item if it hasn't landed in posMap / orderMap yet and isn't a duplicate.
       const existingItems = [
         ...(historyDataRef.current || []),
@@ -237,25 +237,26 @@ export default function HistoryPage() {
       const nowMs = Date.now();
       for (const existing of existingItems) {
         if (!existing || !existing.id) continue;
-        const isRecent = (nowMs - (existing.timestamp || 0) < 30000);
+        const isRecent = (nowMs - (existing.timestamp || 0) < 60000);
         if (!isRecent) continue;
 
-        if (existing.status === 'closed') {
+        const isClosed = String(existing.status || '').toLowerCase() === 'closed';
+        if (isClosed) {
           // If the position ID is already in posMap, the real DB data takes precedence (do not overwrite)
           const isTempId = String(existing.id).startsWith('opt_') || String(existing.id).startsWith('pos_opt_');
           if (!posMap.has(existing.id)) {
             const hasMatchingDbPos = isTempId && Array.from(posMap.values()).some(p => 
-              p.scriptName === existing.scriptName && Math.abs((p.timestamp || 0) - (existing.timestamp || 0)) < 30000
+              p.scriptName === existing.scriptName && Math.abs((p.timestamp || 0) - (existing.timestamp || 0)) < 60000
             );
             if (!hasMatchingDbPos) {
-              posMap.set(existing.id, existing);
+              posMap.set(existing.id, { ...existing, status: 'closed' });
             }
           }
         } else {
           const isTempId = String(existing.id).startsWith('opt_');
           if (!orderMap.has(existing.id)) {
             const hasMatchingDbOrder = isTempId && Array.from(orderMap.values()).some(o =>
-              o.scriptName === existing.scriptName && Math.abs((o.timestamp || 0) - (existing.timestamp || 0)) < 30000
+              o.scriptName === existing.scriptName && Math.abs((o.timestamp || 0) - (existing.timestamp || 0)) < 60000
             );
             if (!hasMatchingDbOrder) {
               orderMap.set(existing.id, existing);
@@ -471,8 +472,9 @@ export default function HistoryPage() {
 
   const filteredData = useMemo(() => {
     let base = historyData.filter(item => {
-      if (currentTab === 'position') return item.status === 'closed';
-      return item.status !== 'closed';
+      const isClosed = String(item.status || '').toLowerCase() === 'closed';
+      if (currentTab === 'position') return isClosed;
+      return !isClosed;
     });
 
     const activeFrom = appliedFromDate || fromDate;
@@ -501,7 +503,7 @@ export default function HistoryPage() {
   }, [historyData, currentTab, appliedFromDate, appliedToDate, fromDate, toDate]);
 
   const summary = useMemo(() => {
-    const posHistory = filteredData.filter(h => h.status === 'closed');
+    const posHistory = filteredData.filter(h => String(h.status || '').toLowerCase() === 'closed');
     const gp = posHistory.filter(h => h.pnl > 0).reduce((acc, h) => acc + h.pnl, 0);
     const gl = posHistory.filter(h => h.pnl < 0).reduce((acc, h) => acc + Math.abs(h.pnl), 0);
     const b = filteredData.reduce((acc, h) => acc + (h.brokerage || (h as any).entry_brokerage || 0), 0);
@@ -722,7 +724,7 @@ export default function HistoryPage() {
                                 </span>
                                 <span style={{ fontSize: '0.55rem', color: '#9AA4BF' }}>{item.orderType || 'INTRADAY'}</span>
                                 {currentTab === 'order' && (
-                                  <span className={`order-type-badge ${item.status === 'executed' ? 'completed' : 'pending'}`}>
+                                  <span className={`order-type-badge ${String(item.status || '').toLowerCase() === 'executed' ? 'completed' : 'pending'}`}>
                                     {item.status || 'unknown'}
                                   </span>
                                 )}

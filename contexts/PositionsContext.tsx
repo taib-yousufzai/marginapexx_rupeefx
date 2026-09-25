@@ -11,6 +11,7 @@ import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import { getSharedSession, getSharedSessionSync } from '@/lib/sharedSession';
 import { isContractExpired } from '@/lib/contractExpiry';
+import { fetchUserBootstrap, getCachedBootstrapData } from '@/lib/bootstrapService';
 
 export interface EnrichedPosition extends MyPosition {
   current_ltp: number;
@@ -202,6 +203,10 @@ const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'
 
 export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { children: React.ReactNode; refreshInterval?: number }) => {
   const [rawPositions, setRawPositions] = useState<MyPosition[]>(() => {
+    const cachedBoot = getCachedBootstrapData();
+    if (cachedBoot && Array.isArray(cachedBoot.positions)) {
+      return cachedBoot.positions;
+    }
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
@@ -219,6 +224,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     return [];
   });
   const [loading, setLoading] = useState(() => {
+    const cachedBoot = getCachedBootstrapData();
+    if (cachedBoot && Array.isArray(cachedBoot.positions)) return false;
     if (typeof window !== 'undefined') {
       try {
         const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
@@ -265,6 +272,10 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       }
       const next = prev.filter(p => p.id !== posId);
       if (typeof window !== 'undefined') {
+        const lastMap = (window as any).__lastPositionsMap || new Map();
+        if (target) lastMap.set(posId, target);
+        else if (positionObj && positionObj.symbol) lastMap.set(posId, { id: posId, ...positionObj });
+        (window as any).__lastPositionsMap = lastMap;
         try {
           localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next));
         } catch {}
@@ -353,12 +364,21 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      const queryUrl = options?.fresh ? `/api/positions?_t=${Date.now()}` : '/api/positions';
-      const data = await api.get<{ positions: MyPosition[] }>(queryUrl, {
-        signal: controller.signal,
-      });
+      let rawPositionsFromServer: MyPosition[] = [];
+      if (!options?.fresh) {
+        const boot = await fetchUserBootstrap(false);
+        if (boot && Array.isArray(boot.positions)) {
+          rawPositionsFromServer = boot.positions;
+        }
+      }
 
-      const rawPositionsFromServer: MyPosition[] = data.positions || [];
+      if (rawPositionsFromServer.length === 0 && (options?.fresh || rawPositionsFromServer.length === 0)) {
+        const queryUrl = options?.fresh ? `/api/positions?_t=${Date.now()}` : '/api/positions';
+        const data = await api.get<{ positions: MyPosition[] }>(queryUrl, {
+          signal: controller.signal,
+        });
+        rawPositionsFromServer = data.positions || [];
+      }
 
       // Clean up optimisticallyRemovedIds strictly based on 30s TTL
       const now = Date.now();
@@ -492,6 +512,54 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   useEffect(() => {
     // One-shot eviction: clear the legacy localStorage cache written by the old code.
     try { localStorage.removeItem('cached_open_positions'); } catch (_) {}
+
+    const handleBootstrapUpdated = (evt: Event) => {
+      const detail = (evt as CustomEvent).detail;
+      if (detail && Array.isArray(detail.positions)) {
+        const rawPositionsFromServer: MyPosition[] = detail.positions;
+        const now = Date.now();
+        for (const id of Array.from(optimisticallyRemovedIds.current)) {
+          const removedAt = optimisticallyRemovedTimes.current.get(id) || 0;
+          if (now - removedAt > 30000) {
+            optimisticallyRemovedIds.current.delete(id);
+            optimisticallyRemovedTimes.current.delete(id);
+          }
+        }
+        let basePositions: MyPosition[] = rawPositionsFromServer.filter(
+          p => !optimisticallyRemovedIds.current.has(p.id)
+        );
+        const persistedOpt = getPersistedOptimisticPositions();
+        setRawPositions(prev => {
+          const existingOptMap = new Map<string, MyPosition>();
+          [...persistedOpt, ...prev.filter(p => p.id.startsWith('__optimistic__') || p.id.startsWith('opt_'))].forEach(p => {
+            existingOptMap.set(p.id, p);
+          });
+          const activeOptPositions: MyPosition[] = [];
+          for (const [optId, optPos] of existingOptMap.entries()) {
+            const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
+            if (now - createdTime > 20000) {
+              optimisticPositionIds.current.delete(optId);
+              continue;
+            }
+            const hasMatchingServerPos = basePositions.some(sp => {
+              const sameSym = cleanSym(sp.symbol || sp.kite_instrument) === cleanSym(optPos.symbol || optPos.kite_instrument);
+              const sameSide = (sp.side || '').toUpperCase() === (optPos.side || '').toUpperCase();
+              const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
+              return sameSym && sameSide && (spTime >= createdTime - 5000);
+            });
+            if (hasMatchingServerPos) {
+              optimisticPositionIds.current.delete(optId);
+            } else {
+              activeOptPositions.push(optPos);
+            }
+          }
+          const merged = [...activeOptPositions, ...basePositions];
+          return merged;
+        });
+        setLoading(false);
+      }
+    };
+    window.addEventListener('user_bootstrap_updated', handleBootstrapUpdated);
 
     fetchPositions();
     let isSubscribed = false;
@@ -672,6 +740,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       document.removeEventListener('visibilitychange', handleVisibility);
       supabase.removeChannel(channel);
       authSub.unsubscribe();
+      window.removeEventListener('user_bootstrap_updated', handleBootstrapUpdated);
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('order_placed_with_data', handleOrderPlacedWithData);
       window.removeEventListener('position_closed_optimistic', handlePositionClosedOptimistic);
@@ -843,6 +912,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     segmentSettings,
     inFlightConversions
   ]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && enrichedPositions.length > 0) {
+      const map = (window as any).__lastPositionsMap || new Map();
+      enrichedPositions.forEach(p => {
+        if (p && p.id) map.set(p.id, p);
+      });
+      (window as any).__lastPositionsMap = map;
+    }
+  }, [enrichedPositions]);
 
   return (
     <PositionsContext.Provider value={{
