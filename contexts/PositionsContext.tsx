@@ -29,8 +29,8 @@ export interface PositionsContextType {
   error: string | null;
   refresh: () => Promise<void>;
   updatePositionLocally: (posId: string, updatedFields: Partial<MyPosition>) => void;
-  removePositionLocally: (posId: string) => void;
-  restorePositionLocally: (posId: string) => void;
+  removePositionLocally: (posId: string, positionObj?: Partial<MyPosition>) => void;
+  restorePositionLocally: (posId?: string, fallbackPos?: Partial<MyPosition>) => void;
   startConversion: (posId: string, newType: string) => void;
   endConversion: (posId: string) => void;
   addOptimisticPosition: (pos: Partial<MyPosition>) => void;
@@ -244,17 +244,25 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   // Static properties map to cache computations that never change per position lifecycle
   const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({}); 
 
+  const recentlyRemovedPositionsRef = useRef<Map<string, MyPosition>>(new Map());
+
   const updatePositionLocally = useCallback((posId: string, updatedFields: Partial<MyPosition>) => {
     setRawPositions(prev =>
       prev.map(p => (p.id === posId ? { ...p, ...updatedFields } : p))
     );
   }, []);
 
-  const removePositionLocally = useCallback((posId: string) => {
+  const removePositionLocally = useCallback((posId: string, positionObj?: Partial<MyPosition>) => {
     optimisticallyRemovedIds.current.add(posId);
     optimisticallyRemovedTimes.current.set(posId, Date.now());
     savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
     setRawPositions(prev => {
+      const target = prev.find(p => p.id === posId);
+      if (target) {
+        recentlyRemovedPositionsRef.current.set(posId, target);
+      } else if (positionObj && positionObj.symbol) {
+        recentlyRemovedPositionsRef.current.set(posId, { id: posId, ...positionObj } as MyPosition);
+      }
       const next = prev.filter(p => p.id !== posId);
       if (typeof window !== 'undefined') {
         try {
@@ -453,13 +461,29 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     }
   }, []);
 
-  const restorePositionLocally = useCallback((posId?: string) => {
+  const restorePositionLocally = useCallback((posId?: string, fallbackPos?: Partial<MyPosition>) => {
     if (posId) {
       optimisticallyRemovedIds.current.delete(posId);
       optimisticallyRemovedTimes.current.delete(posId);
+      const stashed = (fallbackPos && fallbackPos.symbol ? fallbackPos : null) || recentlyRemovedPositionsRef.current.get(posId);
+      if (stashed && (stashed as MyPosition).symbol) {
+        setRawPositions(prev => {
+          if (prev.some(p => p.id === posId || (cleanSym(p.symbol) === cleanSym(stashed.symbol) && p.side === stashed.side))) {
+            return prev;
+          }
+          const restored = [{ id: posId, ...stashed } as MyPosition, ...prev];
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(restored));
+            } catch {}
+          }
+          return restored;
+        });
+      }
     } else {
       optimisticallyRemovedIds.current.clear();
       optimisticallyRemovedTimes.current.clear();
+      recentlyRemovedPositionsRef.current.clear();
     }
     savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
     fetchPositions({ fresh: true });
