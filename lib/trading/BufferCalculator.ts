@@ -73,6 +73,10 @@ export function calculateBufferedPrice({
   const sellEntryBuffer = toDecimalBuffer(sellSetting?.entry_buffer, 0);
   const sellExitBuffer  = toDecimalBuffer(sellSetting?.exit_buffer, 0);
 
+  // Both entry and exit buffers are collected upon entry; exit execution has 0 buffer.
+  const totalBuyBuffer  = buyEntryBuffer + buyExitBuffer;
+  const totalSellBuffer = sellEntryBuffer + sellExitBuffer;
+
   // LTP is used as the base for computing the buffer AMOUNT (not basePrice).
   // This separates the display spread (bid_buffer) from the execution slippage (entry/exit buffer).
   const ltpBase = (Number.isFinite(ltp) && ltp! > 0) ? ltp! : basePrice;
@@ -81,16 +85,16 @@ export function calculateBufferedPrice({
     // basePrice = Displayed Ask (BUY) or Displayed Bid (SELL) — bid_buffer already applied.
     // Add entry/exit buffer as: ± LTP * buffer%
     //
-    //   BUY  entry : Displayed Ask + LTP * entry_buffer%
-    //   BUY  exit  : Displayed Ask + LTP * exit_buffer%
-    //   SELL entry : Displayed Bid − LTP * entry_buffer%
-    //   SELL exit  : Displayed Bid − LTP * exit_buffer%
+    //   BUY  entry : Displayed Ask + LTP * (entry_buffer% + exit_buffer%)
+    //   BUY  exit  : Displayed Ask (no exit buffer applied on exit)
+    //   SELL entry : Displayed Bid − LTP * (entry_buffer% + exit_buffer%)
+    //   SELL exit  : Displayed Bid (no exit buffer applied on exit)
     let executionPrice: number;
     if (side === 'BUY') {
-      const buffer = isExit ? sellExitBuffer : buyEntryBuffer;
+      const buffer = isExit ? 0 : totalBuyBuffer;
       executionPrice = basePrice + ltpBase * buffer + brokeragePerUnit;
     } else {
-      const buffer = isExit ? buyExitBuffer : sellEntryBuffer;
+      const buffer = isExit ? 0 : totalSellBuffer;
       executionPrice = basePrice - ltpBase * buffer - brokeragePerUnit;
     }
     return Math.round(executionPrice * 10000) / 10000;
@@ -99,12 +103,12 @@ export function calculateBufferedPrice({
   // Legacy / LTP-only mode: buffer applied multiplicatively to basePrice (which equals LTP here).
   let bufferedPrice: number;
   if (side === 'BUY') {
-    const buffer = isExit ? sellExitBuffer : buyEntryBuffer;
+    const buffer = isExit ? 0 : totalBuyBuffer;
     bufferedPrice = basePrice + ltpBase * buffer + brokeragePerUnit;
     // Strict rule: BUY must never execute below the base price
     bufferedPrice = Math.max(basePrice, bufferedPrice);
   } else {
-    const buffer = isExit ? buyExitBuffer : sellEntryBuffer;
+    const buffer = isExit ? 0 : totalSellBuffer;
     bufferedPrice = basePrice - ltpBase * buffer - brokeragePerUnit;
     // Strict rule: SELL must never execute above the base price
     bufferedPrice = Math.min(basePrice, bufferedPrice);

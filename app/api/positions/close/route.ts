@@ -339,17 +339,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           rawBid,
           rawAsk,
           hasRealBidAsk,
-          askBuffer: Number(segSetting?.bid_buffer ?? 0),
-          bidBuffer: Number(segSetting?.bid_buffer ?? 0),
+          askBuffer: 0,
+          bidBuffer: 0,
         });
 
         let exitPrice: number;
         if (pos.side === 'BUY') {
-          // Closing a long → sell at effective bid with exitBuffer applied
-          exitPrice = effective.effectiveBid * (1 - exitBuffer);
+          // Closing a long → sell at effective bid (no exitBuffer applied on exit)
+          exitPrice = effective.effectiveBid;
         } else {
-          // Closing a short → buy at effective ask with exitBuffer applied
-          exitPrice = effective.effectiveAsk * (1 + exitBuffer);
+          // Closing a short → buy at effective ask (no exitBuffer applied on exit)
+          exitPrice = effective.effectiveAsk;
         }
         exitPrice = Math.round(exitPrice * 100) / 100;
 

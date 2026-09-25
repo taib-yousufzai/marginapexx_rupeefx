@@ -598,15 +598,11 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
       if (shouldClose) {
         console.log(`[Order Matching] Triggering auto-exit for position ${pos.id} (${side} ${pos.symbol}) due to ${closeReason}. LTP: ${ltp}, SL: ${stopLoss}, Target: ${target}`);
 
-        // Calculate exit price
-        let exitPrice = ltp;
-        const exitBuffer = segmentSettingsCache.get(`${pos.user_id}|${pos.settlement}|${pos.side}`)?.exit_buffer ?? 0.0017;
+        // Exit execution has 0 buffer (both entry and exit buffers collected on entry)
         if (pos.side === 'BUY') {
-          // Closing BUY (selling) → BID - exitBuffer
-          exitPrice = priceObj.bid * (1 - exitBuffer);
+          exitPrice = priceObj.bid;
         } else {
-          // Closing SELL (buying back) → ASK + exitBuffer
-          exitPrice = priceObj.ask * (1 + exitBuffer);
+          exitPrice = priceObj.ask;
         }
         exitPrice = Math.round(exitPrice * 10000) / 10000;
 

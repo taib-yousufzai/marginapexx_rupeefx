@@ -353,21 +353,21 @@ export async function POST(
   let displayedAsk: number;
   let displayedBid: number;
   if (useLtpModeClose) {
-    displayedAsk = baseLtp + bidBufAmount;
-    displayedBid = baseLtp - bidBufAmount;
+    displayedAsk = baseLtp;
+    displayedBid = baseLtp;
   } else {
-    displayedAsk = (rawAsk ?? baseLtp) + bidBufAmount;
-    displayedBid = (rawBid ?? baseLtp) - bidBufAmount;
+    displayedAsk = rawAsk ?? baseLtp;
+    displayedBid = rawBid ?? baseLtp;
   }
   if (displayedAsk <= 0) displayedAsk = baseLtp > 0 ? baseLtp : 1;
   if (displayedBid <= 0) displayedBid = baseLtp > 0 ? baseLtp : 1;
 
-  // Layer 2: apply exit_buffer
+  // Layer 2: exit buffer is 0 (both entry and exit buffers are collected at entry)
   let exitPrice: number;
   if (pos.side === 'BUY') {
-    exitPrice = displayedBid - baseLtp * exitBuffer;
+    exitPrice = displayedBid;
   } else {
-    exitPrice = displayedAsk + baseLtp * exitBuffer;
+    exitPrice = displayedAsk;
   }
   exitPrice = Math.round(exitPrice * 100) / 100;
   if (exitPrice <= 0) exitPrice = baseLtp > 0 ? baseLtp : Number(pos.entry_price || 1);
