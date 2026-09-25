@@ -28,13 +28,19 @@ export async function GET(request: NextRequest) {
     const cacheKeySuffix = `${statusParam || 'open'}:${isAll ? 'all' : 'default'}:${fromDateParam}`;
     const cacheKey = `api:positions:${user.id}:${cacheKeySuffix}`;
 
-    // Fast Redis cache check
+    // Fast Redis cache check (instant <5ms response unless fresh=true is requested)
     if (!isFresh) {
       try {
         const redis = getRedisClient();
         const cached = await redis.get(cacheKey);
         if (cached) {
           return NextResponse.json(JSON.parse(cached));
+        }
+        if (isClosedQuery) {
+          const fallback = await redis.get(`api:positions:${user.id}:closed_all`);
+          if (fallback) {
+            return NextResponse.json(JSON.parse(fallback));
+          }
         }
       } catch (_) {}
     }
@@ -47,7 +53,7 @@ export async function GET(request: NextRequest) {
 
     let positionsQuery = admin
       .from('positions')
-      .select('id, user_id, symbol, kite_instrument, side, qty, qty_total, qty_open, entry_price, avg_price, exit_price, pnl, brokerage, entry_brokerage, entry_intraday_brokerage, entry_carry_brokerage, entry_gtt_brokerage, exit_intraday_brokerage, exit_carry_brokerage, exit_gtt_brokerage, closed_by, settlement, settlement_amount, product_type, created_at, updated_at, closed_at, exit_time')
+      .select('*')
       .eq('user_id', user.id);
 
     if (statusParam) {
@@ -65,18 +71,13 @@ export async function GET(request: NextRequest) {
           .order('updated_at', { ascending: false });
 
         if (lowerStatus === 'closed' && historyResetAt) {
-          positionsQuery = positionsQuery.gt('updated_at', new Date(historyResetAt).toISOString());
+          const resetIso = new Date(historyResetAt).toISOString();
+          positionsQuery = positionsQuery.or(`updated_at.gt.${resetIso},exit_time.gt.${resetIso},created_at.gt.${resetIso}`);
+        } else if (lowerStatus === 'closed' && searchParams.get('from')) {
+          const fromIso = `${searchParams.get('from')}T00:00:00+05:30`;
+          positionsQuery = positionsQuery.or(`updated_at.gte.${fromIso},exit_time.gte.${fromIso},created_at.gte.${fromIso}`);
         }
 
-        // For closed positions, default to today-only unless 'all' param or 'from' date is passed
-        if (lowerStatus === 'closed' && !searchParams.get('all') && !searchParams.get('from')) {
-          const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' });
-          const istDateStr = formatter.format(new Date());
-          const utcMidnight = new Date(`${istDateStr}T00:00:00+05:30`);
-          positionsQuery = positionsQuery.gte('updated_at', utcMidnight.toISOString());
-        } else if (lowerStatus === 'closed' && searchParams.get('from')) {
-          positionsQuery = positionsQuery.gte('updated_at', `${searchParams.get('from')}T00:00:00+05:30`);
-        }
         // Cap at 500 to prevent full-table scans on large accounts
         positionsQuery = positionsQuery.limit(500);
       }
@@ -119,7 +120,7 @@ export async function GET(request: NextRequest) {
         status: 'closed',
         product_type: p.product_type || 'INTRADAY',
         kite_instrument: p.kite_instrument || p.symbol,
-        brokerage: Number(p.brokerage || 0),
+        brokerage: Number(p.brokerage || p.entry_brokerage || 0),
         locked_margin: 0,
       }));
     } else {
@@ -128,15 +129,18 @@ export async function GET(request: NextRequest) {
         status: p.status ? p.status.toLowerCase() : 'open',
         product_type: p.product_type || 'INTRADAY',
         kite_instrument: p.kite_instrument || p.symbol,
-        brokerage: Number(p.brokerage || 0),
+        brokerage: Number(p.brokerage || p.entry_brokerage || 0),
       }));
     }
 
     const responsePayload = { positions };
     try {
       const redis = getRedisClient();
-      const ttl = isClosedQuery ? 3600 : 3;
+      const ttl = isClosedQuery ? 3600 : 15;
       await redis.setex(cacheKey, ttl, JSON.stringify(responsePayload));
+      if (isClosedQuery) {
+        await redis.setex(`api:positions:${user.id}:closed_all`, 3600, JSON.stringify(responsePayload));
+      }
     } catch (_) {}
 
     return NextResponse.json(responsePayload);

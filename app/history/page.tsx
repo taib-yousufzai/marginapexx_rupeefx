@@ -64,6 +64,14 @@ export default function HistoryPage() {
             return parsed;
           }
         }
+        const localStored = localStorage.getItem('history_cache_v2');
+        if (localStored) {
+          const parsed = JSON.parse(localStored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            (window as any).__historyCache = parsed;
+            return parsed;
+          }
+        }
       } catch (_) {}
     }
     return [];
@@ -100,16 +108,17 @@ export default function HistoryPage() {
 
   const fetchSeqRef = useRef<number>(0);
 
-  const fetchHistory = useCallback(async (silent = false) => {
+  const fetchHistory = useCallback(async (silent = false, isManualRefresh = false) => {
     const seq = ++fetchSeqRef.current;
     try {
       if (!silent && historyDataRef.current.length === 0) {
         setLoading(true);
       }
-      // Fetch both orders and positions history with fresh bypass and isolated error handling
+      const freshParam = isManualRefresh ? '&fresh=true' : '';
+      // Fetch both orders and positions history with fast Redis cache hits (<10ms)
       const [ordersRes, posRes] = await Promise.allSettled([
-        api.get<{ orders: any[]; error?: string }>(`/api/orders?status=executed,rejected,cancelled&limit=500&fresh=true`),
-        api.get<{ positions: any[]; error?: string }>(`/api/positions?status=closed&all=true&fresh=true`),
+        api.get<{ orders: any[]; error?: string }>(`/api/orders?status=executed,rejected,cancelled&limit=500${freshParam}`),
+        api.get<{ positions: any[]; error?: string }>(`/api/positions?status=closed&all=true${freshParam}`),
       ]);
 
       // If a newer request was dispatched while this was running, ignore this stale response
@@ -266,6 +275,7 @@ export default function HistoryPage() {
         (window as any).__historyCache = merged;
         try {
           sessionStorage.setItem('history_cache_v2', JSON.stringify(merged));
+          localStorage.setItem('history_cache_v2', JSON.stringify(merged));
         } catch (_) {}
       }
 
@@ -311,6 +321,7 @@ export default function HistoryPage() {
           (window as any).__historyCache = updated;
           try {
             sessionStorage.setItem('history_cache_v2', JSON.stringify(updated));
+            localStorage.setItem('history_cache_v2', JSON.stringify(updated));
           } catch (_) {}
         }
         return updated;

@@ -210,14 +210,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     const admin = getAdminClient();
+    const validUuids = positionIds.filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
 
     // 1. Parallel fetch positions, profile, and trading hours
     const [posResult, profileResult, tradingHoursResult] = await Promise.all([
-      admin.from('positions')
-        .select('*')
-        .in('id', positionIds)
-        .eq('user_id', user.id)
-        .or('status.eq.open,status.eq.active,status.eq.OPEN,status.eq.ACTIVE'),
+      validUuids.length > 0
+        ? admin.from('positions')
+            .select('*')
+            .in('id', validUuids)
+            .eq('user_id', user.id)
+            .or('status.eq.open,status.eq.active,status.eq.OPEN,status.eq.ACTIVE')
+        : Promise.resolve({ data: [] as any[], error: null }),
       admin.from('profiles')
         .select('parent_id, trading_mode')
         .eq('id', user.id)
@@ -226,15 +229,31 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .select('id, name, start_time, end_time, is_active')
     ]);
 
-    const { data: positions, error: posErr } = posResult;
-    if (posErr || !positions || positions.length === 0) {
-      // Check if these positions were already closed (e.g. concurrent exit or fast-pipe WS)
-      const { data: alreadyClosed } = await admin
+    let positions = posResult?.data || [];
+    if (positions.length === 0 && positionIds.length > 0) {
+      // If positionIds had optimistic client IDs, fetch user's open positions
+      const { data: userOpenPositions } = await admin
         .from('positions')
-        .select('id, status, pnl, exit_price')
-        .in('id', positionIds)
+        .select('*')
         .eq('user_id', user.id)
-        .in('status', ['closed', 'CLOSED']);
+        .or('status.eq.open,status.eq.active,status.eq.OPEN,status.eq.ACTIVE');
+      if (userOpenPositions && userOpenPositions.length > 0) {
+        positions = userOpenPositions;
+      }
+    }
+
+    if (!positions || positions.length === 0) {
+      // Check if these positions were already closed (e.g. concurrent exit or fast-pipe WS)
+      let alreadyClosed: any[] | null = null;
+      if (validUuids.length > 0) {
+        const { data } = await admin
+          .from('positions')
+          .select('id, status, pnl, exit_price')
+          .in('id', validUuids)
+          .eq('user_id', user.id)
+          .in('status', ['closed', 'CLOSED']);
+        alreadyClosed = data;
+      }
 
       if (alreadyClosed && alreadyClosed.length > 0) {
         return NextResponse.json({
@@ -456,19 +475,59 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // Cancel open pending orders for all successfully closed positions/symbols
+    // Update Redis cache synchronously for all successfully closed positions (<5ms responses for history)
     const successfulPosIds = results.filter(r => r.success).map(r => r.positionId);
     if (successfulPosIds.length > 0) {
       try {
-        const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
-        const { invalidateUserPositionsCache, invalidateUserOrdersCache } = await import('@/lib/redisSettingsCache');
+        const { 
+          appendClosedPositionToCache, 
+          appendOrderToCache, 
+          invalidateUserOpenPositionsCache, 
+          invalidateUserActiveOrdersCache 
+        } = await import('@/lib/redisHistoryCache');
+
+        const closedPositions = positions.filter(p => successfulPosIds.includes(p.id));
         await Promise.all([
-          invalidateUserHistoryCache(user.id),
-          invalidateUserPositionsCache(user.id),
-          invalidateUserOrdersCache(user.id),
+          ...closedPositions.map(pos => {
+            const resMatch = results.find(r => r.positionId === pos.id);
+            const closedPosRecord = {
+              ...pos,
+              status: 'closed',
+              exit_price: resMatch?.exit_price || pos.exit_price || 0,
+              pnl: Number(resMatch?.pnl ?? pos.pnl ?? 0),
+              exit_time: new Date().toISOString(),
+              closed_at: new Date().toISOString(),
+              closed_by: 'USER',
+              qty_open: 0,
+              locked_margin: 0,
+              brokerage: Number(pos.brokerage || pos.entry_brokerage || 0),
+            };
+            const exitOrderRecord = {
+              id: `order_exit_${pos.id}_${Date.now()}`,
+              user_id: user.id,
+              symbol: pos.symbol,
+              segment: pos.settlement,
+              side: pos.side === 'BUY' ? 'SELL' : 'BUY',
+              status: 'EXECUTED',
+              qty: Number(pos.qty_open || pos.qty_total || 1),
+              fill_price: resMatch?.exit_price || pos.exit_price || 0,
+              price: resMatch?.exit_price || pos.exit_price || 0,
+              order_type: 'MARKET',
+              product_type: pos.product_type || 'INTRADAY',
+              is_exit: true,
+              linked_position_id: pos.id,
+              created_at: new Date().toISOString(),
+            };
+            return Promise.all([
+              appendClosedPositionToCache(user.id, closedPosRecord),
+              appendOrderToCache(user.id, exitOrderRecord)
+            ]);
+          }),
+          invalidateUserOpenPositionsCache(user.id),
+          invalidateUserActiveOrdersCache(user.id),
         ]);
       } catch (cacheErr) {
-        console.warn('[POST /api/positions/close] Cache invalidation warning:', cacheErr);
+        console.warn('[POST /api/positions/close] Cache update warning:', cacheErr);
       }
 
       (async () => {

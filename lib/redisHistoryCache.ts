@@ -130,6 +130,40 @@ export async function appendClosedPositionToCache(userId: string, closedPosition
 }
 
 /**
+ * Invalidate open/active positions cache in Redis without wiping closed history
+ */
+export async function invalidateUserOpenPositionsCache(userId: string): Promise<void> {
+  try {
+    const redis = getRedisClient();
+    const posKeys = (await redis.keys(`api:positions:${userId}:open*`)) || [];
+    const defKeys = (await redis.keys(`api:positions:${userId}:default*`)) || [];
+    const allKeys = Array.from(new Set([...posKeys, ...defKeys]));
+    if (allKeys.length > 0) {
+      await redis.del(...allKeys);
+    }
+  } catch (err) {
+    console.warn('[invalidateUserOpenPositionsCache] Redis delete error:', err);
+  }
+}
+
+/**
+ * Invalidate active/pending orders cache in Redis without wiping historical orders
+ */
+export async function invalidateUserActiveOrdersCache(userId: string): Promise<void> {
+  try {
+    const redis = getRedisClient();
+    const activeKeys = (await redis.keys(`api:orders:${userId}:active*`)) || [];
+    const openKeys = (await redis.keys(`api:orders:${userId}:open*`)) || [];
+    const allKeys = Array.from(new Set([...activeKeys, ...openKeys, `api:orders:${userId}:active`]));
+    if (allKeys.length > 0) {
+      await redis.del(...allKeys);
+    }
+  } catch (err) {
+    console.warn('[invalidateUserActiveOrdersCache] Redis delete error:', err);
+  }
+}
+
+/**
  * Invalidate all cached user order and position history in Redis
  */
 export async function invalidateUserHistoryCache(userId: string): Promise<void> {
@@ -146,3 +180,7 @@ export async function invalidateUserHistoryCache(userId: string): Promise<void> 
     console.warn('[invalidateUserHistoryCache] Redis delete error:', err);
   }
 }
+
+export const invalidateUserPositionsCache = invalidateUserOpenPositionsCache;
+export const invalidateUserOrdersCache = invalidateUserActiveOrdersCache;
+

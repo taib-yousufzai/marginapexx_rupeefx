@@ -81,8 +81,8 @@ export function useOrderEntry() {
       created_time_ms: Date.now(),
     } as any;
 
-    if (ordersContext?.addOptimisticOrder) {
-      ordersContext.addOptimisticOrder(optimisticOrder);
+    if ((ordersContext as any)?.addOptimisticOrder) {
+      (ordersContext as any).addOptimisticOrder(optimisticOrder);
     }
 
     // Auto-detect if user has an existing opposite-side position for this symbol
@@ -317,6 +317,8 @@ export function useOrderEntry() {
           const newIds = new Set(optimisticHistoryItems.map((i: any) => i.id));
           const updatedHistory = [...optimisticHistoryItems, ...existingHistory.filter((h: any) => !newIds.has(h.id))];
           (window as any).__historyCache = updatedHistory;
+          sessionStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
+          localStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
         } catch {}
         window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
           detail: {
@@ -326,6 +328,7 @@ export function useOrderEntry() {
             historyItem: optimisticHistoryItems[0],
           }
         }));
+        window.dispatchEvent(new Event('history_updated'));
       }
 
       if (typeof window !== 'undefined') {
@@ -406,8 +409,8 @@ export function useOrderEntry() {
         fill_price: result.fill_price || state.client_price,
       };
 
-      if (ordersContext?.swapOptimisticOrder) {
-        ordersContext.swapOptimisticOrder(tempId, confirmedOrder);
+      if ((ordersContext as any)?.swapOptimisticOrder) {
+        (ordersContext as any).swapOptimisticOrder(tempId, confirmedOrder);
       }
 
       if (typeof window !== 'undefined') {
@@ -478,8 +481,8 @@ export function useOrderEntry() {
 
       if (!isBackgroundProcessing) {
         // Rollback optimistic order on actual error
-        if (ordersContext?.removeOptimisticOrder) {
-          ordersContext.removeOptimisticOrder(tempId);
+        if ((ordersContext as any)?.removeOptimisticOrder) {
+          (ordersContext as any).removeOptimisticOrder(tempId);
         }
         if (effectiveIsExit && positionsContext?.restorePositionLocally) {
           positionsContext.restorePositionLocally(effectiveLinkedPosId || '');
@@ -521,7 +524,15 @@ export function useOrderEntry() {
     setError(null);
 
     // Capture position before removing locally for optimistic history update
-    const existingPos = positionsContext?.positions?.find(p => p.id === positionId);
+    let existingPos = positionsContext?.positions?.find(p => p.id === positionId);
+    if (!existingPos && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+      existingPos = (window as any).__lastPositionsMap.get(positionId);
+    }
+    if (!existingPos && symbol) {
+      const cleanTarget = cleanSym(symbol);
+      existingPos = positionsContext?.positions?.find(p => cleanSym(p.symbol || p.kite_instrument) === cleanTarget);
+    }
+
     const now = Date.now();
     const resolvedExitPrice = clientPrice || existingPos?.current_ltp || existingPos?.entry_price || 0;
     const entryPrice = Number(existingPos?.entry_price || existingPos?.avg_price || 0);
@@ -569,7 +580,7 @@ export function useOrderEntry() {
 
     // Optimistically remove position locally in 0ms for instant UI responsiveness
     if (positionsContext?.removePositionLocally) {
-      positionsContext.removePositionLocally(positionId);
+      positionsContext.removePositionLocally(positionId, existingPos);
     }
 
     if (typeof window !== 'undefined') {
@@ -577,6 +588,8 @@ export function useOrderEntry() {
         const existingHistory = (window as any).__historyCache || [];
         const updatedHistory = [optimisticHistoryItem, ...existingHistory.filter((h: any) => h.id !== positionId)];
         (window as any).__historyCache = updatedHistory;
+        sessionStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
+        localStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
       } catch {}
       window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
         detail: {
@@ -586,6 +599,7 @@ export function useOrderEntry() {
           historyItem: optimisticHistoryItem,
         }
       }));
+      window.dispatchEvent(new Event('history_updated'));
     }
 
     soundEngine.playOrderExecuted();
@@ -610,10 +624,13 @@ export function useOrderEntry() {
       // 2. Fallback to REST API route
       if (!result) {
         result = await api.post<Record<string, unknown>>(`/api/positions/${positionId}/close`, {
-          client_price: clientPrice,
-          symbol,
-          settlement,
-          side
+          client_price: resolvedExitPrice,
+          symbol: existingPos?.symbol || symbol,
+          settlement: existingPos?.settlement || settlement,
+          side: posSide,
+          qty,
+          entry_price: entryPrice,
+          product_type: existingPos?.product_type || 'INTRADAY'
         }, { timeout: 20000 });
       }
 
@@ -653,7 +670,7 @@ export function useOrderEntry() {
       }
 
       if (positionsContext?.restorePositionLocally) {
-        positionsContext.restorePositionLocally(positionId);
+        positionsContext.restorePositionLocally(positionId, existingPos);
       }
       if (typeof window !== 'undefined') {
         try {
@@ -741,6 +758,8 @@ export function useOrderEntry() {
         const optIds = new Set(optHistoryItems.map((i: any) => i.id));
         const updatedHistory = [...optHistoryItems, ...existingHistory.filter((h: any) => !optIds.has(h.id))];
         (window as any).__historyCache = updatedHistory;
+        sessionStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
+        localStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
       } catch {}
       window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
         detail: {
@@ -750,6 +769,7 @@ export function useOrderEntry() {
           historyItem: optHistoryItems[0],
         }
       }));
+      window.dispatchEvent(new Event('history_updated'));
     }
 
     soundEngine.playOrderExecuted();

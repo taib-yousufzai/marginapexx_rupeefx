@@ -483,16 +483,54 @@ export async function POST(
     return NextResponse.json({ error: rpcErr.message || 'Failed to close position. Please try again.' }, { status: 400 });
   }
 
-  // Invalidate caches synchronously so subsequent client polls receive clean updated state
+  // Update caches synchronously so subsequent client polls receive clean updated state instantly (<5ms)
   try {
-    const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+    const { 
+      appendClosedPositionToCache, 
+      appendOrderToCache, 
+      invalidateUserOpenPositionsCache, 
+      invalidateUserActiveOrdersCache 
+    } = await import('@/lib/redisHistoryCache');
+
+    const closedPosRecord = {
+      ...pos,
+      id: resolvedPositionId || pos.id,
+      status: 'closed',
+      exit_price: exitPrice,
+      pnl: Number(pnl),
+      exit_time: new Date().toISOString(),
+      closed_at: new Date().toISOString(),
+      closed_by: 'USER',
+      qty_open: 0,
+      locked_margin: 0,
+      brokerage: Number(pos.brokerage || pos.entry_brokerage || 0),
+    };
+
+    const exitOrderRecord = {
+      id: `order_exit_${resolvedPositionId || pos.id}_${Date.now()}`,
+      user_id: user.id,
+      symbol: pos.symbol,
+      segment: pos.settlement,
+      side: pos.side === 'BUY' ? 'SELL' : 'BUY',
+      status: 'EXECUTED',
+      qty: Number(pos.qty_open || pos.qty_total || 1),
+      fill_price: exitPrice,
+      price: exitPrice,
+      order_type: 'MARKET',
+      product_type: pos.product_type || 'INTRADAY',
+      is_exit: true,
+      linked_position_id: resolvedPositionId || pos.id,
+      created_at: new Date().toISOString(),
+    };
+
     await Promise.all([
-      invalidateUserHistoryCache(user.id),
-      invalidateUserPositionsCache(user.id),
-      invalidateUserOrdersCache(user.id),
+      appendClosedPositionToCache(user.id, closedPosRecord),
+      appendOrderToCache(user.id, exitOrderRecord),
+      invalidateUserOpenPositionsCache(user.id),
+      invalidateUserActiveOrdersCache(user.id),
     ]);
   } catch (cacheErr) {
-    console.warn('[POST /api/positions/[id]/close] Cache invalidation warning:', cacheErr);
+    console.warn('[POST /api/positions/[id]/close] Cache update warning:', cacheErr);
   }
 
   // Cancel any open/pending exit or linked orders for this position/symbol asynchronously
