@@ -114,7 +114,7 @@ export default function HistoryPage() {
       if (!silent && historyDataRef.current.length === 0) {
         setLoading(true);
       }
-      const freshParam = isManualRefresh ? '&fresh=true' : '';
+      const freshParam = '&fresh=true';
       // Fetch both orders and positions history with fast Redis cache hits (<10ms)
       const [ordersRes, posRes] = await Promise.allSettled([
         api.get<{ orders: any[]; error?: string }>(`/api/orders?status=executed,rejected,cancelled&limit=500${freshParam}`),

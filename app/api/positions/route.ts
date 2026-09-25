@@ -136,10 +136,12 @@ export async function GET(request: NextRequest) {
     const responsePayload = { positions };
     try {
       const redis = getRedisClient();
-      const ttl = isClosedQuery ? 3600 : 15;
-      await redis.setex(cacheKey, ttl, JSON.stringify(responsePayload));
-      if (isClosedQuery) {
-        await redis.setex(`api:positions:${user.id}:closed_all`, 3600, JSON.stringify(responsePayload));
+      const ttl = isClosedQuery ? 5 : 15;
+      if (positions.length > 0) {
+        await redis.setex(cacheKey, ttl, JSON.stringify(responsePayload));
+        if (isClosedQuery) {
+          await redis.setex(`api:positions:${user.id}:closed_all`, ttl, JSON.stringify(responsePayload));
+        }
       }
     } catch (_) {}
 

@@ -135,11 +135,9 @@ export async function appendClosedPositionToCache(userId: string, closedPosition
 export async function invalidateUserOpenPositionsCache(userId: string): Promise<void> {
   try {
     const redis = getRedisClient();
-    const posKeys = (await redis.keys(`api:positions:${userId}:open*`)) || [];
-    const defKeys = (await redis.keys(`api:positions:${userId}:default*`)) || [];
-    const allKeys = Array.from(new Set([...posKeys, ...defKeys]));
-    if (allKeys.length > 0) {
-      await redis.del(...allKeys);
+    const posKeys = (await redis.keys(`api:positions:${userId}:*`)) || [];
+    if (posKeys.length > 0) {
+      await redis.del(...posKeys);
     }
   } catch (err) {
     console.warn('[invalidateUserOpenPositionsCache] Redis delete error:', err);
