@@ -61,7 +61,7 @@ export default function RulesPage() {
       title: "5. Risk Management & Liability",
       icon: "fas fa-exclamation-triangle",
       content: [
-        "All trades are executed at the trader's own risk. NiveshX Trading is not liable for losses due to network latency.",
+        "All trades are executed at the trader's own risk. RupeeFX Trading is not liable for losses due to network latency.",
         "Stop-loss orders are mandatory for high-leverage positions.",
         "Any attempt to exploit latency or manipulate order buffers will result in immediate account suspension."
       ]
@@ -88,7 +88,7 @@ export default function RulesPage() {
             <div className="rules-content">
               <div className="rules-intro">
                 <i className="fas fa-info-circle"></i>
-                <p>Welcome to NiveshX Trading. By trading on this platform, you agree to adhere to the following risk management and execution guidelines.</p>
+                <p>Welcome to RupeeFX Trading. By trading on this platform, you agree to adhere to the following risk management and execution guidelines.</p>
               </div>
 
               <div className="rules-grid">

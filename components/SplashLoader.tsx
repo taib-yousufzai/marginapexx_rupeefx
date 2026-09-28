@@ -40,10 +40,11 @@ export default function SplashLoader() {
       }}
     >
       <img
-        src="/NiveshX%20Trading%20Growth%20Logo.png"
-        alt="NiveshX Trading Logo"
+        src="/rupeefx-original-logo.png"
+        alt="RupeeFx Logo"
         style={{
-          width: '280px',
+          width: '320px',
+          maxWidth: '85vw',
           height: 'auto',
           objectFit: 'contain'
         }}

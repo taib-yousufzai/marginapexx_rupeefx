@@ -50,19 +50,18 @@
   width: 2.25rem;
   height: 2.25rem;
   object-fit: contain;
-  border-radius: 0.5rem;
-  background: #ffffff;
+  background: transparent;
 }
 
 .logo-text {
-  font-weight: 800;
-  font-size: 1.1rem;
+  font-weight: 900;
+  font-size: 1.25rem;
   color: #1a202c;
-  letter-spacing: -0.0312rem;
+  letter-spacing: -0.025rem;
 }
 
 .logo-text span {
-  color: #006400;
+  color: #0284c7;
 }
 
 .collapse-btn {
@@ -209,7 +208,7 @@
 }
 
 :is(body.dark, body.black) .logo-text span {
-  color: #00bb00;
+  color: #38bdf8;
 }
 
 :is(body.dark, body.black) .collapse-btn {

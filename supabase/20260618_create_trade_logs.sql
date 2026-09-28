@@ -1,5 +1,5 @@
 -- ==========================================
--- NIVESHX TRADING: CREATE TRADE LOGS MIGRATION
+-- RUPEEFX TRADING: CREATE TRADE LOGS MIGRATION
 -- Created: 2026-06-18
 -- ==========================================
 

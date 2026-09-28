@@ -2,8 +2,8 @@ import { MetadataRoute } from 'next';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'NiveshX Trading',
-    short_name: 'NiveshX Trading',
+    name: 'RupeeFX Trading',
+    short_name: 'RupeeFX Trading',
     description: 'Advanced Trading App experience',
     start_url: '/',
     display: 'standalone',

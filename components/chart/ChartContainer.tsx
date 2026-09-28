@@ -187,6 +187,7 @@ export default function ChartContainer({
 
       // Clear legacy TradingView localStorage settings that may lock or corrupt price scales / main series visibility
       try {
+        localStorage.removeItem('rupeefx_tv_layout');
         localStorage.removeItem('niveshx_tv_layout');
         localStorage.removeItem('marginapexx_tv_layout');
         Object.keys(localStorage).forEach(key => {

@@ -44,8 +44,11 @@ export default function Sidebar() {
     <aside className={`desktop-sidebar ${isCollapsed ? 'collapsed' : ''}`}>
       <div className="sidebar-header">
         <div className="sidebar-logo">
-          <img src="/NiveshX%20Trading%20Growth%20Logo.png" alt="NiveshX Trading Logo" className="logo-icon-img" />
-          {!isCollapsed && <span className="logo-text">NiveshX<span> Trading</span></span>}
+          {!isCollapsed ? (
+            <span className="logo-text">RUPEE<span>FX</span></span>
+          ) : (
+            <span className="logo-text">R<span>FX</span></span>
+          )}
         </div>
         <button className="collapse-btn" onClick={() => setIsCollapsed(!isCollapsed)}>
           <i className={`fas fa-chevron-${isCollapsed ? 'right' : 'left'}`}></i>

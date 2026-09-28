@@ -1,4 +1,4 @@
-# Contributing to NiveshX Trading
+# Contributing to RupeeFX Trading
 
 ## Architecture Freeze Policy
 

@@ -203,10 +203,10 @@ function getStoredWatchlistItems() {
     return (window as any).__watchlistItems;
   }
   try {
-    let bestKey = 'niveshX_watchlist';
+    let bestKey = 'rupeeFX_watchlist';
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && (key.startsWith('niveshX_watchlist_') || key.startsWith('marginApex_watchlist_'))) {
+      if (key && (key.startsWith('rupeeFX_watchlist_') || key.startsWith('niveshX_watchlist_') || key.startsWith('marginApex_watchlist_'))) {
         bestKey = key;
         break;
       }
@@ -623,7 +623,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem('niveshX_starred_instruments') || localStorage.getItem('marginApex_starred_instruments');
+      const stored = localStorage.getItem('rupeeFX_starred_instruments') || localStorage.getItem('niveshX_starred_instruments') || localStorage.getItem('marginApex_starred_instruments');
       if (stored) setStarredInstruments(JSON.parse(stored));
     } catch (e) { }
   }, []);
@@ -713,7 +713,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const next = isStarred
         ? prev.filter(p => (p.kiteSymbol || p.symbol) !== itemKey)
         : [...prev, item];
-      try { localStorage.setItem('niveshX_starred_instruments', JSON.stringify(next)); } catch (e) { }
+      try { localStorage.setItem('rupeeFX_starred_instruments', JSON.stringify(next)); } catch (e) { }
       return next;
     });
   };
