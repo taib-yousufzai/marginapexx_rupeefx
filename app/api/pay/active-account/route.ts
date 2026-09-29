@@ -59,20 +59,35 @@ export async function GET(request: Request): Promise<Response> {
     const envBrokerId = process.env.WHITELABEL_BROKER_ID || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID;
     const envBrokerUsername = process.env.WHITELABEL_BROKER_USERNAME;
 
-    // If user has no parent_id (or is in demo mode), route to the Whitelabel's configured broker
+    // If user has no parent_id (or is in demo mode), route to the Whitelabel's configured broker/admin
     if (!parentId || userProfile?.demo_user) {
       const brokerIdentifier = process.env.WHITELABEL_BROKER_ID
         || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID
-        || process.env.WHITELABEL_BROKER_USERNAME;
+        || process.env.WHITELABEL_BROKER_USERNAME
+        || process.env.ADMIN_ID
+        || process.env.NEXT_PUBLIC_ADMIN_ID
+        || process.env.SUPER_ADMIN_ID;
 
       if (brokerIdentifier) {
         const cleanIdentifier = brokerIdentifier.trim();
-        // Resolve 6-character client_id, email, or uuid
-        const { data: brokerProfile } = await adminClient
-          .from('profiles')
-          .select('id')
-          .or(`client_id.ilike.${cleanIdentifier},email.ilike.${cleanIdentifier}`)
-          .maybeSingle();
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanIdentifier);
+        
+        let brokerProfile = null;
+        if (isUuid) {
+          const { data } = await adminClient
+            .from('profiles')
+            .select('id')
+            .eq('id', cleanIdentifier)
+            .maybeSingle();
+          brokerProfile = data;
+        } else {
+          const { data } = await adminClient
+            .from('profiles')
+            .select('id')
+            .or(`client_id.ilike.${cleanIdentifier},email.ilike.${cleanIdentifier}`)
+            .maybeSingle();
+          brokerProfile = data;
+        }
 
         if (brokerProfile?.id) {
           parentId = brokerProfile.id;
