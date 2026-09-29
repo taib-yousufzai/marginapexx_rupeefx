@@ -11,25 +11,13 @@ import './page.css';
 export default function LoginPage() {
   const router = useRouter();
 
-  const [currentTheme, setCurrentTheme] = useState<Theme>('light');
-
   // Apply active theme on mount — same pattern as all other pages
   useEffect(() => {
-    const sync = () => {
-      const t = getSavedTheme();
-      setCurrentTheme(t);
-      applyTheme(t);
-    };
+    const sync = () => applyTheme(getSavedTheme());
     sync();
     window.addEventListener('themeChanged', sync);
     return () => window.removeEventListener('themeChanged', sync);
   }, []);
-
-  const handleToggleTheme = () => {
-    const next = cycleTheme(currentTheme);
-    applyTheme(next);
-    setCurrentTheme(next);
-  };
 
   // Form state
   const [username, setUsername] = useState('');
@@ -162,18 +150,6 @@ export default function LoginPage() {
       {/* Subtle ambient light/dark glow effects */}
       <div className="login-ambient-glow glow-top-right" />
       <div className="login-ambient-glow glow-bottom-left" />
-
-      {/* Floating Theme Switcher */}
-      <button
-        type="button"
-        className="login-theme-toggle-btn"
-        onClick={handleToggleTheme}
-        title={`Current Theme: ${currentTheme}. Click to switch`}
-        aria-label="Toggle visual theme"
-      >
-        <i className={currentTheme === 'light' ? 'fas fa-moon' : (currentTheme === 'blue' ? 'fas fa-bolt' : 'fas fa-sun')}></i>
-        <span className="theme-name-pill">{currentTheme}</span>
-      </button>
 
       {/* Branding Header with 3D Logo */}
       <div className="login-branding">

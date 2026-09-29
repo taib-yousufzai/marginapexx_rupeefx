@@ -51,49 +51,6 @@
   background: radial-gradient(circle, #1E40AF 0%, #3B82F6 100%);
 }
 
-/* Floating Theme Switcher */
-.login-theme-toggle-btn {
-  position: absolute;
-  top: 1.25rem;
-  right: 1.25rem;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.875rem;
-  background: var(--card-bg, #FFFFFF);
-  border: 1px solid var(--border-light, #E2E8F0);
-  border-radius: 2rem;
-  color: var(--text-primary, #1A202C);
-  font-size: 0.8rem;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  backdrop-filter: blur(12px);
-  transition: all 0.2s ease;
-}
-
-.login-theme-toggle-btn:hover {
-  transform: translateY(-1px);
-  border-color: #0066FF;
-  box-shadow: 0 6px 16px rgba(0, 102, 255, 0.15);
-}
-
-.theme-name-pill {
-  text-transform: capitalize;
-  font-size: 0.75rem;
-  color: var(--text-secondary, #64748B);
-}
-
-:is(body.dark, body.black, body.blue) .login-theme-toggle-btn {
-  background: rgba(30, 41, 59, 0.7);
-  border-color: rgba(255, 255, 255, 0.12);
-  color: #F8FAFC;
-}
-
-:is(body.dark, body.black, body.blue) .theme-name-pill {
-  color: #94A3B8;
-}
 
 /* ===== BRANDING HEADER ===== */
 .login-branding {
@@ -534,9 +491,4 @@
     height: 52px;
   }
 
-  .login-theme-toggle-btn {
-    top: 0.85rem;
-    right: 0.85rem;
-    padding: 0.4rem 0.65rem;
-  }
 }
