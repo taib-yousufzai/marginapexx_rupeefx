@@ -49,14 +49,35 @@ export async function GET(request: Request): Promise<Response> {
 
     const { data: userProfile } = await adminClient
       .from('profiles')
-      .select('parent_id')
+      .select('parent_id, demo_user')
       .eq('id', user.id)
       .single();
     
-    const parentId = userProfile?.parent_id;
+    let parentId = userProfile?.parent_id;
+
+    // Check for configured Whitelabel Broker identifier in environment
+    const envBrokerId = process.env.WHITELABEL_BROKER_ID || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID;
+    const envBrokerUsername = process.env.WHITELABEL_BROKER_USERNAME;
+
+    // If user has no parent_id (or is in demo mode), route to the Whitelabel's configured broker
+    if (!parentId || userProfile?.demo_user) {
+      if (envBrokerId) {
+        parentId = envBrokerId;
+      } else if (envBrokerUsername) {
+        const { data: brokerProfile } = await adminClient
+          .from('profiles')
+          .select('id')
+          .ilike('username', envBrokerUsername)
+          .single();
+        if (brokerProfile?.id) {
+          parentId = brokerProfile.id;
+        }
+      }
+    }
+
     let accounts: any[] = [];
 
-    // First try broker accounts if parent exists
+    // First try broker accounts if parent / whitelabel broker exists
     if (parentId) {
       const { data: brokerAccounts, error: brokerErr } = await adminClient
         .from('payment_accounts')
