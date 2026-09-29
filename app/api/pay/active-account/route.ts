@@ -84,7 +84,7 @@ export async function GET(request: Request): Promise<Response> {
 
     let accounts: any[] = [];
 
-    // First try broker accounts if parent / whitelabel broker exists
+    // 1. If a broker / parent is resolved (via user hierarchy or whitelabel env), ONLY fetch that broker's accounts
     if (parentId) {
       const { data: brokerAccounts, error: brokerErr } = await adminClient
         .from('payment_accounts')
@@ -96,13 +96,9 @@ export async function GET(request: Request): Promise<Response> {
       if (brokerErr) {
         console.error('[GET /api/pay/active-account] broker payment_accounts error:', brokerErr.message);
       }
-      if (brokerAccounts && brokerAccounts.length > 0) {
-        accounts = brokerAccounts;
-      }
-    }
-
-    // Fallback to global admin accounts if no broker accounts found
-    if (accounts.length === 0) {
+      accounts = brokerAccounts || [];
+    } else {
+      // 2. Direct top-level admin accounts only when no parent / whitelabel was specified
       const { data: adminProfiles } = await adminClient
         .from('profiles')
         .select('id')
@@ -131,8 +127,7 @@ export async function GET(request: Request): Promise<Response> {
       accounts = adminAccounts || [];
     }
 
-    // Step 3: Return 404 if no active accounts
-    // Validates: Requirements 28.3
+    // Step 3: Return 404 if no active accounts found
     if (!accounts || accounts.length === 0) {
       return Response.json({ error: 'No active payment accounts' }, { status: 404 });
     }
