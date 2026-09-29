@@ -551,7 +551,7 @@ export default function Page() {
               <div className="screen">
                 <div className="content-padded">
                   {/* WhatsApp Community */}
-                  <div className="whatsapp-community" onClick={() => window.open(communityLink, '_blank')}>
+                  <div className="whatsapp-community" onClick={() => { if (communityLink) window.open(communityLink, '_blank'); }}>
                     <div className="whatsapp-inner">
                       <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
                       <div className="whatsapp-content">
@@ -699,7 +699,7 @@ export default function Page() {
                   </div>
 
                   {/* WhatsApp Support */}
-                  <div className="whatsapp-support" onClick={() => window.open(`https://wa.me/${supportPhone}`, '_blank')}>
+                  <div className="whatsapp-support" onClick={() => { if (supportPhone) window.open(`https://wa.me/${supportPhone}`, '_blank'); }}>
                     <div className="whatsapp-inner">
                       <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
                       <div className="whatsapp-content">

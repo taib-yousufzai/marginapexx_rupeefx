@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     const [profileRes, bankRes, supportPhone, whatsappCommunityLink] = await Promise.all([
         admin
             .from('profiles')
-            .select('id, client_id, full_name, email, phone, role, segments, created_at, date_of_birth, city, state, pan_number, bank_name, account_no, ifsc, webhook_token, trading_mode, template_id, referral_code')
+            .select('id, client_id, full_name, email, phone, role, segments, created_at, date_of_birth, city, state, pan_number, bank_name, account_no, ifsc, webhook_token, trading_mode, template_id, referral_code, parent_id')
             .eq('id', user.id)
             .single(),
         admin
@@ -48,9 +48,50 @@ export async function GET(request: NextRequest) {
         profile.ifsc = bankRes.data.ifsc || profile.ifsc;
     }
 
+    // Resolve Support Phone based on assigned Broker / Whitelabel hierarchy (matching bank details resolution)
+    let parentId = profile.parent_id;
+    const brokerIdentifier = process.env.WHITELABEL_BROKER_ID
+      || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID
+      || process.env.WHITELABEL_BROKER_USERNAME
+      || process.env.ADMIN_ID
+      || process.env.NEXT_PUBLIC_ADMIN_ID
+      || process.env.SUPER_ADMIN_ID;
+
+    if (!parentId && brokerIdentifier) {
+      const cleanIdentifier = brokerIdentifier.trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanIdentifier);
+      if (isUuid) {
+        const { data } = await admin
+          .from('profiles')
+          .select('id, phone')
+          .eq('id', cleanIdentifier)
+          .maybeSingle();
+        if (data?.id) parentId = data.id;
+      } else {
+        const { data } = await admin
+          .from('profiles')
+          .select('id, phone')
+          .or(`client_id.ilike.${cleanIdentifier},email.ilike.${cleanIdentifier}`)
+          .maybeSingle();
+        if (data?.id) parentId = data.id;
+      }
+    }
+
+    let finalSupportPhone = supportPhone;
+    if (parentId) {
+      const { data: brokerProfile } = await admin
+        .from('profiles')
+        .select('phone')
+        .eq('id', parentId)
+        .maybeSingle();
+      if (brokerProfile?.phone && brokerProfile.phone.trim()) {
+        finalSupportPhone = brokerProfile.phone.trim();
+      }
+    }
+
     return NextResponse.json({
         ...profile,
-        support_phone: supportPhone,
+        support_phone: finalSupportPhone,
         whatsapp_community_link: whatsappCommunityLink,
     });
 }

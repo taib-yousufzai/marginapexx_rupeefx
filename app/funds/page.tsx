@@ -68,6 +68,18 @@ export default function FundsPage() {
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  const [supportPhone, setSupportPhone] = useState<string>('918796119115');
+
+  useEffect(() => {
+    api.get<{ support_phone?: string; broker_phone?: string }>('/api/user/profile')
+      .then((data: any) => {
+        if (data?.support_phone || data?.broker_phone) {
+          setSupportPhone(String(data.support_phone || data.broker_phone).replace(/\D/g, ''));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   const copyToClipboard = (text: string, label: string) => {
     if (!text) return;
     navigator.clipboard.writeText(text);
@@ -76,7 +88,11 @@ export default function FundsPage() {
   };
 
   const handleWhatsAppSupport = () => {
-    window.open('https://wa.me/918796119115', '_blank');
+    if (!supportPhone) {
+      setToast({ message: 'No WhatsApp support contact configured', type: 'error' });
+      return;
+    }
+    window.open(`https://wa.me/${supportPhone}`, '_blank');
   };
 
   const downloadQRCode = () => {
@@ -96,7 +112,7 @@ export default function FundsPage() {
       }
       const pngFile = canvas.toDataURL("image/png");
       const downloadLink = document.createElement("a");
-      downloadLink.download = `RupeeFX_QR_${amount}.png`;
+      downloadLink.download = `MarginApex_QR_${amount}.png`;
       downloadLink.href = pngFile;
       downloadLink.click();
     };
