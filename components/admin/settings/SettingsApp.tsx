@@ -7,6 +7,8 @@ export default function SettingsApp() {
   const [globalKillSwitch, setGlobalKillSwitch] = useState(false);
   const [allowNewRegistrations, setAllowNewRegistrations] = useState(true);
   const [exitPriceMode, setExitPriceMode] = useState<'BID_ASK' | 'LTP'>('BID_ASK');
+  const [supportPhone, setSupportPhone] = useState('918796119115');
+  const [whatsappCommunityLink, setWhatsappCommunityLink] = useState('');
 
   const [toast, setToast] = useState<ToastState>(null);
   const [saveLoading, setSaveLoading] = useState(false);
@@ -19,6 +21,21 @@ export default function SettingsApp() {
         if (data.settings?.EXIT_PRICE_MODE) {
           setExitPriceMode(data.settings.EXIT_PRICE_MODE);
         }
+        if (data.settings?.MAINTENANCE_MODE !== undefined) {
+          setMaintenanceMode(data.settings.MAINTENANCE_MODE === 'true');
+        }
+        if (data.settings?.GLOBAL_KILL_SWITCH !== undefined) {
+          setGlobalKillSwitch(data.settings.GLOBAL_KILL_SWITCH === 'true');
+        }
+        if (data.settings?.ALLOW_REGISTRATIONS !== undefined) {
+          setAllowNewRegistrations(data.settings.ALLOW_REGISTRATIONS === 'true');
+        }
+        if (data.settings?.SUPPORT_WHATSAPP_NUMBER !== undefined) {
+          setSupportPhone(data.settings.SUPPORT_WHATSAPP_NUMBER);
+        }
+        if (data.settings?.WHATSAPP_COMMUNITY_LINK !== undefined) {
+          setWhatsappCommunityLink(data.settings.WHATSAPP_COMMUNITY_LINK);
+        }
       })
       .catch(err => console.error('Failed to load platform settings', err))
       .finally(() => setLoadingSettings(false));
@@ -30,12 +47,19 @@ export default function SettingsApp() {
       const res = await fetch('/api/admin/platform-settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ EXIT_PRICE_MODE: exitPriceMode }),
+        body: JSON.stringify({ 
+          EXIT_PRICE_MODE: exitPriceMode,
+          MAINTENANCE_MODE: String(maintenanceMode),
+          GLOBAL_KILL_SWITCH: String(globalKillSwitch),
+          ALLOW_REGISTRATIONS: String(allowNewRegistrations),
+          SUPPORT_WHATSAPP_NUMBER: supportPhone.trim(),
+          WHATSAPP_COMMUNITY_LINK: whatsappCommunityLink.trim(),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to save settings');
 
-      setToast({ message: 'App & Exit Price settings saved successfully', type: 'success' });
+      setToast({ message: 'App & Platform settings saved successfully', type: 'success' });
     } catch (err: any) {
       setToast({ message: err.message || 'Error saving settings', type: 'error' });
     } finally {
@@ -144,6 +168,66 @@ export default function SettingsApp() {
                 style={{ accentColor: '#10b981', width: '20px', height: '20px' }}
               />
             </label>
+          </div>
+        </div>
+
+        <h3 style={{ marginTop: 32, marginBottom: 24, color: '#e6edf3', fontSize: '16px', paddingBottom: 12, borderBottom: '1px solid #30363d' }}>
+          Support & WhatsApp Settings
+        </h3>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Support WhatsApp Number */}
+          <div>
+            <div style={{ fontWeight: 'bold', color: '#e6edf3', marginBottom: 4 }}>
+              Support WhatsApp Number
+            </div>
+            <div style={{ color: '#8b949e', fontSize: '13px', marginBottom: 8 }}>
+              Phone number with country code (e.g. 918796119115) used for 24/7 WhatsApp support links across the app.
+            </div>
+            <input
+              type="text"
+              value={supportPhone}
+              onChange={(e) => setSupportPhone(e.target.value)}
+              placeholder="e.g. 918796119115"
+              disabled={loadingSettings}
+              style={{
+                width: '100%',
+                backgroundColor: '#161b22',
+                color: '#e6edf3',
+                border: '1px solid #30363d',
+                borderRadius: '6px',
+                padding: '8px 12px',
+                fontSize: '13px',
+                boxSizing: 'border-box'
+              }}
+            />
+          </div>
+
+          {/* WhatsApp Community Link */}
+          <div>
+            <div style={{ fontWeight: 'bold', color: '#e6edf3', marginBottom: 4 }}>
+              WhatsApp Community Link
+            </div>
+            <div style={{ color: '#8b949e', fontSize: '13px', marginBottom: 8 }}>
+              Invite link for the Free WhatsApp Community channel shown on the user dashboard.
+            </div>
+            <input
+              type="text"
+              value={whatsappCommunityLink}
+              onChange={(e) => setWhatsappCommunityLink(e.target.value)}
+              placeholder="https://chat.whatsapp.com/..."
+              disabled={loadingSettings}
+              style={{
+                width: '100%',
+                backgroundColor: '#161b22',
+                color: '#e6edf3',
+                border: '1px solid #30363d',
+                borderRadius: '6px',
+                padding: '8px 12px',
+                fontSize: '13px',
+                boxSizing: 'border-box'
+              }}
+            />
           </div>
         </div>
         

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { logAction, extractClientIp } from '@/lib/actionLogger';
+import { getPlatformSetting } from '@/lib/getPlatformSetting';
 
 const ALLOWED_FIELDS = [
     'full_name', 'phone', 'date_of_birth',
@@ -14,8 +15,8 @@ export async function GET(request: NextRequest) {
 
     const admin = getAdminClient();
     
-    // Fetch profile and primary bank account in parallel
-    const [profileRes, bankRes] = await Promise.all([
+    // Fetch profile, primary bank account, and platform support settings in parallel
+    const [profileRes, bankRes, supportPhone, whatsappCommunityLink] = await Promise.all([
         admin
             .from('profiles')
             .select('id, client_id, full_name, email, phone, role, segments, created_at, date_of_birth, city, state, pan_number, bank_name, account_no, ifsc, webhook_token, trading_mode, template_id, referral_code')
@@ -26,7 +27,9 @@ export async function GET(request: NextRequest) {
             .select('bank_name, account_no, ifsc')
             .eq('user_id', user.id)
             .eq('is_primary', true)
-            .maybeSingle()
+            .maybeSingle(),
+        getPlatformSetting('SUPPORT_WHATSAPP_NUMBER', process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER || '918796119115'),
+        getPlatformSetting('WHATSAPP_COMMUNITY_LINK', process.env.NEXT_PUBLIC_WHATSAPP_COMMUNITY_LINK || 'https://chat.whatsapp.com/BqxIlyVnRQNIJ2JB2swEVh'),
     ]);
 
     if (profileRes.error || !profileRes.data) {
@@ -45,7 +48,11 @@ export async function GET(request: NextRequest) {
         profile.ifsc = bankRes.data.ifsc || profile.ifsc;
     }
 
-    return NextResponse.json(profile);
+    return NextResponse.json({
+        ...profile,
+        support_phone: supportPhone,
+        whatsapp_community_link: whatsappCommunityLink,
+    });
 }
 
 export async function PATCH(request: NextRequest) {

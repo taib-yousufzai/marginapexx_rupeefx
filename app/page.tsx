@@ -270,6 +270,21 @@ export default function Page() {
   });
 
   const [tradingHours, setTradingHours] = useState<{ id: string; name: string; start_time: string; end_time: string; is_active: boolean }[]>([]);
+  const [supportPhone, setSupportPhone] = useState<string>(process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER || '918796119115');
+  const [communityLink, setCommunityLink] = useState<string>(process.env.NEXT_PUBLIC_WHATSAPP_COMMUNITY_LINK || 'https://chat.whatsapp.com/BqxIlyVnRQNIJ2JB2swEVh');
+
+  useEffect(() => {
+    api.get<{ support_phone?: string; whatsapp_community_link?: string }>('/api/user/profile')
+      .then((data: any) => {
+        if (data?.support_phone) {
+          setSupportPhone(String(data.support_phone).replace(/\D/g, ''));
+        }
+        if (data?.whatsapp_community_link) {
+          setCommunityLink(data.whatsapp_community_link);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     async function fetchTradingHours() {
@@ -536,7 +551,7 @@ export default function Page() {
               <div className="screen">
                 <div className="content-padded">
                   {/* WhatsApp Community */}
-                  <div className="whatsapp-community" onClick={() => window.open(process.env.NEXT_PUBLIC_WHATSAPP_COMMUNITY_LINK || 'https://chat.whatsapp.com/BqxIlyVnRQNIJ2JB2swEVh', '_blank')}>
+                  <div className="whatsapp-community" onClick={() => window.open(communityLink, '_blank')}>
                     <div className="whatsapp-inner">
                       <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
                       <div className="whatsapp-content">
@@ -607,15 +622,13 @@ export default function Page() {
 
 
 
-                    {kiteLoading && (
+                    {kiteLoading && Object.keys(quotes).length === 0 && (
                       <div className="market-status-msg" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <AnimatedLoader size="small" /> Checking connection…
                       </div>
                     )}
 
-
-
-                    {!kiteLoading && Object.keys(quotes).length > 0 && (
+                    {Object.keys(quotes).length > 0 && (
                       <div className="markets-two-rows">
                         {[marketRow1, marketRow2].map((row, rowIdx) => (
                           <div className="market-row-scroll" key={`row-${rowIdx}`}>
@@ -686,7 +699,7 @@ export default function Page() {
                   </div>
 
                   {/* WhatsApp Support */}
-                  <div className="whatsapp-support" onClick={() => window.open('https://wa.me/918796119115', '_blank')}>
+                  <div className="whatsapp-support" onClick={() => window.open(`https://wa.me/${supportPhone}`, '_blank')}>
                     <div className="whatsapp-inner">
                       <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
                       <div className="whatsapp-content">

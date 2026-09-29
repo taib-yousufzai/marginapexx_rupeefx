@@ -30,6 +30,7 @@ export default function ProfilePage() {
     const [profilePhone, setProfilePhone] = useState<string>(() => pageCache.get<string>('profile:phone') || '');
     const [profileClientId, setProfileClientId] = useState<string>(() => pageCache.get<string>('profile:client_id') || '');
     const [profileEmail, setProfileEmail] = useState<string>(() => pageCache.get<string>('profile:email') || '');
+    const [supportPhone, setSupportPhone] = useState<string>(() => pageCache.get<string>('platform:support_phone') || '918796119115');
 
     const overlayRef = useRef<HTMLDivElement>(null);
     const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
@@ -51,13 +52,18 @@ export default function ProfilePage() {
             // Fetch profile data
             try {
                 const data = await api.get<{
-                    full_name?: string; phone?: string; client_id?: string; demo_user?: boolean; email?: string;
+                    full_name?: string; phone?: string; client_id?: string; demo_user?: boolean; email?: string; support_phone?: string;
                 }>('/api/user/profile');
                 if (!cancelled) {
                     pageCache.set('profile:name', data.full_name ?? '');
                     pageCache.set('profile:phone', data.phone ?? '');
                     pageCache.set('profile:client_id', data.client_id ?? '');
                     pageCache.set('profile:email', data.email ?? '');
+                    if (data.support_phone) {
+                        const cleanPhone = String(data.support_phone).replace(/\D/g, '');
+                        pageCache.set('platform:support_phone', cleanPhone);
+                        setSupportPhone(cleanPhone);
+                    }
                     setProfileName(data.full_name ?? '');
                     setProfilePhone(data.phone ?? '');
                     setProfileClientId(data.client_id ?? '');
@@ -287,7 +293,7 @@ export default function ProfilePage() {
                                 <div className="us-caret"><i className="fas fa-chevron-right"></i></div>
                             </Link>
 
-                            <a href="https://wa.me/918796119115" target="_blank" rel="noopener noreferrer" className="us-item">
+                            <a href={`https://wa.me/${supportPhone}`} target="_blank" rel="noopener noreferrer" className="us-item">
                                 <div className="us-icon"><i className="fas fa-headset"></i></div>
                                 <div className="us-text">Help &amp; Support</div>
                                 <div className="us-caret"><i className="fas fa-chevron-right"></i></div>
