@@ -1,8 +1,8 @@
 /**
- * Internal Order API — MarginApex platform orders
+ * Internal Order API — RupeeFX Trading platform orders
  *
  * GET  /api/orders          → user's own order history (from Supabase)
- * POST /api/orders          → place a new order through MarginApex
+ * POST /api/orders          → place a new order through RupeeFX Trading
  *
  * All order placement runs through this endpoint. Zerodha is NEVER called
  * to place orders — it is used read-only to fetch the LTP for fill price

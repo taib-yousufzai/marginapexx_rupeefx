@@ -3,7 +3,7 @@ import { evaluateOrderTriggerCondition } from '../lib/orderMatching';
 import { OrderService } from '../lib/trading/OrderService';
 
 /**
- * MarginApex Trading Lifecycle Verification Matrix
+ * RupeeFX Trading Lifecycle Verification Matrix
  * 
  * INTEGRATION TEST SUITE:
  * - Order trigger evaluation tests exercise the ACTUAL production code from `lib/orderMatching.ts`
@@ -352,7 +352,7 @@ class TradingEngineSimulator {
   }
 }
 
-describe('MarginApex Trading Order Lifecycle & Modify Matrix (12 Test Cases)', () => {
+describe('RupeeFX Trading Order Lifecycle & Modify Matrix (12 Test Cases)', () => {
   const userId = 'usr_test_123';
   const symbol = 'NSE:RELIANCE';
 

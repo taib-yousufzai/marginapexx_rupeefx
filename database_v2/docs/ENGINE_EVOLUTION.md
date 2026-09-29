@@ -1,6 +1,6 @@
 # Engine Evolution & Timeline Spec
 
-This timeline captures the transition milestones of the MarginApex Position Engine architecture.
+This timeline captures the transition milestones of the RupeeFX Trading Position Engine architecture.
 
 ---
 

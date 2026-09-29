@@ -66,7 +66,7 @@ export default function RootLayout({
         />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('marginApexTheme')||'light';var doc=document.documentElement;doc.classList.remove('dark','black','blue','light');doc.classList.add(t);doc.setAttribute('data-theme',t);var bg=t==='black'?'#000000':(t==='dark'?'#121212':(t==='blue'?'#0A1128':'#F0F2F5'));doc.style.backgroundColor=bg;var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);document.body.style.backgroundColor=bg;obs.disconnect();}});o.observe(doc,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
+            __html: `(function(){try{var t=localStorage.getItem('rupeefx_theme')||localStorage.getItem('marginApexTheme')||'light';var doc=document.documentElement;doc.classList.remove('dark','black','blue','light');doc.classList.add(t);doc.setAttribute('data-theme',t);var bg=t==='black'?'#000000':(t==='dark'?'#121212':(t==='blue'?'#0A1128':'#F0F2F5'));doc.style.backgroundColor=bg;var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);document.body.style.backgroundColor=bg;obs.disconnect();}});o.observe(doc,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
           }}
         />
       </head>

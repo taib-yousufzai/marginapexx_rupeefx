@@ -35,7 +35,7 @@ function addToWatchlist(item: {
   category?: string;
   lotSize?: number;
 }, userId?: string) {
-  const WATCHLIST_KEY = 'marginApex_watchlist';
+  const WATCHLIST_KEY = 'rupeeFX_watchlist';
   try {
     const key = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
     const raw = localStorage.getItem(key);

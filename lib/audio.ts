@@ -14,9 +14,9 @@ class SoundEngine {
 
   constructor() {
     if (typeof window !== 'undefined') {
-      const storedMute = localStorage.getItem('marginapexx_sound_muted');
+      const storedMute = localStorage.getItem('rupeefx_sound_muted') ?? localStorage.getItem('marginapexx_sound_muted');
       this.isMuted = storedMute === 'true';
-      const storedHaptics = localStorage.getItem('marginapexx_haptics_disabled');
+      const storedHaptics = localStorage.getItem('rupeefx_haptics_disabled') ?? localStorage.getItem('marginapexx_haptics_disabled');
       this.isHapticsDisabled = storedHaptics === 'true';
 
       // Proactively unlock AudioContext on first user interaction
@@ -67,7 +67,7 @@ class SoundEngine {
   public toggleMute(): boolean {
     this.isMuted = !this.isMuted;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('marginapexx_sound_muted', String(this.isMuted));
+      localStorage.setItem('rupeefx_sound_muted', String(this.isMuted));
     }
     return this.isMuted;
   }
@@ -75,7 +75,7 @@ class SoundEngine {
   public setMuted(muted: boolean): void {
     this.isMuted = muted;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('marginapexx_sound_muted', String(this.isMuted));
+      localStorage.setItem('rupeefx_sound_muted', String(this.isMuted));
     }
   }
 
@@ -86,7 +86,7 @@ class SoundEngine {
   public toggleHaptics(): boolean {
     this.isHapticsDisabled = !this.isHapticsDisabled;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('marginapexx_haptics_disabled', String(this.isHapticsDisabled));
+      localStorage.setItem('rupeefx_haptics_disabled', String(this.isHapticsDisabled));
     }
     return !this.isHapticsDisabled;
   }
@@ -94,7 +94,7 @@ class SoundEngine {
   public setHapticsEnabled(enabled: boolean): void {
     this.isHapticsDisabled = !enabled;
     if (typeof window !== 'undefined') {
-      localStorage.setItem('marginapexx_haptics_disabled', String(this.isHapticsDisabled));
+      localStorage.setItem('rupeefx_haptics_disabled', String(this.isHapticsDisabled));
     }
   }
 

@@ -133,9 +133,9 @@ const resolveKitePrefix = (key: string, settlement: string) => {
   return `${prefix}${baseKey}`;
 };
 
-const POSITIONS_PERSIST_KEY = 'marginApex_open_positions_persisted';
-const OPTIMISTIC_POSITIONS_PERSIST_KEY = 'marginApex_optimistic_positions_persisted';
-const OPTIMISTIC_REMOVALS_PERSIST_KEY = 'marginApex_optimistic_removals_persisted';
+const POSITIONS_PERSIST_KEY = 'rupeeFX_open_positions_persisted';
+const OPTIMISTIC_POSITIONS_PERSIST_KEY = 'rupeeFX_optimistic_positions_persisted';
+const OPTIMISTIC_REMOVALS_PERSIST_KEY = 'rupeeFX_optimistic_removals_persisted';
 
 function getPersistedOptimisticPositions(): MyPosition[] {
   if (typeof window === 'undefined') return [];
@@ -209,7 +209,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     }
     if (typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
+        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY) || localStorage.getItem('marginApex_open_positions_persisted');
         const optPositions = getPersistedOptimisticPositions();
         const removals = getPersistedOptimisticRemovals();
         let list: MyPosition[] = [];
@@ -228,7 +228,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     if (cachedBoot && Array.isArray(cachedBoot.positions)) return false;
     if (typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
+        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY) || localStorage.getItem('marginApex_open_positions_persisted');
         const optPositions = getPersistedOptimisticPositions();
         if (stored || optPositions.length > 0) return false;
       } catch { }

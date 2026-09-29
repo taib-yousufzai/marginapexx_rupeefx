@@ -1,6 +1,6 @@
 import { getCurrentFuturesSymbol } from '@/lib/contractExpiry';
 
-export const WATCHLIST_KEY = 'marginApex_watchlist';
+export const WATCHLIST_KEY = 'rupeeFX_watchlist';
 
 export interface WatchlistItem {
   name: string;

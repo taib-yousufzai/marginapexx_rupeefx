@@ -47,7 +47,7 @@ const DEFAULT_WATCHLIST: WatchlistItem[] = [
   { name: 'Ethereum', symbol: 'ETH', kiteSymbol: '', binanceSymbol: 'ETHUSDT', price: 0, change: '0%', segment: 'CRYPTO' }
 ];
 
-const WATCHLIST_KEY_PREFIX = 'marginApex_watchlist';
+const WATCHLIST_KEY_PREFIX = 'rupeeFX_watchlist';
 
 export default function LearningPage() {
   const router = useRouter();

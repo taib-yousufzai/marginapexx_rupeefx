@@ -207,7 +207,7 @@ export default function ChartContainer({
         timezone: 'Asia/Kolkata',
         theme: isDark ? 'dark' : 'light',
         autosize: true,
-        client_id: 'marginapexx',
+        client_id: 'rupeefx',
         user_id: 'public_user',
         disabled_features: [
           'header_widget',
@@ -305,7 +305,7 @@ export default function ChartContainer({
           tvWidgetRef.current.save((state: any) => {
             if (state) {
               try {
-                localStorage.setItem('marginapexx_tv_layout', JSON.stringify(state));
+                localStorage.setItem('rupeefx_tv_layout', JSON.stringify(state));
               } catch (storageErr) {
                 // Quietly handle QuotaExceededError when browser localStorage capacity is reached
               }

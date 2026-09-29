@@ -112,7 +112,7 @@ export default function FundsPage() {
       }
       const pngFile = canvas.toDataURL("image/png");
       const downloadLink = document.createElement("a");
-      downloadLink.download = `MarginApex_QR_${amount}.png`;
+      downloadLink.download = `RupeeFX_QR_${amount}.png`;
       downloadLink.href = pngFile;
       downloadLink.click();
     };

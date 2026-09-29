@@ -324,7 +324,7 @@ class TelemetryRegistry {
 
 // Global Registry Singleton
 // Use global object to survive hot reloading in Next.js development
-const globalKey = Symbol.for('marginapexx.telemetry');
+const globalKey = Symbol.for('rupeefx.telemetry');
 const globalObject = global as any;
 
 if (!globalObject[globalKey] || typeof globalObject[globalKey].getPersistedSummary !== 'function') {

@@ -1,7 +1,7 @@
 /**
  * useOrderEntry
  * 
- * Manages the state and logic for placing an order through the MarginApex platform.
+ * Manages the state and logic for placing an order through the RupeeFX Trading platform.
  */
 
 import { useState, useCallback } from 'react';
@@ -427,7 +427,7 @@ export function useOrderEntry() {
             return h;
           });
           (window as any).__historyCache = updatedHistory;
-          localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+          localStorage.setItem('rupeeFX_history_cache_persisted', JSON.stringify(updatedHistory));
         } catch { }
 
         window.dispatchEvent(new CustomEvent('order_placed_with_data', {

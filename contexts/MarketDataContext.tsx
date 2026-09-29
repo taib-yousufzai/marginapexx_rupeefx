@@ -844,7 +844,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>(() => {
     if (typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem('marginApex_market_overview_quotes_persisted');
+        const stored = localStorage.getItem('rupeeFX_market_overview_quotes_persisted') || localStorage.getItem('marginApex_market_overview_quotes_persisted');
         if (stored) {
           const parsed = JSON.parse(stored);
           if (parsed && typeof parsed === 'object') return parsed;
@@ -885,7 +885,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
           setQuotes(prev => {
             const next = { ...prev, ...normalizedMap };
-            try { localStorage.setItem('marginApex_market_overview_quotes_persisted', JSON.stringify(next)); } catch {}
+            try { localStorage.setItem('rupeeFX_market_overview_quotes_persisted', JSON.stringify(next)); } catch {}
             return next;
           });
         }

@@ -211,7 +211,7 @@ function getStoredWatchlistItems() {
         break;
       }
     }
-    const rawUser = localStorage.getItem('marginApex_watchlist') || localStorage.getItem(bestKey);
+    const rawUser = localStorage.getItem('rupeeFX_watchlist') || localStorage.getItem(bestKey) || localStorage.getItem('marginApex_watchlist');
     if (rawUser && rawUser !== 'null') {
       const parsed = JSON.parse(rawUser);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;

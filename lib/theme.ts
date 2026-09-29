@@ -5,7 +5,7 @@ export const ALL_THEMES: Theme[] = ['light', 'dark', 'black', 'blue'];
 export function getSavedTheme(): Theme {
   if (typeof window === 'undefined') return 'light';
   try {
-    const saved = localStorage.getItem('marginApexTheme') as Theme | null;
+    const saved = (localStorage.getItem('rupeefx_theme') || localStorage.getItem('marginApexTheme')) as Theme | null;
     if (saved && ALL_THEMES.includes(saved)) {
       return saved;
     }
@@ -47,7 +47,7 @@ export function applyTheme(theme: Theme, animated = false): void {
   }
 
   try {
-    localStorage.setItem('marginApexTheme', validTheme);
+    localStorage.setItem('rupeefx_theme', validTheme);
   } catch (e) {}
 
   // Dispatch custom event for reactive UI components across the app
