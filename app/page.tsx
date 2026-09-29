@@ -538,7 +538,7 @@ export default function Page() {
           {/* Mobile Navigation Bar */}
           <div className="nav-bar-full mobile-only">
             <div className="nav-icon-btn" onClick={() => setIsNotifDrawerOpen(true)}><i className="fas fa-bell"></i></div>
-            <div className="nav-app-name">MARGIN<span style={{ color: '#006400' }}>APEX</span></div>
+            <div className="nav-app-name">RUPEE<span style={{ color: '#006400' }}>FX</span></div>
             <div className="nav-group">
               <div className="nav-icon-btn" onClick={toggleTheme}><i className={(theme === 'dark' || theme === 'black' || theme === 'blue') ? "fas fa-sun" : "fas fa-moon"}></i></div>
               <div className="nav-funds" onClick={() => router.push('/funds')}><i className="fas fa-coins"></i><span>Funds</span></div>

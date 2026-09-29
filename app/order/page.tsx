@@ -153,7 +153,7 @@ export default function OrderPage() {
               <div className="ord-header mobile-only">
                 <div className="ord-header-left">
                   <div className="ord-brand">
-                    <span>MARGIN<span className="apex-text">APEX</span></span>
+                    <span>RUPEE<span className="apex-text">FX</span></span>
                   </div>
                   <div className="ord-brand-sub">Platform Orders • Internal Execution</div>
                 </div>
