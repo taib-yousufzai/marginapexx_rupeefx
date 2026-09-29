@@ -11,13 +11,25 @@ import './page.css';
 export default function LoginPage() {
   const router = useRouter();
 
+  const [currentTheme, setCurrentTheme] = useState<Theme>('light');
+
   // Apply active theme on mount — same pattern as all other pages
   useEffect(() => {
-    const sync = () => applyTheme(getSavedTheme());
+    const sync = () => {
+      const t = getSavedTheme();
+      setCurrentTheme(t);
+      applyTheme(t);
+    };
     sync();
     window.addEventListener('themeChanged', sync);
     return () => window.removeEventListener('themeChanged', sync);
   }, []);
+
+  const handleToggleTheme = () => {
+    const next = cycleTheme(currentTheme);
+    applyTheme(next);
+    setCurrentTheme(next);
+  };
 
   // Form state
   const [username, setUsername] = useState('');
@@ -147,15 +159,37 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
-      {/* Branding — matches nav bar style (Requirement 1.3) */}
+      {/* Subtle ambient light/dark glow effects */}
+      <div className="login-ambient-glow glow-top-right" />
+      <div className="login-ambient-glow glow-bottom-left" />
+
+      {/* Floating Theme Switcher */}
+      <button
+        type="button"
+        className="login-theme-toggle-btn"
+        onClick={handleToggleTheme}
+        title={`Current Theme: ${currentTheme}. Click to switch`}
+        aria-label="Toggle visual theme"
+      >
+        <i className={currentTheme === 'light' ? 'fas fa-moon' : (currentTheme === 'blue' ? 'fas fa-bolt' : 'fas fa-sun')}></i>
+        <span className="theme-name-pill">{currentTheme}</span>
+      </button>
+
+      {/* Branding Header with 3D Logo */}
       <div className="login-branding">
-        <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
+        <img
+          src="/rupeefx-logo-transparent.png"
+          alt="RupeeFX Trading"
+          className="login-brand-logo-img"
+        />
       </div>
 
       {/* Auth card */}
       <div className="login-card">
-        <h1 className="login-card-title">Sign in</h1>
-        <p className="login-card-subtitle">Enter your credentials to continue</p>
+        <div className="login-card-header">
+          <h1 className="login-card-title">Welcome Back</h1>
+          <p className="login-card-subtitle">Sign in to your RupeeFX Trading account</p>
+        </div>
 
         {/* form onSubmit handles Enter-key submission (Requirement 7.3) */}
         <form className="login-form" onSubmit={handleSubmit} noValidate>
