@@ -63,8 +63,7 @@ function ForgotPasswordForm() {
     return (
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">RUPEEFX </span>
-          <span className="login-brand-apex">TRADING</span>
+          <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
         </div>
         <div className="login-card">
           <h1 className="login-card-title">Check your email</h1>
@@ -88,10 +87,8 @@ function ForgotPasswordForm() {
 
   return (
     <div className="login-page">
-      {/* Branding */}
       <div className="login-branding">
-        <span className="login-brand-margin">RUPEEFX </span>
-        <span className="login-brand-apex">TRADING</span>
+        <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
       </div>
 
       {/* Auth card */}
@@ -171,8 +168,7 @@ export default function ForgotPasswordPage() {
     <Suspense fallback={
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">RUPEEFX </span>
-          <span className="login-brand-apex">TRADING</span>
+          <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
         </div>
         <div className="login-card">
           <p className="login-card-subtitle">Loading…</p>

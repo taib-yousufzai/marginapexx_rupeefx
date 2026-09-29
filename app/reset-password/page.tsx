@@ -127,8 +127,7 @@ function ResetPasswordForm() {
     return (
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">RUPEEFX </span>
-          <span className="login-brand-apex">TRADING</span>
+          <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
         </div>
         <div className="login-card">
           <p className="login-card-subtitle">Verifying your reset link…</p>
@@ -142,8 +141,7 @@ function ResetPasswordForm() {
     return (
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">RUPEEFX </span>
-          <span className="login-brand-apex">TRADING</span>
+          <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
         </div>
         <div className="login-card">
           <h1 className="login-card-title">Reset link invalid</h1>
@@ -163,8 +161,7 @@ function ResetPasswordForm() {
     return (
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">RUPEEFX </span>
-          <span className="login-brand-apex">TRADING</span>
+          <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
         </div>
         <div className="login-card">
           <h1 className="login-card-title">Password updated</h1>
@@ -179,10 +176,8 @@ function ResetPasswordForm() {
   // ── Ready / Loading state ────────────────────────────────────────────────────
   return (
     <div className="login-page">
-      {/* Branding */}
       <div className="login-branding">
-        <span className="login-brand-margin">RUPEEFX </span>
-        <span className="login-brand-apex">TRADING</span>
+        <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
       </div>
 
       {/* Auth card */}
@@ -297,8 +292,7 @@ export default function ResetPasswordPage() {
     <Suspense fallback={
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">RUPEEFX </span>
-          <span className="login-brand-apex">TRADING</span>
+          <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
         </div>
         <div className="login-card">
           <p className="login-card-subtitle">Loading…</p>

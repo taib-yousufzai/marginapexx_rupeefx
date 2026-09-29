@@ -259,8 +259,7 @@ function RegisterForm() {
     return (
       <div className="login-page">
         <div className="login-branding">
-          <span className="login-brand-margin">RUPEEFX </span>
-          <span className="login-brand-apex">TRADING</span>
+          <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
         </div>
         <div className="login-card">
           <div style={{ textAlign: 'center', padding: '24px 0' }}>
@@ -277,8 +276,7 @@ function RegisterForm() {
   return (
     <div className="login-page">
       <div className="login-branding">
-        <span className="login-brand-margin">RUPEEFX </span>
-        <span className="login-brand-apex">TRADING</span>
+        <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
       </div>
 
       <div className="login-card">
