@@ -7,7 +7,7 @@ export default function SettingsApp() {
   const [globalKillSwitch, setGlobalKillSwitch] = useState(false);
   const [allowNewRegistrations, setAllowNewRegistrations] = useState(true);
   const [exitPriceMode, setExitPriceMode] = useState<'BID_ASK' | 'LTP'>('BID_ASK');
-  const [supportPhone, setSupportPhone] = useState('918796119115');
+  const [supportPhone, setSupportPhone] = useState('');
   const [whatsappCommunityLink, setWhatsappCommunityLink] = useState('');
 
   const [toast, setToast] = useState<ToastState>(null);

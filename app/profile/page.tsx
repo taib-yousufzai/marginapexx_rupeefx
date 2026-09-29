@@ -30,7 +30,7 @@ export default function ProfilePage() {
     const [profilePhone, setProfilePhone] = useState<string>(() => pageCache.get<string>('profile:phone') || '');
     const [profileClientId, setProfileClientId] = useState<string>(() => pageCache.get<string>('profile:client_id') || '');
     const [profileEmail, setProfileEmail] = useState<string>(() => pageCache.get<string>('profile:email') || '');
-    const [supportPhone, setSupportPhone] = useState<string>(() => pageCache.get<string>('platform:support_phone') || '918796119115');
+    const [supportPhone, setSupportPhone] = useState<string>(() => pageCache.get<string>('platform:support_phone') || '');
 
     const overlayRef = useRef<HTMLDivElement>(null);
     const [themeDropdownOpen, setThemeDropdownOpen] = useState(false);
@@ -63,6 +63,9 @@ export default function ProfilePage() {
                         const cleanPhone = String(data.support_phone).replace(/\D/g, '');
                         pageCache.set('platform:support_phone', cleanPhone);
                         setSupportPhone(cleanPhone);
+                    } else {
+                        pageCache.set('platform:support_phone', '');
+                        setSupportPhone('');
                     }
                     setProfileName(data.full_name ?? '');
                     setProfilePhone(data.phone ?? '');
@@ -293,11 +296,13 @@ export default function ProfilePage() {
                                 <div className="us-caret"><i className="fas fa-chevron-right"></i></div>
                             </Link>
 
-                            <a href={`https://wa.me/${supportPhone}`} target="_blank" rel="noopener noreferrer" className="us-item">
-                                <div className="us-icon"><i className="fas fa-headset"></i></div>
-                                <div className="us-text">Help &amp; Support</div>
-                                <div className="us-caret"><i className="fas fa-chevron-right"></i></div>
-                            </a>
+                            {supportPhone ? (
+                                <a href={`https://wa.me/${supportPhone}`} target="_blank" rel="noopener noreferrer" className="us-item">
+                                    <div className="us-icon"><i className="fas fa-headset"></i></div>
+                                    <div className="us-text">Help &amp; Support</div>
+                                    <div className="us-caret"><i className="fas fa-chevron-right"></i></div>
+                                </a>
+                            ) : null}
 
                             <Link href="/profile/notifications" className="us-item">
                                 <div className="us-icon"><i className="fas fa-bell"></i></div>

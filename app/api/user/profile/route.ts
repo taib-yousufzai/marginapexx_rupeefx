@@ -28,8 +28,8 @@ export async function GET(request: NextRequest) {
             .eq('user_id', user.id)
             .eq('is_primary', true)
             .maybeSingle(),
-        getPlatformSetting('SUPPORT_WHATSAPP_NUMBER', process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER || '918796119115'),
-        getPlatformSetting('WHATSAPP_COMMUNITY_LINK', process.env.NEXT_PUBLIC_WHATSAPP_COMMUNITY_LINK || 'https://chat.whatsapp.com/BqxIlyVnRQNIJ2JB2swEVh'),
+        getPlatformSetting('SUPPORT_WHATSAPP_NUMBER', process.env.NEXT_PUBLIC_WHATSAPP_SUPPORT_NUMBER || ''),
+        getPlatformSetting('WHATSAPP_COMMUNITY_LINK', process.env.NEXT_PUBLIC_WHATSAPP_COMMUNITY_LINK || ''),
     ]);
 
     if (profileRes.error || !profileRes.data) {
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    let finalSupportPhone = supportPhone;
+    let finalSupportPhone = supportPhone ? String(supportPhone).trim() : '';
     if (parentId) {
       const { data: brokerProfile } = await admin
         .from('profiles')
@@ -91,8 +91,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
         ...profile,
-        support_phone: finalSupportPhone,
-        whatsapp_community_link: whatsappCommunityLink,
+        support_phone: finalSupportPhone || '',
+        whatsapp_community_link: (whatsappCommunityLink ? String(whatsappCommunityLink).trim() : ''),
     });
 }
 

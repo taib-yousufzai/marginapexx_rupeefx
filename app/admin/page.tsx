@@ -13,6 +13,7 @@ export type AdminUserPayload = {
 
 // Modular Components
 import TelegramPage from '@/components/admin/TelegramPage';
+import WhatsAppPage from '@/components/admin/WhatsAppPage';
 import SettingsPage from '@/components/admin/SettingsPage';
 import MarketWatchPage from '@/components/admin/MarketWatchPage';
 import DashboardPage from '@/components/admin/DashboardPage';
@@ -197,7 +198,7 @@ export default function AdminPage() {
           )}
 
           {renderGroupHeader('SYSTEM', 'system')}
-          {!collapsedGroups['system'] && ['settings', 'telegram'].map(key => (
+          {!collapsedGroups['system'] && ['settings', 'telegram', 'whatsapp'].map(key => (
             <div key={key} className={`adm-nav-item ${activePage === key ? 'active' : ''}`} onClick={() => handleNav(key)}>
               {key.toUpperCase()}
             </div>
@@ -275,6 +276,7 @@ function PageContent({ activePage, selectedUser, onSelectUser, onOpenUserPanel, 
   return (
     <>
       <div style={show('telegram')}><TelegramPage /></div>
+      <div style={show('whatsapp')}><WhatsAppPage /></div>
       <div style={show('settings')}><SettingsPage /></div>
       <div style={show('marketwatch')}><MarketWatchPage /></div>
       <div style={show('dashboard')}><DashboardPage selectedUser={selectedUser} onOpenUserPanel={onOpenUserPanel} isDemoMode={isDemoMode} /></div>

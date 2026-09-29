@@ -68,13 +68,15 @@ export default function FundsPage() {
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
-  const [supportPhone, setSupportPhone] = useState<string>('918796119115');
+  const [supportPhone, setSupportPhone] = useState<string>('');
 
   useEffect(() => {
     api.get<{ support_phone?: string; broker_phone?: string }>('/api/user/profile')
       .then((data: any) => {
         if (data?.support_phone || data?.broker_phone) {
           setSupportPhone(String(data.support_phone || data.broker_phone).replace(/\D/g, ''));
+        } else {
+          setSupportPhone('');
         }
       })
       .catch(() => {});
@@ -587,16 +589,18 @@ export default function FundsPage() {
                   </>
                 )}
 
-                <div className="whatsapp-community" onClick={handleWhatsAppSupport} style={{ marginTop: '24px' }}>
-                  <div className="whatsapp-inner">
-                    <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
-                    <div className="whatsapp-content">
-                      <div className="whatsapp-headline">Facing any issue? Contact Support</div>
-                      <div className="whatsapp-sub"><i className="fas fa-headset"></i> Get help on WhatsApp</div>
+                {supportPhone ? (
+                  <div className="whatsapp-community" onClick={handleWhatsAppSupport} style={{ marginTop: '24px' }}>
+                    <div className="whatsapp-inner">
+                      <div className="whatsapp-icon"><i className="fab fa-whatsapp"></i></div>
+                      <div className="whatsapp-content">
+                        <div className="whatsapp-headline">Facing any issue? Contact Support</div>
+                        <div className="whatsapp-sub"><i className="fas fa-headset"></i> Get help on WhatsApp</div>
+                      </div>
+                      <div className="whatsapp-arrow"><i className="fas fa-chevron-right"></i></div>
                     </div>
-                    <div className="whatsapp-arrow"><i className="fas fa-chevron-right"></i></div>
                   </div>
-                </div>
+                ) : null}
               </div>
             </div>
           </div>

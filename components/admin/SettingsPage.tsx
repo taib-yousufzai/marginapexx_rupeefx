@@ -6,8 +6,9 @@ import SettingsCurrency from './settings/SettingsCurrency';
 import SettingsApp from './settings/SettingsApp';
 import SettingsBroadcaster from './settings/SettingsBroadcaster';
 import SettingsFiltering from './settings/SettingsFiltering';
+import WhatsAppPage from './WhatsAppPage';
 
-type SettingsTab = 'scripts' | 'trading_hours' | 'currency' | 'app' | 'broadcaster' | 'filtering';
+type SettingsTab = 'scripts' | 'trading_hours' | 'currency' | 'app' | 'whatsapp' | 'broadcaster' | 'filtering';
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('scripts');
@@ -22,6 +23,8 @@ export default function SettingsPage() {
         return <SettingsCurrency />;
       case 'app':
         return <SettingsApp />;
+      case 'whatsapp':
+        return <WhatsAppPage />;
       case 'broadcaster':
         return <SettingsBroadcaster />;
       case 'filtering':
@@ -59,6 +62,11 @@ export default function SettingsPage() {
             active={activeTab === 'app'} 
             onClick={() => setActiveTab('app')}
             label="App Settings"
+          />
+          <SidebarButton 
+            active={activeTab === 'whatsapp'} 
+            onClick={() => setActiveTab('whatsapp')}
+            label="WhatsApp Settings"
           />
           <SidebarButton 
             active={activeTab === 'broadcaster'} 
