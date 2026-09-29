@@ -45,7 +45,7 @@ export default function Sidebar() {
       <div className="sidebar-header">
         <div className="sidebar-logo">
           {!isCollapsed ? (
-            <span className="logo-text">RUPEE<span>FX</span></span>
+            <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '36px', maxWidth: '140px', objectFit: 'contain' }} />
           ) : (
             <span className="logo-text">R<span>FX</span></span>
           )}

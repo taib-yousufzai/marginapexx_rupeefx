@@ -149,8 +149,7 @@ export default function LoginPage() {
     <div className="login-page">
       {/* Branding — matches nav bar style (Requirement 1.3) */}
       <div className="login-branding">
-        <span className="login-brand-margin">RUPEEFX </span>
-        <span className="login-brand-apex">TRADING</span>
+        <img src="/rupeefx-logo-transparent.png" alt="RupeeFX" style={{ height: '52px', objectFit: 'contain' }} />
       </div>
 
       {/* Auth card */}
