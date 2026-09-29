@@ -77,6 +77,13 @@ export function isContractExpired(kiteSymbol: string): boolean {
   // Definitely expired once we are in a later month/year
   if (expiryYear < todayYear) return true;
   if (expiryYear === todayYear && expiryMonth < todayMonth) return true;
+  if (expiryYear === todayYear && expiryMonth === todayMonth) {
+    if (kiteSymbol.includes('MCX:') || kiteSymbol.startsWith('GOLD') || kiteSymbol.startsWith('SILVER')) {
+      if (todayDate >= 5) return true;
+    } else if (todayDate >= 20) {
+      return true;
+    }
+  }
 
   return false;
 }
@@ -85,11 +92,53 @@ const MONTH_CODES = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SE
 
 /**
  * Generates the current active monthly futures symbol for a given prefix and base.
- * e.g. prefix="CDS", base="USDINR" → "CDS:USDINR26SEPFUT" (for Sep 2026)
+ * Handles bimonthly/quarterly cycles for MCX Gold/Silver and post-rollover dates for Crude/NatGas/CDS.
+ * e.g. in late Sep 2026:
+ *   prefix="MCX", base="GOLD" → "MCX:GOLD26OCTFUT"
+ *   prefix="MCX", base="SILVER" → "MCX:SILVER26DECFUT"
+ *   prefix="MCX", base="CRUDEOIL" → "MCX:CRUDEOIL26OCTFUT"
+ *   prefix="CDS", base="USDINR" → "CDS:USDINR26OCTFUT"
  */
 export function getCurrentFuturesSymbol(prefix: string, base: string, date = new Date()): string {
-  const yy = String(date.getFullYear()).slice(-2);
-  const mmm = MONTH_CODES[date.getMonth()];
+  const targetDate = new Date(date);
+  const day = targetDate.getDate();
+  const month = targetDate.getMonth();
+  const baseUpper = base.toUpperCase();
+
+  if (prefix === 'MCX') {
+    if (baseUpper === 'SILVER' || baseUpper === 'SILVERM') {
+      // Silver cycle: MAR, MAY, JUL, SEP, DEC (months 2, 4, 6, 8, 11)
+      const silverMonths = [2, 4, 6, 8, 11];
+      let activeMonth = silverMonths.find(m => m > month || (m === month && day < 5));
+      if (activeMonth === undefined) {
+        targetDate.setFullYear(targetDate.getFullYear() + 1);
+        activeMonth = 2; // March next year
+      }
+      targetDate.setMonth(activeMonth);
+    } else if (baseUpper === 'GOLD' || baseUpper === 'GOLDM') {
+      // Gold cycle: FEB, APR, JUN, AUG, OCT, DEC (months 1, 3, 5, 7, 9, 11)
+      const goldMonths = [1, 3, 5, 7, 9, 11];
+      let activeMonth = goldMonths.find(m => m > month || (m === month && day < 5));
+      if (activeMonth === undefined) {
+        targetDate.setFullYear(targetDate.getFullYear() + 1);
+        activeMonth = 1; // Feb next year
+      }
+      targetDate.setMonth(activeMonth);
+    } else {
+      // Crude Oil / Natural Gas: monthly expiry around 18th-20th
+      if (day >= 18) {
+        targetDate.setMonth(month + 1);
+      }
+    }
+  } else if (prefix === 'CDS') {
+    // CDS expires on last Friday/26th of the month
+    if (day >= 26) {
+      targetDate.setMonth(month + 1);
+    }
+  }
+
+  const yy = String(targetDate.getFullYear()).slice(-2);
+  const mmm = MONTH_CODES[targetDate.getMonth()];
   return `${prefix}:${base}${yy}${mmm}FUT`;
 }
 
