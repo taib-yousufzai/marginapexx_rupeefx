@@ -66,6 +66,8 @@ export function useOrderEntry() {
 
     // 0. Client Pre-Flight Validation is delegated to server order engine with accurate leverage calculation
 
+    const isImmediate = ['MARKET', 'SLM'].includes(state.order_type || 'MARKET');
+
     // 1. Two-stage optimistic UI: create a pending submission order in <16ms
     const tempId = `opt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const optimisticOrder: MyOrder = {
@@ -74,7 +76,7 @@ export function useOrderEntry() {
       kite_instrument: state.kite_instrument,
       segment: state.segment || 'NSE',
       side: state.side,
-      status: 'SUBMITTING',
+      status: isImmediate ? 'SUBMITTING' : 'PENDING',
       qty: state.qty,
       lots: state.lots || 1,
       fill_price: state.client_price,
@@ -83,6 +85,9 @@ export function useOrderEntry() {
       product_type: state.product_type,
       info: null,
       client_price: state.client_price,
+      trigger_price: state.trigger_price,
+      stop_loss: state.stop_loss,
+      target: state.target,
       brokerage: 0,
       created_at: new Date().toISOString(),
       created_time_ms: Date.now(),
@@ -122,234 +127,239 @@ export function useOrderEntry() {
     const effectiveLinkedPosId = state.linked_position_id || (matchingOppositePositions.length === 1 && (Number(matchingOppositePos?.qty_open || matchingOppositePos?.qty_total || 0) >= (state.qty || 1)) ? matchingOppositePos.id : undefined);
 
     const now = Date.now();
-    console.log('[DEBUG-OE] submitOrder called — is_exit:', effectiveIsExit, 'linkedPosId:', effectiveLinkedPosId, 'symbol:', state.symbol, 'qty:', state.qty);
-    const optimisticHistoryOrder = {
-      id: tempId,
-      scriptName: state.symbol,
-      type: state.side,
-      orderType: state.order_type || 'MARKET',
-      qty: state.qty,
-      price: state.client_price || 0,
-      pnl: 0,
-      date: new Date(now).toLocaleString(),
-      status: 'EXECUTED',
-      brokerage: 0,
-      timestamp: now,
-    };
-
-    prependToClientHistoryCache(optimisticHistoryOrder as any);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('order_placed_optimistic', { detail: { order: optimisticOrder } }));
-    }
+    console.log('[DEBUG-OE] submitOrder called — is_exit:', effectiveIsExit, 'linkedPosId:', effectiveLinkedPosId, 'symbol:', state.symbol, 'qty:', state.qty, 'order_type:', state.order_type);
 
     const optimisticClosedPositions: any[] = [];
     const optimisticHistoryItems: any[] = [];
 
-    // Optimistically add position if entry order, or remove/reduce if exit order
-    if (!effectiveIsExit) {
-      if (positionsContext?.addOptimisticPosition) {
-        positionsContext.addOptimisticPosition({
-          symbol: state.symbol,
-          settlement: state.segment,
-          side: state.side,
-          qty_open: state.qty,
-          entry_price: state.client_price,
-          ltp: state.client_price,
-          product_type: state.product_type,
-          kite_instrument: state.kite_instrument,
-          opt_id: tempId,
-        } as any);
+    if (isImmediate) {
+      const optimisticHistoryOrder = {
+        id: tempId,
+        scriptName: state.symbol,
+        type: state.side,
+        orderType: state.order_type || 'MARKET',
+        qty: state.qty,
+        price: state.client_price || 0,
+        pnl: 0,
+        date: new Date(now).toLocaleString(),
+        status: 'EXECUTED',
+        brokerage: 0,
+        timestamp: now,
+      };
+
+      prependToClientHistoryCache(optimisticHistoryOrder as any);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('order_placed_optimistic', { detail: { order: optimisticOrder } }));
       }
-    } else if (effectiveIsExit) {
-      if (matchingOppositePositions.length > 0) {
-        let remExit = state.qty || 1;
-        const sortedMatching = [...matchingOppositePositions].sort((a, b) => {
-          if (effectiveLinkedPosId) {
-            if (a.id === effectiveLinkedPosId) return -1;
-            if (b.id === effectiveLinkedPosId) return 1;
-          }
-          return 0;
-        });
 
-        let totalClosedQty = 0;
-        let weightedEntrySum = 0;
-        let totalPnl = 0;
-        let totalBrokerage = 0;
-        let totalSettlementAmount = 0;
-        let derivedSettlement = '';
+      // Optimistically add position if entry order, or remove/reduce if exit order
+      if (!effectiveIsExit) {
+        if (positionsContext?.addOptimisticPosition) {
+          positionsContext.addOptimisticPosition({
+            symbol: state.symbol,
+            settlement: state.segment,
+            side: state.side,
+            qty_open: state.qty,
+            entry_price: state.client_price,
+            ltp: state.client_price,
+            product_type: state.product_type,
+            kite_instrument: state.kite_instrument,
+            opt_id: tempId,
+          } as any);
+        }
+      } else if (effectiveIsExit) {
+        if (matchingOppositePositions.length > 0) {
+          let remExit = state.qty || 1;
+          const sortedMatching = [...matchingOppositePositions].sort((a, b) => {
+            if (effectiveLinkedPosId) {
+              if (a.id === effectiveLinkedPosId) return -1;
+              if (b.id === effectiveLinkedPosId) return 1;
+            }
+            return 0;
+          });
 
-        for (const p of sortedMatching) {
-          if (remExit <= 0) break;
-          const entryPrice = Number(p.avg_price || p.entry_price || 0);
-          const exitPrice = Number(state.client_price || p.current_ltp || p.ltp || entryPrice);
-          const curQty = Number(p.qty_open || p.qty_total || (p as any).qty || 1);
-          const closedQty = Math.min(curQty, remExit);
-          remExit -= closedQty;
+          let totalClosedQty = 0;
+          let weightedEntrySum = 0;
+          let totalPnl = 0;
+          let totalBrokerage = 0;
+          let totalSettlementAmount = 0;
+          let derivedSettlement = '';
 
-          const posSide = (p.side || 'BUY') as 'BUY' | 'SELL';
-          const pnl = posSide === 'BUY' ? (exitPrice - entryPrice) * closedQty : (entryPrice - exitPrice) * closedQty;
-          const pnlPercent = (entryPrice * closedQty > 0) ? (pnl / (entryPrice * closedQty)) * 100 : 0;
+          for (const p of sortedMatching) {
+            if (remExit <= 0) break;
+            const entryPrice = Number(p.avg_price || p.entry_price || 0);
+            const exitPrice = Number(state.client_price || p.current_ltp || p.ltp || entryPrice);
+            const curQty = Number(p.qty_open || p.qty_total || (p as any).qty || 1);
+            const closedQty = Math.min(curQty, remExit);
+            remExit -= closedQty;
 
-          totalClosedQty += closedQty;
-          weightedEntrySum += entryPrice * closedQty;
-          totalPnl += pnl;
-          totalBrokerage += Number((p as any).brokerage || 0);
-          totalSettlementAmount += Math.abs(Number((p as any).settlement_amount || 0));
+            const posSide = (p.side || 'BUY') as 'BUY' | 'SELL';
+            const pnl = posSide === 'BUY' ? (exitPrice - entryPrice) * closedQty : (entryPrice - exitPrice) * closedQty;
+            const pnlPercent = (entryPrice * closedQty > 0) ? (pnl / (entryPrice * closedQty)) * 100 : 0;
 
-          if (!derivedSettlement) {
-            const rawSettlement = p.settlement || '';
-            derivedSettlement = rawSettlement;
+            totalClosedQty += closedQty;
+            weightedEntrySum += entryPrice * closedQty;
+            totalPnl += pnl;
+            totalBrokerage += Number((p as any).brokerage || 0);
+            totalSettlementAmount += Math.abs(Number((p as any).settlement_amount || 0));
+
             if (!derivedSettlement) {
-              const sym: string = (p.symbol || state.symbol || '').toUpperCase();
-              if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
-              else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
-              else if (sym.includes('MCX')) derivedSettlement = 'MCX';
-              else derivedSettlement = 'NSE';
+              const rawSettlement = p.settlement || '';
+              derivedSettlement = rawSettlement;
+              if (!derivedSettlement) {
+                const sym: string = (p.symbol || state.symbol || '').toUpperCase();
+                if (sym.endsWith('USDT') || sym.includes('CRYPTO')) derivedSettlement = 'Crypto';
+                else if (sym.endsWith('=F') || sym.includes('COMEX')) derivedSettlement = 'COMEX';
+                else if (sym.includes('MCX')) derivedSettlement = 'MCX';
+                else derivedSettlement = 'NSE';
+              }
+            }
+
+            const optimisticClosedPos = {
+              ...p,
+              id: p.id,
+              status: 'closed',
+              exit_price: exitPrice,
+              pnl,
+              total_pnl: pnl,
+              pnl_percent: pnlPercent,
+              qty_total: p.qty_total || p.qty_open || closedQty,
+              qty_open: 0,
+              closed_at: new Date(now).toISOString(),
+              exit_time: new Date(now).toISOString(),
+              updated_at: new Date(now).toISOString(),
+            };
+
+            optimisticClosedPositions.push(optimisticClosedPos);
+            if (p.id) {
+              if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+                (window as any).__lastPositionsMap.delete(p.id);
+              }
+              if (positionsContext?.removePositionLocally) {
+                positionsContext.removePositionLocally(p.id);
+              }
             }
           }
 
+          if (effectiveLinkedPosId) {
+            if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+              (window as any).__lastPositionsMap.delete(effectiveLinkedPosId);
+            }
+            if (positionsContext?.removePositionLocally) {
+              positionsContext.removePositionLocally(effectiveLinkedPosId);
+            }
+          }
+
+          const avgEntryPrice = totalClosedQty > 0 ? weightedEntrySum / totalClosedQty : 0;
+          const exitPrice = Number(state.client_price || 0);
+          const posSide = (sortedMatching[0]?.side || 'BUY') as 'BUY' | 'SELL';
+
+          const optimisticHistoryItem = {
+            id: sortedMatching.length === 1 ? sortedMatching[0].id : tempId,
+            scriptName: sortedMatching[0]?.symbol || state.symbol,
+            type: posSide,
+            orderType: sortedMatching[0]?.product_type || state.product_type || 'INTRADAY',
+            qty: totalClosedQty || state.qty || 1,
+            price: exitPrice || avgEntryPrice,
+            entryPrice: avgEntryPrice,
+            exitPrice: exitPrice || avgEntryPrice,
+            pnl: totalPnl,
+            date: fmtDateTime(sortedMatching[0]?.entry_time || (sortedMatching[0] as any)?.created_at || new Date(now).toISOString()),
+            exitDate: fmtDate(new Date(now).toISOString()),
+            status: 'closed',
+            brokerage: totalBrokerage,
+            closedBy: 'USER_ACTION',
+            productType: sortedMatching[0]?.product_type || state.product_type || 'INTRADAY',
+            settlement: derivedSettlement || state.segment || 'NSE',
+            settlementAmount: totalSettlementAmount,
+            timestamp: now,
+            trades_count: sortedMatching.length,
+          };
+
+          optimisticHistoryItems.push(optimisticHistoryItem);
+        } else if (state.is_exit) {
+          // Fallback for standalone exit orders
+          const exitPrice = Number(state.client_price || 0);
+          const posSide = state.side === 'BUY' ? 'SELL' : 'BUY';
+          const closedQty = state.qty || 1;
+          const fakeId = state.linked_position_id || tempId;
+          const optimisticHistoryItem = {
+            id: fakeId,
+            scriptName: state.symbol,
+            type: posSide,
+            orderType: state.product_type || 'INTRADAY',
+            qty: closedQty,
+            price: exitPrice,
+            entryPrice: exitPrice,
+            exitPrice: exitPrice,
+            pnl: 0,
+            date: fmtDateTime(new Date(now).toISOString()),
+            exitDate: fmtDate(new Date(now).toISOString()),
+            status: 'closed',
+            brokerage: 0,
+            closedBy: 'USER_ACTION',
+            productType: state.product_type || 'INTRADAY',
+            settlement: state.segment || 'NSE',
+            settlementAmount: 0,
+            timestamp: now,
+          };
           const optimisticClosedPos = {
-            ...p,
-            id: p.id,
+            id: fakeId,
+            symbol: state.symbol,
+            side: posSide,
             status: 'closed',
             exit_price: exitPrice,
-            pnl,
-            total_pnl: pnl,
-            pnl_percent: pnlPercent,
-            qty_total: p.qty_total || p.qty_open || closedQty,
+            pnl: 0,
+            total_pnl: 0,
+            pnl_percent: 0,
+            qty_total: closedQty,
             qty_open: 0,
             closed_at: new Date(now).toISOString(),
             exit_time: new Date(now).toISOString(),
             updated_at: new Date(now).toISOString(),
           };
-
+          optimisticHistoryItems.push(optimisticHistoryItem);
           optimisticClosedPositions.push(optimisticClosedPos);
-          if (p.id) {
-            if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-              (window as any).__lastPositionsMap.delete(p.id);
-            }
-            if (positionsContext?.removePositionLocally) {
-              positionsContext.removePositionLocally(p.id);
-            }
+        }
+
+        if (optimisticHistoryItems.length > 0) {
+          prependToClientHistoryCache(optimisticHistoryItems as any);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
+              detail: {
+                positions: optimisticClosedPositions,
+                historyItems: optimisticHistoryItems,
+                position: optimisticClosedPositions[0],
+                historyItem: optimisticHistoryItems[0],
+              }
+            }));
+            window.dispatchEvent(new Event('history_updated'));
           }
         }
 
-        if (effectiveLinkedPosId) {
-          if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-            (window as any).__lastPositionsMap.delete(effectiveLinkedPosId);
-          }
-          if (positionsContext?.removePositionLocally) {
-            positionsContext.removePositionLocally(effectiveLinkedPosId);
-          }
-        }
-
-        const avgEntryPrice = totalClosedQty > 0 ? weightedEntrySum / totalClosedQty : 0;
-        const exitPrice = Number(state.client_price || 0);
-        const posSide = (sortedMatching[0]?.side || 'BUY') as 'BUY' | 'SELL';
-
-        const optimisticHistoryItem = {
-          id: sortedMatching.length === 1 ? sortedMatching[0].id : tempId,
-          scriptName: sortedMatching[0]?.symbol || state.symbol,
-          type: posSide,
-          orderType: sortedMatching[0]?.product_type || state.product_type || 'INTRADAY',
-          qty: totalClosedQty || state.qty || 1,
-          price: exitPrice || avgEntryPrice,
-          entryPrice: avgEntryPrice,
-          exitPrice: exitPrice || avgEntryPrice,
-          pnl: totalPnl,
-          date: fmtDateTime(sortedMatching[0]?.entry_time || (sortedMatching[0] as any)?.created_at || new Date(now).toISOString()),
-          exitDate: fmtDate(new Date(now).toISOString()),
-          status: 'closed',
-          brokerage: totalBrokerage,
-          closedBy: 'USER_ACTION',
-          productType: sortedMatching[0]?.product_type || state.product_type || 'INTRADAY',
-          settlement: derivedSettlement || state.segment || 'NSE',
-          settlementAmount: totalSettlementAmount,
-          timestamp: now,
-          trades_count: sortedMatching.length,
-        };
-
-        optimisticHistoryItems.push(optimisticHistoryItem);
-      } else if (state.is_exit) {
-        // Fallback for standalone exit orders
-        const exitPrice = Number(state.client_price || 0);
-        const posSide = state.side === 'BUY' ? 'SELL' : 'BUY';
-        const closedQty = state.qty || 1;
-        const fakeId = state.linked_position_id || tempId;
-        const optimisticHistoryItem = {
-          id: fakeId,
-          scriptName: state.symbol,
-          type: posSide,
-          orderType: state.product_type || 'INTRADAY',
-          qty: closedQty,
-          price: exitPrice,
-          entryPrice: exitPrice,
-          exitPrice: exitPrice,
-          pnl: 0,
-          date: fmtDateTime(new Date(now).toISOString()),
-          exitDate: fmtDate(new Date(now).toISOString()),
-          status: 'closed',
-          brokerage: 0,
-          closedBy: 'USER_ACTION',
-          productType: state.product_type || 'INTRADAY',
-          settlement: state.segment || 'NSE',
-          settlementAmount: 0,
-          timestamp: now,
-        };
-        const optimisticClosedPos = {
-          id: fakeId,
-          symbol: state.symbol,
-          side: posSide,
-          status: 'closed',
-          exit_price: exitPrice,
-          pnl: 0,
-          total_pnl: 0,
-          pnl_percent: 0,
-          qty_total: closedQty,
-          qty_open: 0,
-          closed_at: new Date(now).toISOString(),
-          exit_time: new Date(now).toISOString(),
-          updated_at: new Date(now).toISOString(),
-        };
-        optimisticHistoryItems.push(optimisticHistoryItem);
-        optimisticClosedPositions.push(optimisticClosedPos);
-      }
-
-      if (optimisticHistoryItems.length > 0) {
-        prependToClientHistoryCache(optimisticHistoryItems as any);
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
+          window.dispatchEvent(new CustomEvent('order_placed_with_data', {
             detail: {
-              positions: optimisticClosedPositions,
-              historyItems: optimisticHistoryItems,
-              position: optimisticClosedPositions[0],
-              historyItem: optimisticHistoryItems[0],
+              symbol: state.symbol,
+              settlement: state.segment,
+              side: state.side,
+              qty: state.qty,
+              qty_open: state.qty,
+              entry_price: state.client_price,
+              ltp: state.client_price,
+              product_type: state.product_type,
+              is_exit: true,
+              linked_position_id: effectiveLinkedPosId,
+              opt_id: tempId,
             }
           }));
-          window.dispatchEvent(new Event('history_updated'));
         }
       }
 
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('order_placed_with_data', {
-          detail: {
-            symbol: state.symbol,
-            settlement: state.segment,
-            side: state.side,
-            qty: state.qty,
-            qty_open: state.qty,
-            entry_price: state.client_price,
-            ltp: state.client_price,
-            product_type: state.product_type,
-            is_exit: true,
-            linked_position_id: effectiveLinkedPosId,
-            opt_id: tempId,
-          }
-        }));
-      }
+      soundEngine.playOrderExecuted();
+    } else {
+      soundEngine.playOrderPlaced();
     }
-
-    soundEngine.playOrderExecuted();
 
     try {
       const submitPayload = {
@@ -360,31 +370,33 @@ export function useOrderEntry() {
 
       let result: { order_id: string; status: string; fill_price: number; message?: string } | null = null;
 
-      // ── Sub-Second Execution Pipeline: WebSocket Fast-Pipe ───────────────
-      // If WebSocket connection to the ticker daemon engine is active, dispatch
-      // the order directly via in-memory order engine for <20ms execution.
-      try {
-        const session = await getSession();
-        const userId = session?.user?.id;
-        if (userId && wsManager.isConnectingOrOpen) {
-          const fastPayload = {
-            ...submitPayload,
-            id: tempId,
-            user_id: userId,
-            client_click_time: state.client_click_time || Date.now(),
-          };
-          const wsResp = await wsManager.placeOrderFast(fastPayload, 2000);
-          if (wsResp.success && wsResp.result) {
-            result = {
-              order_id: wsResp.result.orderId || tempId,
-              status: wsResp.result.status || 'EXECUTED',
-              fill_price: wsResp.result.fill_price || state.client_price,
-              message: `Executed in ${wsResp.result.execution_latency_ms || 15}ms via FastEngine`,
+      // ── Sub-Second Execution Pipeline: WebSocket Fast-Pipe (MARKET/SLM ONLY) ───────────────
+      // Fast-pipe is reserved exclusively for immediate market executions.
+      // Non-immediate orders (LIMIT, SL, GTT) are submitted directly to /api/orders.
+      if (isImmediate) {
+        try {
+          const session = await getSession();
+          const userId = session?.user?.id;
+          if (userId && wsManager.isConnectingOrOpen) {
+            const fastPayload = {
+              ...submitPayload,
+              id: tempId,
+              user_id: userId,
+              client_click_time: state.client_click_time || Date.now(),
             };
+            const wsResp = await wsManager.placeOrderFast(fastPayload, 2000);
+            if (wsResp.success && wsResp.result) {
+              result = {
+                order_id: wsResp.result.orderId || tempId,
+                status: wsResp.result.status || 'EXECUTED',
+                fill_price: wsResp.result.fill_price || state.client_price,
+                message: `Executed in ${wsResp.result.execution_latency_ms || 15}ms via FastEngine`,
+              };
+            }
           }
+        } catch (wsErr) {
+          // Fast-pipe failed or timed out — fall through to standard API route
         }
-      } catch (wsErr) {
-        // Fast-pipe failed or timed out — fall through to standard API route
       }
 
       // Fallback: Standard API route
@@ -404,7 +416,7 @@ export function useOrderEntry() {
       const confirmedOrder: MyOrder = {
         ...optimisticOrder,
         id: result.order_id || tempId,
-        status: (result.status as any) || 'EXECUTED',
+        status: (result.status as any) || (isImmediate ? 'EXECUTED' : 'PENDING'),
         fill_price: result.fill_price || state.client_price,
       };
 
@@ -413,22 +425,24 @@ export function useOrderEntry() {
       }
 
       if (typeof window !== 'undefined') {
-        try {
-          const existingHistory = (window as any).__historyCache || [];
-          const updatedHistory = existingHistory.map((h: any) => {
-            if (h.id === tempId) {
-              return {
-                ...h,
-                id: result.order_id || tempId,
-                status: (result.status as any) || 'EXECUTED',
-                price: result.fill_price || h.price,
-              };
-            }
-            return h;
-          });
-          (window as any).__historyCache = updatedHistory;
-          localStorage.setItem('rupeeFX_history_cache_persisted', JSON.stringify(updatedHistory));
-        } catch { }
+        if (isImmediate) {
+          try {
+            const existingHistory = (window as any).__historyCache || [];
+            const updatedHistory = existingHistory.map((h: any) => {
+              if (h.id === tempId) {
+                return {
+                  ...h,
+                  id: result.order_id || tempId,
+                  status: (result.status as any) || 'EXECUTED',
+                  price: result.fill_price || h.price,
+                };
+              }
+              return h;
+            });
+            (window as any).__historyCache = updatedHistory;
+            localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+          } catch { }
+        }
 
         window.dispatchEvent(new CustomEvent('order_placed_with_data', {
           detail: {

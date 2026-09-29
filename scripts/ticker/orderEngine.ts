@@ -83,22 +83,33 @@ export class OrderEngine {
       }
 
       // 1. In-Memory Quote Lookup (< 0.5ms)
+      const orderType = order.order_type || 'MARKET';
+      const isImmediate = orderType === 'MARKET' || orderType === 'SL-M' || orderType === 'SLM';
+
       let fillPrice = order.client_price || 0;
       const cachedLtp = this.getLatestQuote(symbol, order.kite_instrument);
-      if (cachedLtp && cachedLtp > 0) {
-        fillPrice = cachedLtp;
-      }
 
-      // 2. If quote not found in memory, try fast Redis Hash lookup
-      if (fillPrice <= 0) {
-        try {
-          const rawHash = await this.redis.hget('market:quotes', symbol) || 
-                          await this.redis.hget('market:quotes', order.kite_instrument || symbol);
-          if (rawHash) {
-            const parsed = JSON.parse(rawHash);
-            if (parsed.last_price > 0) fillPrice = parsed.last_price;
-          }
-        } catch {}
+      if (isImmediate) {
+        if (cachedLtp && cachedLtp > 0) {
+          fillPrice = cachedLtp;
+        }
+
+        // 2. If quote not found in memory, try fast Redis Hash lookup
+        if (fillPrice <= 0) {
+          try {
+            const rawHash = await this.redis.hget('market:quotes', symbol) || 
+                            await this.redis.hget('market:quotes', order.kite_instrument || symbol);
+            if (rawHash) {
+              const parsed = JSON.parse(rawHash);
+              if (parsed.last_price > 0) fillPrice = parsed.last_price;
+            }
+          } catch {}
+        }
+      } else {
+        // Non-immediate order (LIMIT, SL, GTT): preserve client_price as order limit price
+        if (fillPrice <= 0 && cachedLtp && cachedLtp > 0) {
+          fillPrice = cachedLtp;
+        }
       }
 
       // Fallback to client price if market is matching

@@ -495,11 +495,14 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     setQtyInput(String(next));
   };
 
+  const userHasEditedOrderType = useRef(false);
+
   // Reset state ONLY when sheet is opened fresh for a new symbol/order (never on background live ticks)
   useEffect(() => {
     if (!item) {
       lastOpenedKeyRef.current = null;
       hasSyncedPosQtyRef.current = null;
+      userHasEditedOrderType.current = false;
       return;
     }
 
@@ -510,6 +513,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       return;
     }
     lastOpenedKeyRef.current = currentKey;
+    userHasEditedOrderType.current = false;
 
     setOrderState('idle');
     setOrderErrorMsg(null);
@@ -553,7 +557,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       setGttSubOption(effectiveExitMode ? 'TARGET' : 'LIMIT');
       userHasEditedQty.current = false;
     }
-  }, [item, side, propProductType, exitMode, isModify, initialOrder, modifyingOrderId, linkedPosId, effectiveExitMode, lotSize]);
+  }, [item?.symbol, item?.name, side, propProductType, exitMode, isModify, initialOrder?.id, initialOrder?.order_type, modifyingOrderId, linkedPosId, effectiveExitMode, lotSize]);
 
   // Sync maximum position quantity when opening against an existing position
   useEffect(() => {
@@ -1834,6 +1838,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                         key={t}
                         className={`ts2-pill${orderType === t ? ' active' : ''}`}
                         onClick={() => {
+                          userHasEditedOrderType.current = true;
                           setOrderType(t);
                           if (t === 'GTT') {
                             setGttSubOption(effectiveExitMode ? 'TARGET' : 'LIMIT');

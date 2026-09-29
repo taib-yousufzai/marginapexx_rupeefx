@@ -256,11 +256,17 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
         try {
           console.log(`[EXEC_TRACE ${new Date().toISOString()}] TRIGGERED_TRUE | Function: processPendingOrdersAndPositions | Order ID: ${order.id} | Type: ${order.order_type} | Side: ${order.side} | Status: ${order.status} | LTP: ${ltp} | FillPrice: ${fillPrice} | TriggerPrice: ${order.trigger_price} | SL: ${order.stop_loss} | Target: ${order.target} | is_exit: ${order.is_exit}`);
 
-          const { data: existingPos, error: posErrorCheck } = await admin
+          let posQuery = admin
             .from('positions')
             .select('id, side')
             .eq('symbol', symbolKey)
             .eq('status', 'open');
+
+          if (order.user_id) {
+            posQuery = posQuery.eq('user_id', order.user_id);
+          }
+
+          const { data: existingPos, error: posErrorCheck } = await posQuery;
 
           if (posErrorCheck) {
             console.error('[Order Matching] Error checking existing positions for', symbolKey, ':', posErrorCheck);
