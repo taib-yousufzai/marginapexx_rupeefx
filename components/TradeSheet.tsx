@@ -458,6 +458,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const activePositionsRef = useRef(activePositions);
   useEffect(() => { activePositionsRef.current = activePositions; }, [activePositions]);
 
+  const lastOpenedKeyRef = useRef<string | null>(null);
+  const hasSyncedPosQtyRef = useRef<string | null>(null);
+
   // Sync qtyInput → orderQty when input is a valid number (supports decimals in lot mode)
   const handleQtyChange = (val: string) => {
     // Allow digits, a leading optional zero, and a single decimal point
@@ -492,56 +495,73 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     setQtyInput(String(next));
   };
 
-  // Reset state when item changes
+  // Reset state ONLY when sheet is opened fresh for a new symbol/order (never on background live ticks)
   useEffect(() => {
-    if (item) {
-      setOrderState('idle');
-      setOrderErrorMsg(null);
-      setQtyError(null);
-      isExecutingRef.current = false;
-      if (initialOrder) {
-        setOrderQty(initialOrder.qty);
-        setQtyInput(String(initialOrder.qty));
-        setOrderUnit('qty');
-        const isExitFlow = effectiveExitMode;
-        const initialOrderType = (isExitFlow && (initialOrder.order_type === 'LIMIT' || initialOrder.order_type === 'TARGET')) ? 'TARGET' : (isExitFlow && initialOrder.order_type === 'SLM' ? 'SL' : initialOrder.order_type);
-        setOrderType(initialOrderType);
-        setProductType(initialOrder.product_type);
-        setLimitPrice(initialOrder.client_price ? String(initialOrder.client_price) : (initialOrder.target ? String(initialOrder.target) : ''));
-        setTriggerPrice(initialOrder.trigger_price ? String(initialOrder.trigger_price) : (initialOrder.stop_loss ? String(initialOrder.stop_loss) : ''));
-        setSlPrice(initialOrder.stop_loss ? String(initialOrder.stop_loss) : '');
-        setTpPrice(initialOrder.target ? String(initialOrder.target) : '');
-        if (initialOrder.order_type === 'GTT') {
-          if (initialOrder.target) {
-            setGttSubOption('TARGET');
-          } else if (initialOrder.stop_loss) {
-            setGttSubOption('SL');
-          } else {
-            setGttSubOption('LIMIT');
-          }
+    if (!item) {
+      lastOpenedKeyRef.current = null;
+      hasSyncedPosQtyRef.current = null;
+      return;
+    }
+
+    const currentKey = `${item.symbol || item.name || ''}_${side || ''}_${modifyingOrderId || ''}_${linkedPosId || ''}_${initialOrder ? (initialOrder.id || 'init') : 'none'}_${effectiveExitMode}`;
+
+    // Only reset state if opening a different item/order/action
+    if (lastOpenedKeyRef.current === currentKey) {
+      return;
+    }
+    lastOpenedKeyRef.current = currentKey;
+
+    setOrderState('idle');
+    setOrderErrorMsg(null);
+    setQtyError(null);
+    isExecutingRef.current = false;
+
+    if (initialOrder) {
+      setOrderQty(initialOrder.qty);
+      setQtyInput(String(initialOrder.qty));
+      setOrderUnit('qty');
+      const isExitFlow = effectiveExitMode;
+      const initialOrderType = (isExitFlow && (initialOrder.order_type === 'LIMIT' || initialOrder.order_type === 'TARGET')) ? 'TARGET' : (isExitFlow && initialOrder.order_type === 'SLM' ? 'SL' : initialOrder.order_type);
+      setOrderType(initialOrderType);
+      setProductType(initialOrder.product_type);
+      setLimitPrice(initialOrder.client_price ? String(initialOrder.client_price) : (initialOrder.target ? String(initialOrder.target) : ''));
+      setTriggerPrice(initialOrder.trigger_price ? String(initialOrder.trigger_price) : (initialOrder.stop_loss ? String(initialOrder.stop_loss) : ''));
+      setSlPrice(initialOrder.stop_loss ? String(initialOrder.stop_loss) : '');
+      setTpPrice(initialOrder.target ? String(initialOrder.target) : '');
+      if (initialOrder.order_type === 'GTT') {
+        if (initialOrder.target) {
+          setGttSubOption('TARGET');
+        } else if (initialOrder.stop_loss) {
+          setGttSubOption('SL');
         } else {
-          setGttSubOption(isExitFlow ? 'TARGET' : 'LIMIT');
+          setGttSubOption('LIMIT');
         }
       } else {
-        const defaultQty = lotSize > 0 ? lotSize : 1;
-        setOrderQty(defaultQty);
-        setQtyInput(String(defaultQty));
-        setOrderUnit('qty');
-        setOrderType('MARKET');
-        setProductType(propProductType || 'INTRADAY');
-        setLimitPrice('');
-        setTriggerPrice('');
-        setSlPrice('');
-        setTpPrice('');
-        setGttSubOption(effectiveExitMode ? 'TARGET' : 'LIMIT');
-        userHasEditedQty.current = false;
+        setGttSubOption(isExitFlow ? 'TARGET' : 'LIMIT');
       }
+    } else {
+      const defaultQty = lotSize > 0 ? lotSize : 1;
+      setOrderQty(defaultQty);
+      setQtyInput(String(defaultQty));
+      setOrderUnit('qty');
+      setOrderType('MARKET');
+      setProductType(propProductType || 'INTRADAY');
+      setLimitPrice('');
+      setTriggerPrice('');
+      setSlPrice('');
+      setTpPrice('');
+      setGttSubOption(effectiveExitMode ? 'TARGET' : 'LIMIT');
+      userHasEditedQty.current = false;
     }
-  }, [item?.symbol, propProductType, exitMode, isModify, initialOrder, modifyingOrderId, linkedPosId, effectiveExitMode]);
+  }, [item, side, propProductType, exitMode, isModify, initialOrder, modifyingOrderId, linkedPosId, effectiveExitMode, lotSize]);
 
   // Sync maximum position quantity when opening against an existing position
   useEffect(() => {
     if (isOpen && item && !initialOrder) {
+      const currentKey = `${item.symbol || ''}_${side || ''}_${linkedPosId || ''}`;
+      if (hasSyncedPosQtyRef.current === currentKey) return;
+      hasSyncedPosQtyRef.current = currentKey;
+
       const targetPT = propProductType || productType;
       const oppositeSide = side === 'SELL' ? 'BUY' : 'SELL';
 
@@ -564,10 +584,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         setQtyInput(String(initialExitQty));
       }
     }
-    // Intentionally exclude activePositions â€” only run when sheet opens or side changes,
-    // never on background polls (which would stomp user-edited qty)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [side, isOpen, item?.symbol, propProductType, exitMode, linkedPosId, effectiveExitMode]);
+  }, [side, isOpen, item, propProductType, exitMode, linkedPosId, initialOrder, productType, propInitialExitQty]);
 
   // Fetch balance and refresh active positions when the sheet opens
   useEffect(() => {
@@ -651,9 +668,13 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const isExecutingRef = useRef(false);
 
   const handlePlace = async (placeSide: 'BUY' | 'SELL') => {
+    console.log('[DEBUG-TRADE] handlePlace called!', placeSide, 'isExecuting:', isExecutingRef.current, 'orderState:', orderState);
     // Synchronous guard — isExecutingRef is checked before any await so no
     // concurrent call can slip through during a React render cycle.
-    if (isExecutingRef.current || orderState === 'processing') return;
+    if (isExecutingRef.current || orderState === 'processing') {
+      console.log('[DEBUG-TRADE] handlePlace early return due to isExecutingRef or orderState');
+      return;
+    }
     isExecutingRef.current = true;
     setOrderState('processing');
     setOrderErrorMsg(null);
@@ -1103,6 +1124,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       }
 
       if (currentExitMode && !isModify) {
+        console.log('[DEBUG-TRADE] currentExitMode is TRUE, entering exit block');
         // Exit mode: fire-and-forget for 0ms visual latency (removed blocking await)
         handedOffToOrderFlow = true;
         try {
@@ -1159,6 +1181,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           handleCloseAnimation();
 
           const isMarketExit = resolvedOrderType === 'MARKET' && Boolean(currentLinkedPosId);
+          console.log('[DEBUG-TRADE] Executing exit. isMarketExit:', isMarketExit, 'linkedPosId:', currentLinkedPosId);
 
           const executionPromise = isMarketExit
             ? closePosition(
