@@ -134,6 +134,8 @@ export default function AdminPage() {
           <CreateUserForm
             onBack={() => { setCreatingUser(false); setUserPanelOpen(true); }}
             onCreated={handleUserCreated}
+            isDemoMode={isDemoMode}
+            callerRole={userRole}
           />
         </div>
       </div>
@@ -280,8 +282,8 @@ function PageContent({ activePage, selectedUser, onSelectUser, onOpenUserPanel, 
       <div style={show('position')}><PositionPage selectedUser={selectedUser} onOpenUserPanel={onOpenUserPanel} isDemoMode={isDemoMode} /></div>
       <div style={show('update')}><UpdatePage selectedUser={selectedUser} onOpenUserPanel={onOpenUserPanel} /></div>
       <div style={show('users')}><UsersPage selectedUser={selectedUser} onSelectUser={onSelectUser} onNavigate={onNavigate} isDemoMode={isDemoMode} /></div>
-      <div style={show('brokers')}><BrokersPage isDemoMode={isDemoMode} /></div>
-      <div style={show('admins')}><AdminsPage isDemoMode={isDemoMode} /></div>
+      <div style={show('brokers')}><BrokersPage isDemoMode={isDemoMode} onNavigate={onNavigate} /></div>
+      <div style={show('admins')}><AdminsPage isDemoMode={isDemoMode} onNavigate={onNavigate} /></div>
       <div style={show('templates')}><TemplatesPage isDemoMode={isDemoMode} /></div>
       <div style={show('create')}>
         <CreateUserForm

@@ -31,34 +31,61 @@ export default function CreateUserForm({ onBack, onCreated, isDemoMode, callerRo
     setSegments(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
 
   const handleCreate = async () => {
-    if (!username.trim()) return;
+    const cleanUsername = username.trim().toUpperCase();
+    const cleanEmail = email.trim();
+    const cleanPass = password.trim();
+
+    if (!cleanUsername) {
+      setToast({ message: 'Please enter a Username / Client ID', type: 'error' });
+      return;
+    }
+    if (!cleanEmail) {
+      setToast({ message: 'Please enter a valid Email address', type: 'error' });
+      return;
+    }
+    if (!cleanPass) {
+      setToast({ message: 'Please enter a Password', type: 'error' });
+      return;
+    }
+    if (cleanPass.length < 8) {
+      setToast({ message: 'Password must be at least 8 characters long', type: 'error' });
+      return;
+    }
+
     setLoading(true);
-    const { ok, data } = await apiCall('/api/admin/users', {
-      method: 'POST',
-      body: JSON.stringify({
-        email,
-        password,
-        username,
-        full_name: fullName,
-        phone,
-        role: role.toLowerCase().replace(' ', '_'),
-        parent_id: parent,
-        segments,
-        active,
-        read_only: readOnly,
-        demo_user: demoUser,
-        intraday_sq_off: intradaySqOff,
-        auto_sqoff: Number(autoSqoff),
-        showcase_auto_sqoff: Number(showcaseAutoSqoff),
-        sqoff_method: sqoffMethod,
-      }),
-    });
-    if (ok) {
-      const d = data as { id: string; role?: string };
-      onCreated(d.id, d.role ?? role.toUpperCase().replace(' ', '_'));
-    } else {
-      const errorMsg = (data as any).error || (data as any).message || 'Failed to create user';
-      setToast({ message: errorMsg, type: 'error' });
+    try {
+      const { ok, data } = await apiCall('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: cleanEmail,
+          password: cleanPass,
+          username: cleanUsername,
+          full_name: fullName.trim(),
+          phone: phone.trim(),
+          role: role.toLowerCase().replace(' ', '_'),
+          parent_id: parent.trim(),
+          segments,
+          active,
+          read_only: readOnly,
+          demo_user: demoUser,
+          intraday_sq_off: intradaySqOff,
+          auto_sqoff: Number(autoSqoff),
+          showcase_auto_sqoff: Number(showcaseAutoSqoff),
+          sqoff_method: sqoffMethod,
+        }),
+      });
+      if (ok) {
+        const d = data as { id: string; role?: string };
+        onCreated(d.id, d.role ?? role.toUpperCase().replace(' ', '_'));
+      } else {
+        const errorMsg = (typeof data === 'object' && data !== null)
+          ? (data as any).error || (data as any).message || 'Failed to create user'
+          : 'Failed to create user';
+        setToast({ message: String(errorMsg), type: 'error' });
+        setLoading(false);
+      }
+    } catch (err: any) {
+      setToast({ message: err?.message || 'Network error occurred', type: 'error' });
       setLoading(false);
     }
   };

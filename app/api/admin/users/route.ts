@@ -169,7 +169,7 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
-    const requestedRole = (body.role as string)?.toLowerCase();
+    const requestedRole = (body.role as string)?.toLowerCase().replace(' ', '_');
 
     // Hierarchy Enforcement
     if (requestedRole === 'super_admin' && callerRole !== 'super_admin') {
@@ -182,12 +182,11 @@ export async function POST(request: Request): Promise<Response> {
       return Response.json({ error: 'Only Admins and Super Admins can create Brokers' }, { status: 403 });
     }
 
-
     // Step 3: Validate required fields
     // Validates: Requirement 3.8
     const { email, password } = body;
     if (!email || !password) {
-      return Response.json({ error: 'Missing required fields' }, { status: 400 });
+      return Response.json({ error: 'Missing required fields: Email and Password' }, { status: 400 });
     }
 
     // Step 4: Validate password length
@@ -202,29 +201,54 @@ export async function POST(request: Request): Promise<Response> {
     // Extract profile fields from body
     const profileFields: Record<string, unknown> = {};
     for (const field of PROFILE_FIELDS) {
-      if (field in body && body[field] !== '') {
+      if (field in body && body[field] !== '' && body[field] !== undefined && body[field] !== null) {
         profileFields[field] = body[field];
       }
     }
+    profileFields['role'] = requestedRole;
 
     if (!profileFields.parent_id && (callerRole === 'admin' || callerRole === 'broker')) {
       profileFields.parent_id = callerUser.id;
+    } else if (profileFields.parent_id) {
+      const parentVal = String(profileFields.parent_id).trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(parentVal);
+      if (!isUuid) {
+        const { data: parentProf } = await adminClient
+          .from('profiles')
+          .select('id')
+          .or(`client_id.ilike.${parentVal},email.ilike.${parentVal}`)
+          .maybeSingle();
+        if (parentProf?.id) {
+          profileFields.parent_id = parentProf.id;
+        } else {
+          return Response.json({ error: `Parent account "${parentVal}" not found.` }, { status: 400 });
+        }
+      }
     }
 
-
-    // Generate a unique 6-character uppercase alphanumeric client_id
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    let client_id = '';
-    let isUnique = false;
-    while (!isUnique) {
-      client_id = '';
-      for (let i = 0; i < 6; i++) {
-        client_id += chars.charAt(Math.floor(Math.random() * chars.length));
+    // Resolve or generate unique client_id
+    let client_id = typeof body.username === 'string' ? body.username.trim().toUpperCase() : '';
+    if (client_id && /^[A-Z0-9_-]{3,20}$/i.test(client_id)) {
+      const { data: existing } = await adminClient
+        .from('profiles')
+        .select('id')
+        .eq('client_id', client_id)
+        .maybeSingle();
+      if (existing) {
+        return Response.json({ error: `Username / Client ID "${client_id}" is already taken.` }, { status: 400 });
       }
-      // Check if it exists
-      const { data: existing } = await adminClient.from('profiles').select('id').eq('client_id', client_id).single();
-      if (!existing) {
-        isUnique = true;
+    } else {
+      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+      let isUnique = false;
+      while (!isUnique) {
+        client_id = '';
+        for (let i = 0; i < 6; i++) {
+          client_id += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        const { data: existing } = await adminClient.from('profiles').select('id').eq('client_id', client_id).maybeSingle();
+        if (!existing) {
+          isUnique = true;
+        }
       }
     }
     profileFields['client_id'] = client_id;
@@ -232,39 +256,35 @@ export async function POST(request: Request): Promise<Response> {
     // Step 5: Create auth user
     // Validates: Requirements 3.2, 3.4
     const { data: createData, error: createError } = await adminClient.auth.admin.createUser({
-      email: email as string,
+      email: (email as string).trim(),
       password: password as string,
       email_confirm: true,
-      user_metadata: { username: body.username },
+      user_metadata: { role: requestedRole, username: client_id },
     });
 
     if (createError || !createData?.user) {
       console.error('[POST /api/admin/users] Auth error:', createError);
       return Response.json(
-        { error: createError?.message ?? 'Failed to create user' },
+        { error: createError?.message ?? 'Failed to create user in Auth' },
         { status: 422 },
       );
     }
 
     const newUser = createData.user;
 
-    // Workaround: Supabase createUser can fail if 'role' is in user_metadata during creation.
-    // We update it immediately after.
+    // Ensure role and username in user_metadata are synced
     await adminClient.auth.admin.updateUserById(newUser.id, {
-      user_metadata: { role: body.role, username: body.username }
+      user_metadata: { role: requestedRole, username: client_id }
     });
 
     // Step 6: Upsert profile row
-    // The handle_new_user trigger may fail silently (e.g. client_id NOT NULL),
-    // so we use upsert to guarantee the profile row exists.
-    // Validates: Requirements 3.3, 3.5
     const { error: insertError } = await adminClient
       .from('profiles')
-      .upsert({ id: newUser.id, email: email as string, ...profileFields }, { onConflict: 'id' });
+      .upsert({ id: newUser.id, email: (email as string).trim(), ...profileFields }, { onConflict: 'id' });
 
     if (insertError) {
       console.error('[POST /api/admin/users] Insert error:', insertError);
-      // Rollback: attempt to delete the auth user
+      // Rollback: delete the created auth user
       await adminClient.auth.admin.deleteUser(newUser.id);
       return Response.json(
         { error: `Database error: ${insertError.message}` },

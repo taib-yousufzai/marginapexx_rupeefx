@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiCall, Toast, ToastState, SkeletonLine, UserListItem } from './AdminUtils';
 
-export default function AdminsPage({ isDemoMode }: { isDemoMode: boolean }) {
+export default function AdminsPage({ isDemoMode, onNavigate }: { isDemoMode: boolean; onNavigate?: (page: string) => void }) {
   const [users, setUsers] = useState<UserListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -261,9 +261,17 @@ export default function AdminsPage({ isDemoMode }: { isDemoMode: boolean }) {
           <i className="fas fa-search adm-ord-search-icon" />
           <input className="adm-ord-search" placeholder="Search admins..." value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <button className="adm-btn-ghost" onClick={fetchUsers} title="Refresh Data">
-          <i className="fas fa-sync-alt" />
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="adm-btn-ghost" onClick={fetchUsers} title="Refresh Data">
+            <i className="fas fa-sync-alt" />
+          </button>
+          {onNavigate && (
+            <button className="adm-btn-primary" onClick={() => onNavigate('create')}>
+              <i className="fas fa-user-plus" style={{ marginRight: 8 }} />
+              Create New Admin
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="adm-users-list">
