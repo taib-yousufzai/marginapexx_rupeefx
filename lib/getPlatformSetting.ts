@@ -17,7 +17,7 @@ export async function getPlatformSetting(
         redis.get(`platform:${key}`),
         new Promise(r => setTimeout(() => r(null), 300))
       ]) as string | null;
-      if (val) return val;
+      if (val !== null && val !== undefined) return val;
     }
   } catch (err) {
     // Ignore Redis error
@@ -32,7 +32,7 @@ export async function getPlatformSetting(
       .eq('key', key)
       .single();
 
-    if (data?.value) {
+    if (data && data.value !== null && data.value !== undefined) {
       // Warm Redis cache
       try {
         const redis = getRedisClient();

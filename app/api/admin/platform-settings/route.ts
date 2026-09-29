@@ -18,8 +18,8 @@ const DEFAULTS: Record<AllowedSetting, string> = {
   GLOBAL_KILL_SWITCH: 'false',
   ALLOW_REGISTRATIONS: 'true',
   USD_INR_RATE: '83.50',
-  SUPPORT_WHATSAPP_NUMBER: '',
-  WHATSAPP_COMMUNITY_LINK: '',
+  SUPPORT_WHATSAPP_NUMBER: '918796119115',
+  WHATSAPP_COMMUNITY_LINK: 'https://chat.whatsapp.com/BqxIlyVnRQNIJ2JB2swEVh',
 };
 
 const VALID_VALUES: Partial<Record<AllowedSetting, string[]>> = {
