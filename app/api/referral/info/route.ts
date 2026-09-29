@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     // Fetch user's referral balance and code
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
-      .select('referral_balance, referral_code')
+      .select('referral_balance, referral_code, client_id')
       .eq('id', user.id)
       .single();
 
@@ -50,9 +50,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Failed to fetch earnings' }, { status: 500 });
     }
 
+    const effectiveCode = profile.referral_code || profile.client_id || '';
+
     return NextResponse.json({
       balance: profile.referral_balance,
-      code: profile.referral_code,
+      code: effectiveCode,
       earnings: earnings || []
     });
 

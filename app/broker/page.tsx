@@ -277,7 +277,8 @@ function BrokerDashboard({ broker, apiCall, onNavigate, onSelectUser }: any) {
   const [loading, setLoading] = useState(true);
   const [copyFeedback, setCopyFeedback] = useState(false);
 
-  const referralLink = broker?.referral_code ? `${typeof window !== 'undefined' ? window.location.origin : ''}/register?ref=${broker.referral_code}` : (broker?.id ? `${typeof window !== 'undefined' ? window.location.origin : ''}/register?ref=${broker.id}` : '');
+  const refCode = broker?.client_id || broker?.referral_code || broker?.id || '';
+  const referralLink = refCode ? `${typeof window !== 'undefined' ? window.location.origin : ''}/register?ref=${refCode}` : '';
 
   const handleCopyLink = () => {
     if (!referralLink) return;

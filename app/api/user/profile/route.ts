@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     const [profileRes, bankRes] = await Promise.all([
         admin
             .from('profiles')
-            .select('client_id, full_name, email, phone, role, segments, created_at, date_of_birth, city, state, pan_number, bank_name, account_no, ifsc, webhook_token, trading_mode, template_id, referral_code')
+            .select('id, client_id, full_name, email, phone, role, segments, created_at, date_of_birth, city, state, pan_number, bank_name, account_no, ifsc, webhook_token, trading_mode, template_id, referral_code')
             .eq('id', user.id)
             .single(),
         admin

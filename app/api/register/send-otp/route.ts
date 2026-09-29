@@ -135,7 +135,8 @@ export async function POST(req: NextRequest) {
     // ── Resolve brokerRef (supports admin/broker referral_code, client_id, UUID, or WHITELABEL_BROKER_ID env) ──
     let resolvedBrokerRef = brokerRef?.trim() || process.env.WHITELABEL_BROKER_ID?.trim() || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID?.trim() || null;
     if (resolvedBrokerRef) {
-      if (resolvedBrokerRef.length === 36) {
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(resolvedBrokerRef);
+      if (isUuid) {
         const { data: refProfile } = await admin
           .from('profiles')
           .select('id')
@@ -146,7 +147,7 @@ export async function POST(req: NextRequest) {
         const { data: refProfile } = await admin
           .from('profiles')
           .select('id')
-          .or(`client_id.ilike.${resolvedBrokerRef},referral_code.ilike.${resolvedBrokerRef}`)
+          .or(`client_id.ilike.${resolvedBrokerRef},referral_code.ilike.${resolvedBrokerRef},email.ilike.${resolvedBrokerRef}`)
           .maybeSingle();
         resolvedBrokerRef = refProfile ? refProfile.id : null;
       }

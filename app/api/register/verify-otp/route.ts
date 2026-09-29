@@ -132,6 +132,26 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Safely resolve parent_id to ensure it is a valid UUID
+    let assignedParentId: string | null = null;
+    const rawRef = record.broker_ref || process.env.WHITELABEL_BROKER_ID || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID || null;
+    if (rawRef && typeof rawRef === 'string') {
+      const cleanRef = rawRef.trim();
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanRef);
+      if (isUuid) {
+        assignedParentId = cleanRef;
+      } else {
+        const { data: refProfile } = await admin
+          .from('profiles')
+          .select('id')
+          .or(`client_id.ilike.${cleanRef},referral_code.ilike.${cleanRef},email.ilike.${cleanRef}`)
+          .maybeSingle();
+        if (refProfile?.id) {
+          assignedParentId = refProfile.id;
+        }
+      }
+    }
+
     const { error: profileError } = await admin.from('profiles').upsert(
       {
         id: userId,
@@ -139,7 +159,7 @@ export async function POST(req: NextRequest) {
         full_name: record.full_name,
         phone: record.phone ?? null,
         role: 'user',
-        parent_id: record.broker_ref ?? null,
+        parent_id: assignedParentId,
         active: true,
         segments: DEFAULT_SEGMENTS,
         client_id,
@@ -160,7 +180,7 @@ export async function POST(req: NextRequest) {
     // ── Delete the consumed OTP ───────────────────────────────────────────────
     await admin.from('otp_verifications').delete().eq('email', emailLower);
 
-    console.info('[verify-otp] Account created:', userId, '| parent_id:', record.broker_ref);
+    console.info('[verify-otp] Account created:', userId, '| parent_id:', assignedParentId);
     
     logAction({
       actionType: 'REGISTER_USER',

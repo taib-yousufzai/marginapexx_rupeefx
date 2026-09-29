@@ -77,7 +77,7 @@ export default function DashboardPage({ selectedUser, onOpenUserPanel, isDemoMod
     });
   }, []);
 
-  const refCode = adminProfile?.referral_code || adminProfile?.client_id || adminProfile?.id || '';
+  const refCode = adminProfile?.client_id || adminProfile?.referral_code || adminProfile?.id || '';
   const referralLink = refCode ? `${typeof window !== 'undefined' ? window.location.origin : ''}/register?ref=${refCode}` : '';
 
   const handleCopyLink = () => {
