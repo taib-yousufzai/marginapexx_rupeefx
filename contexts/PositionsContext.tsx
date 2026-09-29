@@ -43,9 +43,9 @@ const PositionsContext = createContext<PositionsContextType | null>(null);
 export const cleanSym = (s?: string | null): string => {
   if (!s) return '';
   let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '')
-             .replace(/[\/\s\_\-]/g, '')
-             .replace(/(PERP|\.P|FUT)$/i, '')
-             .toUpperCase();
+    .replace(/[\/\s\_\-]/g, '')
+    .replace(/(PERP|\.P|FUT)$/i, '')
+    .toUpperCase();
   if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC', 'GOLD'].includes(str)) return 'XAUUSD';
   if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI', 'SILVER'].includes(str)) return 'XAGUSD';
   if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI', 'CRUDE', 'CRUDEOIL'].includes(str)) return 'XTIUSD';
@@ -163,7 +163,7 @@ function savePersistedOptimisticPositions(positions: MyPosition[]) {
     } else {
       localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(optList));
     }
-  } catch {}
+  } catch { }
 }
 
 function getPersistedOptimisticRemovals(): Map<string, number> {
@@ -180,7 +180,7 @@ function getPersistedOptimisticRemovals(): Map<string, number> {
         map.set(id, timeMs);
       }
     }
-  } catch {}
+  } catch { }
   return map;
 }
 
@@ -196,7 +196,7 @@ function savePersistedOptimisticRemovals(removals: Map<string, number>) {
       }
       localStorage.setItem(OPTIMISTIC_REMOVALS_PERSIST_KEY, JSON.stringify(obj));
     }
-  } catch {}
+  } catch { }
 }
 
 const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD', 'XPTUSD', 'XPDUSD', 'GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF'];
@@ -219,7 +219,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         }
         list = list.filter(p => !removals.has(p.id));
         return [...optPositions, ...list];
-      } catch {}
+      } catch { }
     }
     return [];
   });
@@ -231,7 +231,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
         const optPositions = getPersistedOptimisticPositions();
         if (stored || optPositions.length > 0) return false;
-      } catch {}
+      } catch { }
     }
     return true;
   });
@@ -249,7 +249,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   const processedOptIdsRef = useRef<Set<string>>(new Set());
 
   // Static properties map to cache computations that never change per position lifecycle
-  const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({}); 
+  const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({});
+
 
   const recentlyRemovedPositionsRef = useRef<Map<string, MyPosition>>(new Map());
 
@@ -270,6 +271,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       } else if (positionObj && positionObj.symbol) {
         recentlyRemovedPositionsRef.current.set(posId, { id: posId, ...positionObj } as MyPosition);
       }
+      const removedSymClean = cleanSym(target?.symbol || positionObj?.symbol || '');
       const next = prev.filter(p => p.id !== posId);
       if (typeof window !== 'undefined') {
         const lastMap = (window as any).__lastPositionsMap || new Map();
@@ -277,8 +279,20 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         else if (positionObj && positionObj.symbol) lastMap.set(posId, { id: posId, ...positionObj });
         (window as any).__lastPositionsMap = lastMap;
         try {
-          localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next));
-        } catch {}
+          // Update main positions cache
+          localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
+          // Also nuke the optimistic positions cache for this symbol — prevents ghost reappearance
+          const storedOpt = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
+          if (storedOpt) {
+            const parsed: MyPosition[] = JSON.parse(storedOpt);
+            const filtered = parsed.filter(p =>
+              p.id !== posId &&
+              (removedSymClean ? cleanSym(p.symbol || p.kite_instrument) !== removedSymClean : true)
+            );
+            if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
+            else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
+          }
+        } catch { }
       }
       return next;
     });
@@ -289,6 +303,18 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     const now = Date.now();
     const cleanSymbol = (partialPos.symbol || '').trim();
     if (!cleanSymbol) return;
+
+    // Guard: If this symbol was recently exited (within last 30s), don't add it back as optimistic
+    const symbolClean = cleanSym(cleanSymbol);
+    const wasRecentlyExited = Array.from(optimisticallyRemovedIds.current).some(removedId => {
+      const removedPos = recentlyRemovedPositionsRef.current.get(removedId);
+      if (removedPos && cleanSym(removedPos.symbol) === symbolClean) {
+        const removedAt = optimisticallyRemovedTimes.current.get(removedId) || 0;
+        return (now - removedAt) < 30000;
+      }
+      return false;
+    });
+    if (wasRecentlyExited) return;
 
     const newPos: MyPosition = {
       id: tempId,
@@ -373,7 +399,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       }
 
       if (rawPositionsFromServer.length === 0 && (options?.fresh || rawPositionsFromServer.length === 0)) {
-        const queryUrl = options?.fresh ? `/api/positions?_t=${Date.now()}` : '/api/positions';
+        const queryUrl = options?.fresh ? `/api/positions?fresh=true&_t=${Date.now()}` : '/api/positions';
         const data = await api.get<{ positions: MyPosition[] }>(queryUrl, {
           signal: controller.signal,
         });
@@ -407,6 +433,13 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         const activeOptPositions: MyPosition[] = [];
         for (const [optId, optPos] of existingOptMap.entries()) {
           const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
+
+          // If this optimistic position was already explicitly removed/closed, discard it
+          if (optimisticallyRemovedIds.current.has(optId)) {
+            optimisticPositionIds.current.delete(optId);
+            continue;
+          }
+
           if (now - createdTime > 20000) {
             optimisticPositionIds.current.delete(optId);
             continue;
@@ -465,7 +498,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
           try {
             localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(merged.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
             savePersistedOptimisticPositions(merged);
-          } catch {}
+          } catch { }
         }
 
         return merged;
@@ -495,7 +528,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
           if (typeof window !== 'undefined') {
             try {
               localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(restored));
-            } catch {}
+            } catch { }
           }
           return restored;
         });
@@ -511,7 +544,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
 
   useEffect(() => {
     // One-shot eviction: clear the legacy localStorage cache written by the old code.
-    try { localStorage.removeItem('cached_open_positions'); } catch (_) {}
+    try { localStorage.removeItem('cached_open_positions'); } catch (_) { }
 
     const handleBootstrapUpdated = (evt: Event) => {
       const detail = (evt as CustomEvent).detail;
@@ -537,6 +570,21 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
           const activeOptPositions: MyPosition[] = [];
           for (const [optId, optPos] of existingOptMap.entries()) {
             const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
+            // If this optimistic position was already explicitly closed/removed, discard it
+            if (optimisticallyRemovedIds.current.has(optId)) {
+              optimisticPositionIds.current.delete(optId);
+              continue;
+            }
+            // Also discard if the symbol was recently exited
+            const optClean = cleanSym(optPos.symbol || optPos.kite_instrument);
+            const symbolWasExited = Array.from(optimisticallyRemovedIds.current).some(removedId => {
+              const removedPos = recentlyRemovedPositionsRef.current.get(removedId);
+              return removedPos && cleanSym(removedPos.symbol) === optClean;
+            });
+            if (symbolWasExited) {
+              optimisticPositionIds.current.delete(optId);
+              continue;
+            }
             if (now - createdTime > 20000) {
               optimisticPositionIds.current.delete(optId);
               continue;
@@ -615,9 +663,21 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
               const next = prev.filter(p => !removeIds.has(p.id));
               if (typeof window !== 'undefined') {
                 try {
-                  localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
+                  // Clear from both main and optimistic localStorage caches immediately
+                  const storedMain = localStorage.getItem(POSITIONS_PERSIST_KEY);
+                  if (storedMain) {
+                    const parsed: MyPosition[] = JSON.parse(storedMain);
+                    localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(parsed.filter(p => !removeIds.has(p.id))));
+                  }
+                  const storedOpt = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
+                  if (storedOpt) {
+                    const parsed: MyPosition[] = JSON.parse(storedOpt);
+                    const filtered = parsed.filter(p => !removeIds.has(p.id) && cleanSym(p.symbol) !== targetClean);
+                    if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
+                    else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
+                  }
                   savePersistedOptimisticPositions(next);
-                } catch {}
+                } catch { }
               }
               return next;
             } else {
@@ -659,7 +719,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
                 try {
                   localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
                   savePersistedOptimisticPositions(next);
-                } catch {}
+                } catch { }
               }
               return next;
             }
@@ -704,7 +764,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         return next;
       });
     };
-    
+
     window.addEventListener('order_placed', handleOrderPlaced);
     window.addEventListener('order_placed_with_data', handleOrderPlacedWithData);
     window.addEventListener('position_closed_optimistic', handlePositionClosedOptimistic);
@@ -844,16 +904,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
           const cleanUnspaced = symbolWithoutPrefix.replace(/\s+/g, '').toUpperCase();
           const rawUnspaced = rawSymbol.replace(/\s+/g, '').toUpperCase();
           const quote = marketQuotes[kiteKey] ||
-                        marketQuotes[`MCX:${cleanUnspaced}`] ||
-                        marketQuotes[`MCX:${symbolWithoutPrefix}`] ||
-                        marketQuotes[`NCO:${cleanUnspaced}`] ||
-                        marketQuotes[`NCO:${symbolWithoutPrefix}`] ||
-                        marketQuotes[`NFO:${cleanUnspaced}`] ||
-                        marketQuotes[`NSE:${cleanUnspaced}`] ||
-                        marketQuotes[rawSymbol] ||
-                        marketQuotes[symbolWithoutPrefix] ||
-                        marketQuotes[cleanUnspaced] ||
-                        marketQuotes[rawUnspaced];
+            marketQuotes[`MCX:${cleanUnspaced}`] ||
+            marketQuotes[`MCX:${symbolWithoutPrefix}`] ||
+            marketQuotes[`NCO:${cleanUnspaced}`] ||
+            marketQuotes[`NCO:${symbolWithoutPrefix}`] ||
+            marketQuotes[`NFO:${cleanUnspaced}`] ||
+            marketQuotes[`NSE:${cleanUnspaced}`] ||
+            marketQuotes[rawSymbol] ||
+            marketQuotes[symbolWithoutPrefix] ||
+            marketQuotes[cleanUnspaced] ||
+            marketQuotes[rawUnspaced];
           if (quote) {
             rawQuote = quote;
             ltp = quote.lastPrice ?? ltp;
@@ -866,7 +926,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       // Use pos.settlement / dbSeg for segment settings lookup
       const settingsKey = `${(p.settlement || dbSeg || '').toUpperCase()}|${(p.side || '').toUpperCase()}`;
       const sideSetting = settingsMap.get(settingsKey);
-      
+
       let unrealised = 0;
       if ((p.status === 'open' || p.status === 'active') && p.qty_open !== 0) {
         if (p.side === 'BUY') {
@@ -877,7 +937,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       }
 
       const total_pnl = (p.status === 'closed') ? p.pnl : unrealised;
-      const investment = avgPrice * p.qty_open; 
+      const investment = avgPrice * p.qty_open;
       const pnl_percent = investment > 0 ? (total_pnl / investment) * 100 : 0;
 
       const profitHoldSec = sideSetting?.profit_hold_sec != null ? Number(sideSetting.profit_hold_sec) : 0;

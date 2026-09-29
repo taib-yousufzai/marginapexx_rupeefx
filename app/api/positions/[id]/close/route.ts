@@ -379,6 +379,8 @@ export async function POST(
 
   const quoteDetails = typeof kiteLtp === 'object' && kiteLtp !== null ? kiteLtp : (typeof kiteLtp === 'number' ? { ltp: kiteLtp, bid: null, ask: null } : null);
   const clientPriceNum = body?.client_price ? Number(body.client_price) : 0;
+  // Prefer server-fetched quote; fall back to client_price (live LTP from UI) before using stored entry_price.
+  // client_price is sent by the frontend which already has the live ticker price shown to the user.
   const baseLtp = quoteDetails?.ltp ?? (clientPriceNum > 0 ? clientPriceNum : Number(pos.ltp ?? pos.entry_price ?? 0));
   const rawBid = quoteDetails?.bid ?? null;
   const rawAsk = quoteDetails?.ask ?? null;

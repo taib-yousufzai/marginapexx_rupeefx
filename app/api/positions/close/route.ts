@@ -139,7 +139,7 @@ async function fetchQuoteBatch(
               }
             }
           }
-        } catch (_) {}
+        } catch (_) { }
 
         const res = await fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${clean}`, { cache: 'no-store', signal: AbortSignal.timeout(1200) });
         if (res.ok) {
@@ -189,9 +189,9 @@ async function fetchQuoteBatch(
             quotesMap[cleanSym] = { bid, ask, ltp: lastP };
             missing.delete(sym);
           }
-        } catch {}
+        } catch { }
       }));
-    } catch {}
+    } catch { }
   }
 
   return quotesMap;
@@ -216,10 +216,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const [posResult, profileResult, tradingHoursResult] = await Promise.all([
       validUuids.length > 0
         ? admin.from('positions')
-            .select('*')
-            .in('id', validUuids)
-            .eq('user_id', user.id)
-            .or('status.eq.open,status.eq.active,status.eq.OPEN,status.eq.ACTIVE')
+          .select('*')
+          .in('id', validUuids)
+          .eq('user_id', user.id)
+          .or('status.eq.open,status.eq.active,status.eq.OPEN,status.eq.ACTIVE')
         : Promise.resolve({ data: [] as any[], error: null }),
       admin.from('profiles')
         .select('parent_id, trading_mode')
@@ -431,20 +431,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Call RPC — sequential execution eliminates deadlocks
         let pnl: any;
         let rpcErr: any;
-        
+
         for (let attempt = 1; attempt <= 2; attempt++) {
           const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
           const result = await admin.rpc('close_position_v2', {
-            p_position_id:        pos.id,
-            p_close_qty:          closeQty,
-            p_close_price:        exitPrice,
-            p_closed_by:          'USER',
+            p_position_id: pos.id,
+            p_close_qty: closeQty,
+            p_close_price: exitPrice,
+            p_closed_by: 'USER',
             p_expected_brokerage: carryBrokerage,
           });
-          
+
           pnl = result.data;
           rpcErr = result.error;
-          
+
           if (rpcErr && rpcErr.message && rpcErr.message.toLowerCase().includes('deadlock')) {
             console.warn(`[POST /api/positions/close] Deadlock on attempt ${attempt} for position ${pos.id}. Retrying...`);
             if (attempt < 2) {
@@ -479,11 +479,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const successfulPosIds = results.filter(r => r.success).map(r => r.positionId);
     if (successfulPosIds.length > 0) {
       try {
-        const { 
-          appendClosedPositionToCache, 
-          appendOrderToCache, 
-          invalidateUserOpenPositionsCache, 
-          invalidateUserActiveOrdersCache 
+        const {
+          appendClosedPositionToCache,
+          appendOrderToCache,
+          invalidateUserOpenPositionsCache,
+          invalidateUserActiveOrdersCache
         } = await import('@/lib/redisHistoryCache');
 
         const closedPositions = positions.filter(p => successfulPosIds.includes(p.id));

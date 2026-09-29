@@ -20,5 +20,10 @@
       "path": "/api/cron/rollover-carry?secret=qwertyuiopasdfghjklzxcvbnm",
       "schedule": "*/15 * * * *"
     }
-  ]
+  ],
+  "functions": {
+    "app/api/positions/[id]/close/route.ts": { "maxDuration": 25 },
+    "app/api/positions/close/route.ts": { "maxDuration": 45 },
+    "app/api/orders/route.ts": { "maxDuration": 25 }
+  }
 }

@@ -8,37 +8,16 @@ import { api, ApiError } from '@/lib/api';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
 import { fmtDate, fmtDateTime } from '@/lib/format';
 import AnimatedLoader from '@/components/AnimatedLoader';
+import {
+  getClientHistoryCache,
+  saveClientHistoryCache,
+  prependToClientHistoryCache,
+  removeFromClientHistoryCache,
+  HistoryItem
+} from '@/lib/historyCache';
 import './page.css';
 
-interface HistoryItem {
-  id: string;
-  scriptName: string;
-  type: 'BUY' | 'SELL';
-  orderType: string;
-  qty: number;
-  price: number;
-  entryPrice?: number;
-  exitPrice?: number;
-  pnl: number;
-  date: string;
-  exitDate?: string;
-  status: string;
-  brokerage: number;
-  intraday_brokerage?: number;
-  carry_brokerage?: number;
-  gtt_brokerage?: number;
-  entry_intraday_brokerage?: number;
-  entry_carry_brokerage?: number;
-  entry_gtt_brokerage?: number;
-  exit_intraday_brokerage?: number;
-  exit_carry_brokerage?: number;
-  exit_gtt_brokerage?: number;
-  closedBy?: string;
-  settlement?: string;
-  settlementAmount?: number;
-  productType?: string;
-  timestamp: number;
-}
+export type { HistoryItem };
 
 export default function HistoryPage() {
   useAuth();
@@ -50,32 +29,7 @@ export default function HistoryPage() {
   const [appliedFromDate, setAppliedFromDate] = useState('');
   const [appliedToDate, setAppliedToDate] = useState('');
   
-  const [historyData, setHistoryData] = useState<HistoryItem[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        if (Array.isArray((window as any).__historyCache) && (window as any).__historyCache.length > 0) {
-          return (window as any).__historyCache;
-        }
-        const sessionStored = sessionStorage.getItem('history_cache_v2');
-        if (sessionStored) {
-          const parsed = JSON.parse(sessionStored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            (window as any).__historyCache = parsed;
-            return parsed;
-          }
-        }
-        const localStored = localStorage.getItem('history_cache_v2');
-        if (localStored) {
-          const parsed = JSON.parse(localStored);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            (window as any).__historyCache = parsed;
-            return parsed;
-          }
-        }
-      } catch (_) {}
-    }
-    return [];
-  });
+  const [historyData, setHistoryData] = useState<HistoryItem[]>(() => getClientHistoryCache());
   const historyDataRef = useRef<HistoryItem[]>(historyData);
   historyDataRef.current = historyData;
 
@@ -114,7 +68,7 @@ export default function HistoryPage() {
       if (!silent && historyDataRef.current.length === 0) {
         setLoading(true);
       }
-      const freshParam = '&fresh=true';
+      const freshParam = isManualRefresh ? '&fresh=true' : '';
       // Fetch both orders and positions history with fast Redis cache hits (<10ms)
       const [ordersRes, posRes] = await Promise.allSettled([
         api.get<{ orders: any[]; error?: string }>(`/api/orders?status=executed,rejected,cancelled&limit=500${freshParam}`),
@@ -228,38 +182,43 @@ export default function HistoryPage() {
       }
 
       // Reconcile pending in-flight optimistic items (<60s):
-      // Only keep an optimistic item if it hasn't landed in posMap / orderMap yet and isn't a duplicate.
-      const existingItems = [
-        ...(historyDataRef.current || []),
-        ...(typeof window !== 'undefined' && Array.isArray((window as any).__historyCache) ? (window as any).__historyCache : [])
-      ];
-
+      // Only inject optimistic/temp items when the DB query failed or returned empty.
+      // If the DB returned real data (positionsList/ordersList non-null), skip this to avoid
+      // ghost positions reappearing on refresh after a successful exit.
       const nowMs = Date.now();
-      for (const existing of existingItems) {
-        if (!existing || !existing.id) continue;
-        const isRecent = (nowMs - (existing.timestamp || 0) < 60000);
-        if (!isRecent) continue;
+      if (positionsList === null || ordersList === null) {
+        const existingItems = [
+          ...(historyDataRef.current || []),
+          ...getClientHistoryCache()
+        ];
 
-        const isClosed = String(existing.status || '').toLowerCase() === 'closed';
-        if (isClosed) {
-          // If the position ID is already in posMap, the real DB data takes precedence (do not overwrite)
-          const isTempId = String(existing.id).startsWith('opt_') || String(existing.id).startsWith('pos_opt_');
-          if (!posMap.has(existing.id)) {
-            const hasMatchingDbPos = isTempId && Array.from(posMap.values()).some(p => 
-              p.scriptName === existing.scriptName && Math.abs((p.timestamp || 0) - (existing.timestamp || 0)) < 60000
-            );
-            if (!hasMatchingDbPos) {
-              posMap.set(existing.id, { ...existing, status: 'closed' });
+        for (const existing of existingItems) {
+          if (!existing || !existing.id) continue;
+          const isRecent = (nowMs - (existing.timestamp || 0) < 60000);
+          if (!isRecent) continue;
+
+          const isClosed = String(existing.status || '').toLowerCase() === 'closed';
+          if (isClosed && positionsList === null) {
+            // DB positions query failed — inject recent optimistic closed items as fallback
+            const isTempId = String(existing.id).startsWith('opt_') || String(existing.id).startsWith('pos_opt_');
+            if (!posMap.has(existing.id)) {
+              const hasMatchingDbPos = isTempId && Array.from(posMap.values()).some(p =>
+                p.scriptName === existing.scriptName && Math.abs((p.timestamp || 0) - (existing.timestamp || 0)) < 60000
+              );
+              if (!hasMatchingDbPos) {
+                posMap.set(existing.id, { ...existing, status: 'closed' });
+              }
             }
-          }
-        } else {
-          const isTempId = String(existing.id).startsWith('opt_');
-          if (!orderMap.has(existing.id)) {
-            const hasMatchingDbOrder = isTempId && Array.from(orderMap.values()).some(o =>
-              o.scriptName === existing.scriptName && Math.abs((o.timestamp || 0) - (existing.timestamp || 0)) < 60000
-            );
-            if (!hasMatchingDbOrder) {
-              orderMap.set(existing.id, existing);
+          } else if (!isClosed && ordersList === null) {
+            // DB orders query failed — inject recent optimistic orders as fallback
+            const isTempId = String(existing.id).startsWith('opt_');
+            if (!orderMap.has(existing.id)) {
+              const hasMatchingDbOrder = isTempId && Array.from(orderMap.values()).some(o =>
+                o.scriptName === existing.scriptName && Math.abs((o.timestamp || 0) - (existing.timestamp || 0)) < 60000
+              );
+              if (!hasMatchingDbOrder) {
+                orderMap.set(existing.id, existing);
+              }
             }
           }
         }
@@ -273,11 +232,7 @@ export default function HistoryPage() {
       if (seq !== fetchSeqRef.current) return;
 
       if (typeof window !== 'undefined') {
-        (window as any).__historyCache = merged;
-        try {
-          sessionStorage.setItem('history_cache_v2', JSON.stringify(merged));
-          localStorage.setItem('history_cache_v2', JSON.stringify(merged));
-        } catch (_) {}
+        saveClientHistoryCache(merged);
       }
 
       setHistoryData(merged);
@@ -314,19 +269,8 @@ export default function HistoryPage() {
     const handleOptimisticClose = (e: any) => {
       const items = e.detail?.historyItems || (e.detail?.historyItem ? [e.detail.historyItem] : []);
       if (items.length === 0) return;
-      setHistoryData(prev => {
-        const itemIds = new Set(items.map((i: any) => i.id));
-        const filtered = prev.filter(x => !itemIds.has(x.id));
-        const updated = [...items, ...filtered];
-        if (typeof window !== 'undefined') {
-          (window as any).__historyCache = updated;
-          try {
-            sessionStorage.setItem('history_cache_v2', JSON.stringify(updated));
-            localStorage.setItem('history_cache_v2', JSON.stringify(updated));
-          } catch (_) {}
-        }
-        return updated;
-      });
+      const updated = prependToClientHistoryCache(items);
+      setHistoryData(updated);
       setInitialLoaded(true);
       setLoading(false);
       triggerRefresh(150);
@@ -358,17 +302,8 @@ export default function HistoryPage() {
         brokerage: order.brokerage || 0,
         timestamp: new Date(order.created_at || Date.now()).getTime(),
       };
-      setHistoryData(prev => {
-        const filtered = prev.filter(x => x.id !== historyItem.id);
-        const updated = [historyItem, ...filtered];
-        if (typeof window !== 'undefined') {
-          (window as any).__historyCache = updated;
-          try {
-            sessionStorage.setItem('history_cache_v2', JSON.stringify(updated));
-          } catch (_) {}
-        }
-        return updated;
-      });
+      const updated = prependToClientHistoryCache(historyItem);
+      setHistoryData(updated);
       setInitialLoaded(true);
       setLoading(false);
       triggerRefresh(150);
@@ -377,17 +312,8 @@ export default function HistoryPage() {
     const handleOptimisticRollback = (e: any) => {
       const ids: string[] = e.detail?.positionIds || (e.detail?.orderId ? [e.detail.orderId] : []);
       if (ids.length === 0) return;
-      const idSet = new Set(ids);
-      setHistoryData(prev => {
-        const filtered = prev.filter(x => !idSet.has(x.id));
-        if (typeof window !== 'undefined') {
-          (window as any).__historyCache = filtered;
-          try {
-            sessionStorage.setItem('history_cache_v2', JSON.stringify(filtered));
-          } catch (_) {}
-        }
-        return filtered;
-      });
+      const filtered = removeFromClientHistoryCache(ids);
+      setHistoryData(filtered);
       triggerRefresh(50);
     };
 

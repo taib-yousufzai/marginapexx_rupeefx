@@ -135,10 +135,14 @@ export async function appendClosedPositionToCache(userId: string, closedPosition
 export async function invalidateUserOpenPositionsCache(userId: string): Promise<void> {
   try {
     const redis = getRedisClient();
-    const posKeys = (await redis.keys(`api:positions:${userId}:*`)) || [];
-    if (posKeys.length > 0) {
-      await redis.del(...posKeys);
-    }
+    // Explicitly delete known open position keys instead of using the potentially disabled/slow 'keys' command
+    const keysToDelete = [
+      `api:positions:${userId}:open:default:`,
+      `api:positions:${userId}:open:all:`,
+      `api:positions:${userId}:active:default:`,
+      `api:positions:${userId}:active:all:`
+    ];
+    await redis.del(...keysToDelete);
   } catch (err) {
     console.warn('[invalidateUserOpenPositionsCache] Redis delete error:', err);
   }
@@ -150,12 +154,12 @@ export async function invalidateUserOpenPositionsCache(userId: string): Promise<
 export async function invalidateUserActiveOrdersCache(userId: string): Promise<void> {
   try {
     const redis = getRedisClient();
-    const activeKeys = (await redis.keys(`api:orders:${userId}:active*`)) || [];
-    const openKeys = (await redis.keys(`api:orders:${userId}:open*`)) || [];
-    const allKeys = Array.from(new Set([...activeKeys, ...openKeys, `api:orders:${userId}:active`]));
-    if (allKeys.length > 0) {
-      await redis.del(...allKeys);
-    }
+    // Explicitly delete known order keys instead of using 'keys' command
+    const keysToDelete = [
+      `api:orders:${userId}:active`,
+      `api:orders:${userId}:open`
+    ];
+    await redis.del(...keysToDelete);
   } catch (err) {
     console.warn('[invalidateUserActiveOrdersCache] Redis delete error:', err);
   }

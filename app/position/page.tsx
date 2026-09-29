@@ -65,7 +65,8 @@ export default function PositionPage() {
   // Listen for position-closed events fired by TradingChart so we eventually
   // refresh without waiting for the next 5-second poll cycle
   useEffect(() => {
-    const handler = () => { setTimeout(() => { refresh(); fetchClosed(); }, 200); };
+    // position-closed from TradingChart: delay refresh so server has time to commit the exit
+    const handler = () => { setTimeout(() => { refresh(); fetchClosed(); }, 3500); };
     window.addEventListener('position-closed', handler);
     return () => window.removeEventListener('position-closed', handler);
   }, [refresh]);
@@ -106,7 +107,7 @@ export default function PositionPage() {
       });
       // Sort newest to oldest closed positions by updated_at (closure date)
       enriched.sort((a: any, b: any) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime());
-      
+
       setClosedPositions(enriched);
     } catch { /* non-critical */ } finally {
       setClosedLoading(false);
@@ -118,9 +119,18 @@ export default function PositionPage() {
     fetchClosed();
     // Closed positions refresh on events + 30s slow fallback
     const iv = setInterval(fetchClosed, 30000);
-    const onOrderPlaced = () => {
-      refresh();
-      setTimeout(() => { refresh(); fetchClosed(); }, 200);
+    const onOrderPlaced = (e?: Event) => {
+      // For exit events, delay refresh so the DB can commit before we pull fresh data.
+      // Fetching immediately returns stale (pre-close) data and causes the position to reappear.
+      const isExit = e instanceof CustomEvent && e.detail?.is_exit;
+      const delayMs = isExit ? 3500 : 0;
+      if (delayMs > 0) {
+        setTimeout(() => { refresh(); fetchClosed(); }, delayMs);
+        setTimeout(() => { refresh(); fetchClosed(); }, delayMs + 2500);
+      } else {
+        refresh();
+        setTimeout(() => { refresh(); fetchClosed(); }, 200);
+      }
     };
 
     const handleOptimisticClosedPos = (e: any) => {
@@ -142,18 +152,24 @@ export default function PositionPage() {
 
     window.addEventListener('order_placed', onOrderPlaced);
     window.addEventListener('order_placed_with_data', onOrderPlaced);
-    window.addEventListener('position-closed', onOrderPlaced);
-    window.addEventListener('position_closed', onOrderPlaced);
-    window.addEventListener('history_updated', onOrderPlaced);
+    // position-closed / position_closed / history_updated are plain Events (no is_exit info)
+    // — always delay them so the DB can commit before we pull fresh data.
+    const onPositionClosed = () => {
+      setTimeout(() => { refresh(); fetchClosed(); }, 3500);
+      setTimeout(() => { refresh(); fetchClosed(); }, 6000);
+    };
+    window.addEventListener('position-closed', onPositionClosed);
+    window.addEventListener('position_closed', onPositionClosed);
+    window.addEventListener('history_updated', onPositionClosed);
     window.addEventListener('position_closed_optimistic', handleOptimisticClosedPos);
     window.addEventListener('position_closed_rollback', handleOptimisticRollbackPos);
     return () => {
       clearInterval(iv);
       window.removeEventListener('order_placed', onOrderPlaced);
       window.removeEventListener('order_placed_with_data', onOrderPlaced);
-      window.removeEventListener('position-closed', onOrderPlaced);
-      window.removeEventListener('position_closed', onOrderPlaced);
-      window.removeEventListener('history_updated', onOrderPlaced);
+      window.removeEventListener('position-closed', onPositionClosed);
+      window.removeEventListener('position_closed', onPositionClosed);
+      window.removeEventListener('history_updated', onPositionClosed);
       window.removeEventListener('position_closed_optimistic', handleOptimisticClosedPos);
       window.removeEventListener('position_closed_rollback', handleOptimisticRollbackPos);
     };
@@ -258,7 +274,7 @@ export default function PositionPage() {
     // A real exit order is "cumulative" if it has NO linked_position_id.
     // If it has a linked_position_id, it is detailed/position-specific.
     const isCumulativeOrder = (o: any) => !o.linked_position_id;
-    const isDetailedOrder   = (o: any) => Boolean(o.linked_position_id);
+    const isDetailedOrder = (o: any) => Boolean(o.linked_position_id);
 
     if (isCumulative) {
       // Trying to place a cumulative exit — block if any cumulative order exists
@@ -405,7 +421,7 @@ export default function PositionPage() {
     const isCumulative = group.ids.length > 1;
     const linkedId = isCumulative ? null : group.ids[0];
     const inferredSeg = mapSegmentWithSymbol(group.settlement || '', group.representativePos?.symbol || group.symbol || '');
-    
+
     const warningMsg = checkPendingExitConflict(group.representativePos.symbol, exitSide, linkedId, isCumulative);
     if (warningMsg) {
       setPendingOrderWarnMsg(warningMsg);
@@ -626,7 +642,8 @@ export default function PositionPage() {
       posToClose?.current_ltp ?? posToClose?.ltp ?? undefined,
       posToClose?.symbol ?? undefined,
       posToClose?.settlement ?? undefined,
-      posToClose?.side ?? undefined
+      posToClose?.side ?? undefined,
+      posToClose
     ).then(res => {
       if (res.success) {
         showToast('Position closed successfully');
@@ -923,7 +940,7 @@ export default function PositionPage() {
       if (result.success && result.results) {
         let firstError = '';
         const successfulIds = new Set(result.results.filter((r: any) => r.success).map((r: any) => r.positionId));
-        
+
         posIds.forEach(id => {
           if (!successfulIds.has(id)) {
             failCount++;
@@ -983,7 +1000,7 @@ export default function PositionPage() {
         const successfulIds = new Set((result.results || []).filter((r: any) => r.success).map((r: any) => r.positionId));
         let hadFailures = false;
         let firstError = '';
-        
+
         posIds.forEach(id => {
           if (!successfulIds.has(id)) {
             hadFailures = true;
@@ -1243,44 +1260,44 @@ export default function PositionPage() {
                           {expandedPosId === group.key && (
                             <>
                               <div className="pos-card-actions" onClick={e => e.stopPropagation()}>
-                              <button className="pca-btn pca-add" onClick={() => openAddMore(group.representativePos)}>
-                                <i className="fas fa-plus-circle" /> Add More
-                              </button>
-                              <button
-                                className={`pca-btn pca-exit${group.hold_lock_active ? ' disabled-lock' : ''}`}
-                                onClick={() => {
-                                  if (group.hold_lock_active) {
-                                    setLockModalPos(group.representativePos);
-                                    return;
-                                  }
-                                  // Always open TradeSheet for exit mode
-                                  openGroupTradeExit(group);
-                                }}
-                              >
-                                <i className="fas fa-times-circle" /> Exit
-                              </button>
-                              <button
-                                style={{
-                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                  width: '42px', height: '38px', borderRadius: '16px',
-                                  border: '1.5px solid var(--border-card, #CBD5E1)',
-                                  background: 'var(--card-bg, #ffffff)', color: 'var(--text-primary, #1F2937)',
-                                  cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s'
-                                }}
-                                onClick={() => openChart(group.representativePos)}
-                              >
-                                <svg viewBox="0 0 24 24" style={{ width: '1.25rem', height: '1.25rem', display: 'inline-block', verticalAlign: 'middle' }}>
-                                  <rect x="4" y="16" width="2.5" height="4" rx="0.5" fill="currentColor" />
-                                  <rect x="9" y="13" width="2.5" height="7" rx="0.5" fill="currentColor" />
-                                  <rect x="14" y="14" width="2.5" height="6" rx="0.5" fill="currentColor" />
-                                  <rect x="19" y="11" width="2.5" height="9" rx="0.5" fill="currentColor" />
-                                  <path d="M 4 14 L 8 9 L 13 12 L 20 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                  <polyline points="15 4 20 4 20 9" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                </svg>
-                              </button>
-                            </div>
-                          </>
-                        )}
+                                <button className="pca-btn pca-add" onClick={() => openAddMore(group.representativePos)}>
+                                  <i className="fas fa-plus-circle" /> Add More
+                                </button>
+                                <button
+                                  className={`pca-btn pca-exit${group.hold_lock_active ? ' disabled-lock' : ''}`}
+                                  onClick={() => {
+                                    if (group.hold_lock_active) {
+                                      setLockModalPos(group.representativePos);
+                                      return;
+                                    }
+                                    // Always open TradeSheet for exit mode
+                                    openGroupTradeExit(group);
+                                  }}
+                                >
+                                  <i className="fas fa-times-circle" /> Exit
+                                </button>
+                                <button
+                                  style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    width: '42px', height: '38px', borderRadius: '16px',
+                                    border: '1.5px solid var(--border-card, #CBD5E1)',
+                                    background: 'var(--card-bg, #ffffff)', color: 'var(--text-primary, #1F2937)',
+                                    cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s'
+                                  }}
+                                  onClick={() => openChart(group.representativePos)}
+                                >
+                                  <svg viewBox="0 0 24 24" style={{ width: '1.25rem', height: '1.25rem', display: 'inline-block', verticalAlign: 'middle' }}>
+                                    <rect x="4" y="16" width="2.5" height="4" rx="0.5" fill="currentColor" />
+                                    <rect x="9" y="13" width="2.5" height="7" rx="0.5" fill="currentColor" />
+                                    <rect x="14" y="14" width="2.5" height="6" rx="0.5" fill="currentColor" />
+                                    <rect x="19" y="11" width="2.5" height="9" rx="0.5" fill="currentColor" />
+                                    <path d="M 4 14 L 8 9 L 13 12 L 20 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    <polyline points="15 4 20 4 20 9" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </>
+                          )}
                         </div>
                       ))
                     ) : (
@@ -1430,48 +1447,48 @@ export default function PositionPage() {
                             {expandedPosId === pos.id && (pos.status === 'open' || pos.status === 'active') && (
                               <>
                                 <div className="pos-card-actions" onClick={e => e.stopPropagation()}>
-                                <button className="pca-btn pca-add" onClick={() => openAddMore(actualPos)}>
-                                  <i className="fas fa-plus-circle" /> Add More
-                                </button>
-                                <button
-                                  className={`pca-btn pca-exit${pos.hold_lock_active ? ' disabled-lock' : ''}`}
-                                  onClick={() => {
-                                    if (pos.hold_lock_active) {
-                                      setLockModalPos(actualPos);
-                                    } else {
-                                      openTradeExit(actualPos, false);
-                                    }
-                                  }}
-                                >
-                                  <i className="fas fa-times-circle" /> Exit
-                                </button>
-                                <button
-                                  style={{
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    width: '42px', height: '38px', borderRadius: '16px',
-                                    border: '1.5px solid var(--border-card, #CBD5E1)',
-                                    background: 'var(--card-bg, #ffffff)', color: 'var(--text-primary, #1F2937)',
-                                    cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s'
-                                  }}
-                                  onClick={() => openChart(pos)}
-                                >
-                                  <svg viewBox="0 0 24 24" style={{ width: '1.25rem', height: '1.25rem', display: 'inline-block', verticalAlign: 'middle' }}>
-                                    <rect x="4" y="16" width="2.5" height="4" rx="0.5" fill="currentColor" />
-                                    <rect x="9" y="13" width="2.5" height="7" rx="0.5" fill="currentColor" />
-                                    <rect x="14" y="14" width="2.5" height="6" rx="0.5" fill="currentColor" />
-                                    <rect x="19" y="11" width="2.5" height="9" rx="0.5" fill="currentColor" />
-                                    <path d="M 4 14 L 8 9 L 13 12 L 20 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                    <polyline points="15 4 20 4 20 9" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                                  </svg>
-                                </button>
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      );
-                    })
-                  ) : (
-                    closedPositions.length === 0 ? (
+                                  <button className="pca-btn pca-add" onClick={() => openAddMore(actualPos)}>
+                                    <i className="fas fa-plus-circle" /> Add More
+                                  </button>
+                                  <button
+                                    className={`pca-btn pca-exit${pos.hold_lock_active ? ' disabled-lock' : ''}`}
+                                    onClick={() => {
+                                      if (pos.hold_lock_active) {
+                                        setLockModalPos(actualPos);
+                                      } else {
+                                        openTradeExit(actualPos, false);
+                                      }
+                                    }}
+                                  >
+                                    <i className="fas fa-times-circle" /> Exit
+                                  </button>
+                                  <button
+                                    style={{
+                                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                      width: '42px', height: '38px', borderRadius: '16px',
+                                      border: '1.5px solid var(--border-card, #CBD5E1)',
+                                      background: 'var(--card-bg, #ffffff)', color: 'var(--text-primary, #1F2937)',
+                                      cursor: 'pointer', flexShrink: 0, transition: 'all 0.15s'
+                                    }}
+                                    onClick={() => openChart(pos)}
+                                  >
+                                    <svg viewBox="0 0 24 24" style={{ width: '1.25rem', height: '1.25rem', display: 'inline-block', verticalAlign: 'middle' }}>
+                                      <rect x="4" y="16" width="2.5" height="4" rx="0.5" fill="currentColor" />
+                                      <rect x="9" y="13" width="2.5" height="7" rx="0.5" fill="currentColor" />
+                                      <rect x="14" y="14" width="2.5" height="6" rx="0.5" fill="currentColor" />
+                                      <rect x="19" y="11" width="2.5" height="9" rx="0.5" fill="currentColor" />
+                                      <path d="M 4 14 L 8 9 L 13 12 L 20 4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                      <polyline points="15 4 20 4 20 9" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })
+                    ) : (
+                      closedPositions.length === 0 ? (
                         <div className="pos-empty">
                           <i className="fas fa-history" />
                           <p>No closed positions</p>
@@ -1673,8 +1690,8 @@ export default function PositionPage() {
                             {(selectedPos as any).is_cumulative_group ? 'Total Trades' : 'Avg Price'}
                           </div>
                           <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1A1A1A)' }}>
-                            {(selectedPos as any).is_cumulative_group 
-                              ? `${(selectedPos as any).trades_count || 1} ${((selectedPos as any).trades_count || 1) === 1 ? 'Trade' : 'Trades'}` 
+                            {(selectedPos as any).is_cumulative_group
+                              ? `${(selectedPos as any).trades_count || 1} ${((selectedPos as any).trades_count || 1) === 1 ? 'Trade' : 'Trades'}`
                               : fmtPrice(selectedPos.avg_price || selectedPos.entry_price, selectedPos.settlement)}
                           </div>
                         </div>

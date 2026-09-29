@@ -14,6 +14,13 @@ import { useBalanceData } from '@/contexts/BalanceContext';
 import { usePositionsData, cleanSym } from '@/contexts/PositionsContext';
 import { fmtDateTime, fmtDate } from '@/lib/format';
 import type { MyOrder } from '@/lib/types/order';
+import {
+  getClientHistoryCache,
+  saveClientHistoryCache,
+  prependToClientHistoryCache,
+  removeFromClientHistoryCache,
+  HistoryItem
+} from '@/lib/historyCache';
 
 export type OrderSide = 'BUY' | 'SELL';
 export type OrderType = 'MARKET' | 'LIMIT' | 'SL' | 'SLM' | 'GTT';
@@ -106,8 +113,8 @@ export function useOrderEntry() {
         const isOpen = !pStatus || pStatus === 'open' || pStatus === 'active';
         const pSide = (p.side || '').toUpperCase();
         return cleanSym(p.symbol || p.kite_instrument || '') === targetClean &&
-               pSide === oppositeSide &&
-               isOpen;
+          pSide === oppositeSide &&
+          isOpen;
       }
     );
     const matchingOppositePos = matchingOppositePositions[0];
@@ -115,6 +122,7 @@ export function useOrderEntry() {
     const effectiveLinkedPosId = state.linked_position_id || (matchingOppositePositions.length === 1 && (Number(matchingOppositePos?.qty_open || matchingOppositePos?.qty_total || 0) >= (state.qty || 1)) ? matchingOppositePos.id : undefined);
 
     const now = Date.now();
+    console.log('[DEBUG-OE] submitOrder called — is_exit:', effectiveIsExit, 'linkedPosId:', effectiveLinkedPosId, 'symbol:', state.symbol, 'qty:', state.qty);
     const optimisticHistoryOrder = {
       id: tempId,
       scriptName: state.symbol,
@@ -129,12 +137,8 @@ export function useOrderEntry() {
       timestamp: now,
     };
 
+    prependToClientHistoryCache(optimisticHistoryOrder as any);
     if (typeof window !== 'undefined') {
-      try {
-        const existingHistory = (window as any).__historyCache || [];
-        const updatedHistory = [optimisticHistoryOrder, ...existingHistory.filter((h: any) => h.id !== tempId)];
-        (window as any).__historyCache = updatedHistory;
-      } catch {}
       window.dispatchEvent(new CustomEvent('order_placed_optimistic', { detail: { order: optimisticOrder } }));
     }
 
@@ -311,24 +315,19 @@ export function useOrderEntry() {
         optimisticClosedPositions.push(optimisticClosedPos);
       }
 
-      if (typeof window !== 'undefined' && optimisticHistoryItems.length > 0) {
-        try {
-          const existingHistory = (window as any).__historyCache || [];
-          const newIds = new Set(optimisticHistoryItems.map((i: any) => i.id));
-          const updatedHistory = [...optimisticHistoryItems, ...existingHistory.filter((h: any) => !newIds.has(h.id))];
-          (window as any).__historyCache = updatedHistory;
-          sessionStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
-          localStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
-        } catch {}
-        window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
-          detail: {
-            positions: optimisticClosedPositions,
-            historyItems: optimisticHistoryItems,
-            position: optimisticClosedPositions[0],
-            historyItem: optimisticHistoryItems[0],
-          }
-        }));
-        window.dispatchEvent(new Event('history_updated'));
+      if (optimisticHistoryItems.length > 0) {
+        prependToClientHistoryCache(optimisticHistoryItems as any);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
+            detail: {
+              positions: optimisticClosedPositions,
+              historyItems: optimisticHistoryItems,
+              position: optimisticClosedPositions[0],
+              historyItem: optimisticHistoryItems[0],
+            }
+          }));
+          window.dispatchEvent(new Event('history_updated'));
+        }
       }
 
       if (typeof window !== 'undefined') {
@@ -429,7 +428,7 @@ export function useOrderEntry() {
           });
           (window as any).__historyCache = updatedHistory;
           localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-        } catch {}
+        } catch { }
 
         window.dispatchEvent(new CustomEvent('order_placed_with_data', {
           detail: {
@@ -484,24 +483,26 @@ export function useOrderEntry() {
         if ((ordersContext as any)?.removeOptimisticOrder) {
           (ordersContext as any).removeOptimisticOrder(tempId);
         }
-        if (effectiveIsExit && positionsContext?.restorePositionLocally) {
-          positionsContext.restorePositionLocally(effectiveLinkedPosId || '');
+        if (effectiveIsExit && effectiveLinkedPosId && positionsContext?.restorePositionLocally) {
+          console.log('[DEBUG-OE] ERROR PATH: restorePositionLocally called with:', effectiveLinkedPosId);
+          // Only restore a SPECIFIC position exit. For cumulative exits
+          // (effectiveLinkedPosId = null) we must NOT call restorePositionLocally('')
+          // because that clears ALL optimistic removals — causing every
+          // in-progress exit to reappear, even if the server actually closed it.
+          // The 30-second TTL on optimisticallyRemovedIds will naturally expire
+          // the removal and allow a fresh server fetch to resolve truth.
+          positionsContext.restorePositionLocally(effectiveLinkedPosId);
         } else if (!effectiveIsExit && positionsContext?.removeOptimisticPosition) {
           positionsContext.removeOptimisticPosition(tempId);
         }
 
         if (typeof window !== 'undefined') {
-          const failedIds = new Set<string>([
+          const failedIds = Array.from(new Set<string>([
             tempId,
             ...(effectiveLinkedPosId ? [effectiveLinkedPosId] : []),
             ...optimisticHistoryItems.map(i => i.id)
-          ]);
-          try {
-            const existingHistory = (window as any).__historyCache || [];
-            const updatedHistory = existingHistory.filter((h: any) => !failedIds.has(h.id));
-            (window as any).__historyCache = updatedHistory;
-            localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
-          } catch {}
+          ]));
+          removeFromClientHistoryCache(failedIds);
           if (effectiveIsExit) {
             window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: Array.from(failedIds) } }));
           } else {
@@ -519,12 +520,19 @@ export function useOrderEntry() {
     }
   }, [ordersContext, balanceContext, positionsContext]);
 
-  const closePosition = useCallback(async (positionId: string, clientPrice?: number, symbol?: string, settlement?: string, side?: string) => {
+  const closePosition = useCallback(async (
+    positionId: string,
+    clientPrice?: number,
+    symbol?: string,
+    settlement?: string,
+    side?: string,
+    positionObj?: any
+  ) => {
     setLoading(true);
     setError(null);
 
     // Capture position before removing locally for optimistic history update
-    let existingPos = positionsContext?.positions?.find(p => p.id === positionId);
+    let existingPos = positionObj || positionsContext?.positions?.find(p => p.id === positionId);
     if (!existingPos && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
       existingPos = (window as any).__lastPositionsMap.get(positionId);
     }
@@ -541,7 +549,7 @@ export function useOrderEntry() {
     const isBuy = posSide === 'BUY';
     const pnl = entryPrice > 0 ? (isBuy ? (resolvedExitPrice - entryPrice) * qty : (entryPrice - resolvedExitPrice) * qty) : 0;
 
-    const optimisticHistoryItem = {
+    const optimisticHistoryItem: any = {
       id: positionId,
       scriptName: existingPos?.symbol || symbol || 'UNKNOWN',
       type: posSide as 'BUY' | 'SELL',
@@ -583,14 +591,8 @@ export function useOrderEntry() {
       positionsContext.removePositionLocally(positionId, existingPos);
     }
 
+    prependToClientHistoryCache(optimisticHistoryItem);
     if (typeof window !== 'undefined') {
-      try {
-        const existingHistory = (window as any).__historyCache || [];
-        const updatedHistory = [optimisticHistoryItem, ...existingHistory.filter((h: any) => h.id !== positionId)];
-        (window as any).__historyCache = updatedHistory;
-        sessionStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
-        localStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
-      } catch {}
       window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
         detail: {
           positions: [optimisticClosedPos],
@@ -631,7 +633,7 @@ export function useOrderEntry() {
           qty,
           entry_price: entryPrice,
           product_type: existingPos?.product_type || 'INTRADAY'
-        }, { timeout: 20000 });
+        }, { timeout: 30000 });
       }
 
       if (typeof window !== 'undefined') {
@@ -672,12 +674,8 @@ export function useOrderEntry() {
       if (positionsContext?.restorePositionLocally) {
         positionsContext.restorePositionLocally(positionId, existingPos);
       }
+      removeFromClientHistoryCache([positionId]);
       if (typeof window !== 'undefined') {
-        try {
-          const existingHistory = (window as any).__historyCache || [];
-          const updatedHistory = existingHistory.filter((h: any) => h.id !== positionId);
-          (window as any).__historyCache = updatedHistory;
-        } catch {}
         window.dispatchEvent(new CustomEvent('position_closed_rollback', {
           detail: { positionIds: [positionId] }
         }));
@@ -690,7 +688,7 @@ export function useOrderEntry() {
     }
   }, [positionsContext]);
 
-  const closePositionsBatch = useCallback(async (positionIds: string[]) => {
+  const closePositionsBatch = useCallback(async (positionIds: (string | any)[]) => {
     setLoading(true);
     setError(null);
 
@@ -758,29 +756,24 @@ export function useOrderEntry() {
     // Optimistically remove positions locally in 0ms
     if (positionsContext?.removePositionLocally) {
       ids.forEach(id => {
-        const pObj = rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id);
+        const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
         positionsContext.removePositionLocally(id, pObj);
       });
     }
 
-    if (typeof window !== 'undefined' && optHistoryItems.length > 0) {
-      try {
-        const existingHistory = (window as any).__historyCache || [];
-        const optIds = new Set(optHistoryItems.map((i: any) => i.id));
-        const updatedHistory = [...optHistoryItems, ...existingHistory.filter((h: any) => !optIds.has(h.id))];
-        (window as any).__historyCache = updatedHistory;
-        sessionStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
-        localStorage.setItem('history_cache_v2', JSON.stringify(updatedHistory));
-      } catch {}
-      window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
-        detail: {
-          positions: optClosedPositions,
-          historyItems: optHistoryItems,
-          position: optClosedPositions[0],
-          historyItem: optHistoryItems[0],
-        }
-      }));
-      window.dispatchEvent(new Event('history_updated'));
+    if (optHistoryItems.length > 0) {
+      prependToClientHistoryCache(optHistoryItems as any);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
+          detail: {
+            positions: optClosedPositions,
+            historyItems: optHistoryItems,
+            position: optClosedPositions[0],
+            historyItem: optHistoryItems[0],
+          }
+        }));
+        window.dispatchEvent(new Event('history_updated'));
+      }
     }
 
     soundEngine.playOrderExecuted();
@@ -804,7 +797,7 @@ export function useOrderEntry() {
 
       // 2. Fallback to REST API route
       if (!result) {
-        result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 20000 });
+        result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 45000 });
       }
 
       if (typeof window !== 'undefined') {
@@ -845,13 +838,9 @@ export function useOrderEntry() {
       if (positionsContext?.restorePositionLocally) {
         positionIds.forEach(id => positionsContext.restorePositionLocally(id));
       }
+      const failedBatchIds = Array.from(new Set([...positionIds, ...optHistoryItems.map(i => i.id)]));
+      removeFromClientHistoryCache(failedBatchIds);
       if (typeof window !== 'undefined') {
-        try {
-          const failedIds = new Set([...positionIds, ...optHistoryItems.map(i => i.id)]);
-          const existingHistory = (window as any).__historyCache || [];
-          const updatedHistory = existingHistory.filter((h: any) => !failedIds.has(h.id));
-          (window as any).__historyCache = updatedHistory;
-        } catch {}
         window.dispatchEvent(new CustomEvent('position_closed_rollback', {
           detail: { positionIds }
         }));
