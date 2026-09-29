@@ -132,8 +132,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // ── Resolve brokerRef (supports admin/broker referral_code, client_id, or UUID) ──
-    let resolvedBrokerRef = brokerRef?.trim() || null;
+    // ── Resolve brokerRef (supports admin/broker referral_code, client_id, UUID, or WHITELABEL_BROKER_ID env) ──
+    let resolvedBrokerRef = brokerRef?.trim() || process.env.WHITELABEL_BROKER_ID?.trim() || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID?.trim() || null;
     if (resolvedBrokerRef) {
       if (resolvedBrokerRef.length === 36) {
         const { data: refProfile } = await admin
