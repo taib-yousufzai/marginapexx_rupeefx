@@ -4,7 +4,7 @@ import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { useMyOrders } from '@/hooks/useMyOrders';
-import { useKitePositions } from '@/hooks/useKitePositions';
+import { useGlobalMarketQuotes } from '@/contexts/MarketDataContext';
 import { useMobileBack } from '@/hooks/useMobileBack';
 import { api } from '@/lib/api';
 
@@ -13,7 +13,7 @@ const TradeSheet = dynamic(() => import('@/components/TradeSheet'), { ssr: false
 import './page.css';
 import dynamic from 'next/dynamic';
 import { isUserVisibleInfo, sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
-import { fmtSymbolName, fmtPrice, fmtQty, fmtTime, fmtDate } from '@/lib/format';
+import { fmtSymbolName, fmtPrice, fmtQty, fmtTime, fmtDate, fmtTimestamp } from '@/lib/format';
 
 const TradingChart = dynamic(() => import('@/components/TradingChart'), { ssr: false });
 
@@ -72,7 +72,8 @@ export default function OrderPage() {
   };
 
   const { orders, loading: ordersLoading, error, cancelOrder, refresh } = useMyOrders();
-  const { connected: kiteConnected } = useKitePositions();
+  const { connectionStatus } = useGlobalMarketQuotes();
+  const kiteConnected = connectionStatus === 'connected';
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -80,12 +81,12 @@ export default function OrderPage() {
   };
 
   const handleCancel = (id: string) => {
-    showToast('Order cancelled successfully');
     cancelOrder(id).then(res => {
       if (res.success) {
+        showToast('Order cancelled successfully');
         refresh();
       } else {
-        showToast(`Error: ${res.error}`);
+        showToast(`Error: ${res.error || 'Could not cancel order'}`);
         refresh();
       }
     }).catch((err: any) => {
@@ -129,7 +130,7 @@ export default function OrderPage() {
   const isPendingOrder = (status?: string) => {
     if (!status) return false;
     const s = status.toUpperCase();
-    return s === 'PENDING' || s === 'TRIGGER_PENDING' || s === 'OPEN' || s === 'VALIDATION_PENDING';
+    return s === 'PENDING' || s === 'TRIGGER_PENDING' || s === 'OPEN' || s === 'VALIDATION_PENDING' || s === 'SUBMITTING';
   };
 
   const openOrders = orders.filter(o => isPendingOrder(o.status));
@@ -139,23 +140,6 @@ export default function OrderPage() {
   const filtered = activeList.filter(o =>
     (o.symbol || '').toLowerCase().includes((search || '').toLowerCase())
   );
-
-  const fmtPrice = (val: number | null) => {
-    if (val === null || val === undefined) return '---';
-    return `₹${val.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
-  };
-
-  const fmtQty = (val: number) => val.toLocaleString('en-IN');
-
-  const fmtTime = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  };
-
-  const fmtDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  };
 
   return (
     <div className="desktop-layout">
@@ -301,7 +285,7 @@ export default function OrderPage() {
                       <div className="ord-row ord-row-price">
                         <span className="ord-label">{isPending ? (order.order_type === 'LIMIT' ? 'LIMIT PRICE' : 'PRICE') : 'FILL PRICE'}</span>
                         <span className={`ord-price-val ${isBuy ? 'buy-price' : 'sell-price'}`}>
-                          {fmtPrice(isPending ? (order.client_price || order.price || order.trigger_price || order.fill_price) : order.fill_price)}
+                          {fmtPrice(isPending ? (order.client_price || order.price || order.trigger_price || order.fill_price) : order.fill_price, order.symbol)}
                         </span>
                       </div>
                       <div className="ord-row ord-row-info">
@@ -324,19 +308,19 @@ export default function OrderPage() {
                           {order.trigger_price !== undefined && order.trigger_price !== null && (order.order_type === 'GTT' || order.order_type === 'SL' || order.order_type === 'SLM') && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                               <span className="ord-label" style={{ fontSize: '0.6rem' }}>TRIG:</span>
-                              <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700 }}>{fmtPrice(order.trigger_price)}</span>
+                              <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700 }}>{fmtPrice(order.trigger_price, order.symbol)}</span>
                             </div>
                           )}
                           {order.stop_loss !== undefined && order.stop_loss !== null && (order.order_type === 'GTT' || order.is_exit) && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                               <span className="ord-label" style={{ fontSize: '0.6rem', color: '#dc2626' }}>SL:</span>
-                              <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700, color: '#dc2626' }}>{fmtPrice(order.stop_loss)}</span>
+                              <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700, color: '#dc2626' }}>{fmtPrice(order.stop_loss, order.symbol)}</span>
                             </div>
                           )}
                           {order.target !== undefined && order.target !== null && (order.order_type === 'GTT' || order.is_exit) && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
                               <span className="ord-label" style={{ fontSize: '0.6rem', color: '#059669' }}>TGT:</span>
-                              <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700, color: '#059669' }}>{fmtPrice(order.target)}</span>
+                              <span className="ord-val" style={{ fontSize: '0.65rem', fontWeight: 700, color: '#059669' }}>{fmtPrice(order.target, order.symbol)}</span>
                             </div>
                           )}
                         </div>
@@ -486,7 +470,7 @@ export default function OrderPage() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', textAlign: 'right' }}>
                       <div>
                         <div style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--text-secondary, #6B7280)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '1px' }}>Fill Price</div>
-                        <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary, #1A1A1A)' }}>{fmtPrice(selectedOrder.fill_price)}</div>
+                        <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary, #1A1A1A)' }}>{fmtPrice(selectedOrder.fill_price, selectedOrder.symbol)}</div>
                       </div>
                     </div>
                   </div>
@@ -495,7 +479,7 @@ export default function OrderPage() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', width: '100%', marginBottom: '8px' }}>
                     <div style={{ background: 'var(--card-alt-bg, #F8F9FB)', border: '1px solid var(--border-card, #E2E6EA)', padding: '6px 10px', borderRadius: '12px' }}>
                       <div style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--text-secondary, #6B7280)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: '4px' }}>Requested Price</div>
-                      <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1A1A1A)' }}>{fmtPrice(selectedOrder.client_price || selectedOrder.fill_price)}</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1A1A1A)' }}>{fmtPrice(selectedOrder.client_price || selectedOrder.fill_price, selectedOrder.symbol)}</div>
                     </div>
                     <div style={{ background: 'var(--card-alt-bg, #F8F9FB)', border: '1px solid var(--border-card, #E2E6EA)', padding: '6px 10px', borderRadius: '12px' }}>
                       <div style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--text-secondary, #6B7280)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: '4px' }}>Quantity</div>
@@ -512,25 +496,25 @@ export default function OrderPage() {
                     {selectedOrder.trigger_price !== undefined && selectedOrder.trigger_price !== null && (
                       <div style={{ background: 'var(--card-alt-bg, #F8F9FB)', border: '1px solid var(--border-card, #E2E6EA)', padding: '6px 10px', borderRadius: '12px' }}>
                         <div style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--text-secondary, #6B7280)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: '4px' }}>Trigger Price</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1A1A1A)' }}>{fmtPrice(selectedOrder.trigger_price)}</div>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--text-primary, #1A1A1A)' }}>{fmtPrice(selectedOrder.trigger_price, selectedOrder.symbol)}</div>
                       </div>
                     )}
                     {selectedOrder.stop_loss !== undefined && selectedOrder.stop_loss !== null && (
                       <div style={{ background: 'var(--card-alt-bg, #F8F9FB)', border: '1px solid var(--border-card, #E2E6EA)', padding: '6px 10px', borderRadius: '12px' }}>
                         <div style={{ fontSize: '0.58rem', fontWeight: 700, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: '4px' }}>Stop Loss</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#dc2626' }}>{fmtPrice(selectedOrder.stop_loss)}</div>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#dc2626' }}>{fmtPrice(selectedOrder.stop_loss, selectedOrder.symbol)}</div>
                       </div>
                     )}
                     {selectedOrder.target !== undefined && selectedOrder.target !== null && (
                       <div style={{ background: 'var(--card-alt-bg, #F8F9FB)', border: '1px solid var(--border-card, #E2E6EA)', padding: '6px 10px', borderRadius: '12px' }}>
                         <div style={{ fontSize: '0.58rem', fontWeight: 700, color: '#059669', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: '4px' }}>Target</div>
-                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#059669' }}>{fmtPrice(selectedOrder.target)}</div>
+                        <div style={{ fontSize: '0.9rem', fontWeight: 800, color: '#059669' }}>{fmtPrice(selectedOrder.target, selectedOrder.symbol)}</div>
                       </div>
                     )}
                     <div style={{ background: 'var(--card-alt-bg, #F8F9FB)', border: '1px solid var(--border-card, #E2E6EA)', padding: '6px 10px', borderRadius: '12px', gridColumn: '1 / -1' }}>
                       <div style={{ fontSize: '0.58rem', fontWeight: 700, color: 'var(--text-secondary, #6B7280)', textTransform: 'uppercase', letterSpacing: '0.3px', marginBottom: '4px' }}>Time</div>
                       <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary, #1A1A1A)' }}>
-                        {new Date(selectedOrder.created_at).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })}
+                        {fmtTimestamp(selectedOrder.created_at)}
                       </div>
                     </div>
                   </div>

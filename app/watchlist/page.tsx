@@ -82,6 +82,24 @@ function saveWatchlistToStorage(items: WatchlistItem[], userId?: string) {
   }
 }
 
+function resolveComexQuote(item: WatchlistItem, comexQuotes: Record<string, any>, marketQuotes: Record<string, any>) {
+  const cKey = getComexSymbolKey(item);
+  const symUp = (item.symbol || '').toUpperCase();
+  const nameUp = (item.name || '').toUpperCase();
+  return (cKey ? comexQuotes[cKey] : undefined) ||
+         (cKey ? comexQuotes[cKey.toUpperCase()] : undefined) ||
+         (item.comexSymbol ? comexQuotes[item.comexSymbol] : undefined) ||
+         (item.comexSymbol ? comexQuotes[item.comexSymbol.toUpperCase()] : undefined) ||
+         (item.symbol ? comexQuotes[item.symbol] : undefined) ||
+         (symUp ? comexQuotes[symUp] : undefined) ||
+         (item.name ? comexQuotes[item.name] : undefined) ||
+         (nameUp ? comexQuotes[nameUp] : undefined) ||
+         (cKey ? (marketQuotes[cKey] as any) : undefined) ||
+         (cKey ? (marketQuotes[`COMEX:${cKey}`] as any) : undefined) ||
+         (symUp ? (marketQuotes[symUp] as any) : undefined) ||
+         (symUp ? (marketQuotes[`COMEX:${symUp}`] as any) : undefined);
+}
+
 // ── SegmentTabBar Component ──────────────────────────────────────────────────
 
 interface SegmentTabBarProps {
@@ -1243,6 +1261,26 @@ function WatchlistContent() {
     setHasLoaded(true);
   }, [userId, allowedSegments]);
 
+  // Synchronize watchlist across multiple open browser tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      const userKey = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
+      if (e.key === userKey || e.key === WATCHLIST_KEY) {
+        try {
+          if (e.newValue) {
+            const parsed = JSON.parse(e.newValue);
+            if (Array.isArray(parsed)) {
+              setWatchlistItems(parsed);
+            }
+          }
+        } catch {}
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [userId]);
+
 
 
   const getLegPrice = (legItem: WatchlistItem) => {
@@ -1538,6 +1576,49 @@ function WatchlistContent() {
     }
   };
 
+  const handleInstrumentTrade = useCallback((it: WatchlistItem, type?: 'BUY' | 'SELL' | 'BOTH') => {
+    if (!isMarketOpen(it)) { showToast('Market is closed', true); return; }
+    openTradeSheet(it, type);
+  }, [showToast]);
+
+  const handleInstrumentDetail = useCallback((item: any) => {
+    openDetailSheet(item);
+  }, []);
+
+  const handleInstrumentBasketBuy = useCallback((it: WatchlistItem) => {
+    if (isSpotIndex(it)) { showToast('Indices cannot be traded directly.', true); return; }
+    if (!isMarketOpen(it)) { showToast('Market is closed', true); return; }
+    setBasketLegs(prev => {
+      const exists = prev.find(l => l.item.symbol === it.symbol && l.side === 'BUY');
+      if (exists) {
+        showToast(`${it.name} BUY removed`, false);
+        return prev.filter(l => !(l.item.symbol === it.symbol && l.side === 'BUY'));
+      }
+      showToast(`${it.name} BUY added to basket ✓`, false);
+      return [...prev, { item: it, side: 'BUY', qty: 1, unit: 'qty', productType: 'INTRADAY' }];
+    });
+  }, [showToast]);
+
+  const handleInstrumentBasketSell = useCallback((it: WatchlistItem) => {
+    if (isSpotIndex(it)) { showToast('Indices cannot be traded directly.', true); return; }
+    if (!isMarketOpen(it)) { showToast('Market is closed', true); return; }
+    setBasketLegs(prev => {
+      const exists = prev.find(l => l.item.symbol === it.symbol && l.side === 'SELL');
+      if (exists) {
+        showToast(`${it.name} SELL removed`, false);
+        return prev.filter(l => !(l.item.symbol === it.symbol && l.side === 'SELL'));
+      }
+      showToast(`${it.name} SELL added to basket ✓`, false);
+      return [...prev, { item: it, side: 'SELL', qty: 1, unit: 'qty', productType: 'INTRADAY' }];
+    });
+  }, [showToast]);
+
+  const handleInstrumentChart = useCallback((item: WatchlistItem) => {
+    setSelectedItem(null);
+    setChartItem(item);
+    setIsBenchmarkChart(false);
+  }, []);
+
   const blockedSymbolsArr = useMemo(() => Array.from(blockedSymbols).sort(), [blockedSymbols]);
   const scriptContent = useMemo(() => {
     if (allowedSegments === null) return '';
@@ -1745,62 +1826,13 @@ function WatchlistContent() {
                         (item.comexSymbol ? marketQuotes[item.comexSymbol] : undefined)
                       }
                       binanceQuote={item.binanceSymbol ? (marketQuotes[item.binanceSymbol] || binanceQuotesAsQuoteData[item.binanceSymbol]) : undefined}
-                      comexQuote={(() => {
-                        const cKey = getComexSymbolKey(item);
-                        const symUp = (item.symbol || '').toUpperCase();
-                        const nameUp = (item.name || '').toUpperCase();
-                        return (cKey ? comexQuotes[cKey] : undefined) ||
-                               (cKey ? comexQuotes[cKey.toUpperCase()] : undefined) ||
-                               (item.comexSymbol ? comexQuotes[item.comexSymbol] : undefined) ||
-                               (item.comexSymbol ? comexQuotes[item.comexSymbol.toUpperCase()] : undefined) ||
-                               (item.symbol ? comexQuotes[item.symbol] : undefined) ||
-                               (symUp ? comexQuotes[symUp] : undefined) ||
-                               (item.name ? comexQuotes[item.name] : undefined) ||
-                               (nameUp ? comexQuotes[nameUp] : undefined) ||
-                               (cKey ? (marketQuotes[cKey] as any) : undefined) ||
-                               (cKey ? (marketQuotes[`COMEX:${cKey}`] as any) : undefined) ||
-                               (symUp ? (marketQuotes[symUp] as any) : undefined) ||
-                               (symUp ? (marketQuotes[`COMEX:${symUp}`] as any) : undefined);
-                      })()}
-                      onTrade={(it: WatchlistItem, type?: 'BUY' | 'SELL' | 'BOTH') => {
-                        if (!isMarketOpen(it)) { showToast('Market is closed', true); return; }
-                        openTradeSheet(it, type);
-                      }}
-                      onDetail={openDetailSheet}
+                      comexQuote={resolveComexQuote(item, comexQuotes, marketQuotes)}
+                      onTrade={handleInstrumentTrade}
+                      onDetail={handleInstrumentDetail}
                       basketMode={basketMode}
-                      onBasketBuy={(it) => {
-                        if (isSpotIndex(it)) { showToast('Indices cannot be traded directly.', true); return; }
-                        if (!isMarketOpen(it)) { showToast('Market is closed', true); return; }
-                        setBasketLegs(prev => {
-                          // If BUY leg already exists for this symbol, remove it (toggle off)
-                          const exists = prev.find(l => l.item.symbol === it.symbol && l.side === 'BUY');
-                          if (exists) {
-                            showToast(`${it.name} BUY removed`, false);
-                            return prev.filter(l => !(l.item.symbol === it.symbol && l.side === 'BUY'));
-                          }
-                          showToast(`${it.name} BUY added to basket ✓`, false);
-                          return [...prev, { item: it, side: 'BUY', qty: 1, unit: 'qty', productType: 'INTRADAY' }];
-                        });
-                      }}
-                      onBasketSell={(it) => {
-                        if (isSpotIndex(it)) { showToast('Indices cannot be traded directly.', true); return; }
-                        if (!isMarketOpen(it)) { showToast('Market is closed', true); return; }
-                        setBasketLegs(prev => {
-                          // If SELL leg already exists for this symbol, remove it (toggle off)
-                          const exists = prev.find(l => l.item.symbol === it.symbol && l.side === 'SELL');
-                          if (exists) {
-                            showToast(`${it.name} SELL removed`, false);
-                            return prev.filter(l => !(l.item.symbol === it.symbol && l.side === 'SELL'));
-                          }
-                          showToast(`${it.name} SELL added to basket ✓`, false);
-                          return [...prev, { item: it, side: 'SELL', qty: 1, unit: 'qty', productType: 'INTRADAY' }];
-                        });
-                      }}
-                      onChart={(item) => {
-                        setSelectedItem(null);
-                        setChartItem(item);
-                        setIsBenchmarkChart(false);
-                      }}
+                      onBasketBuy={handleInstrumentBasketBuy}
+                      onBasketSell={handleInstrumentBasketSell}
+                      onChart={handleInstrumentChart}
                     />
                   ))}
                   <div id="watchlistMobileContainer"></div>
