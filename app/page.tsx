@@ -191,6 +191,7 @@ export default function Page() {
   const [allowedSegments, setAllowedSegments] = useState<string[]>([]);
   // scriptSettings comes from the shared TradeConfigProvider
   const { scriptSettings } = useTradeConfig();
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   useEffect(() => {
     getSession().then((session) => {
@@ -198,6 +199,7 @@ export default function Page() {
       const role = getRole(session.user);
       if (role === 'admin' || role === 'super_admin') { router.replace('/admin'); return; }
       if (role === 'broker') { router.replace('/broker'); return; }
+      setIsAuthChecking(false);
     });
   }, [router]);
 
@@ -533,6 +535,10 @@ export default function Page() {
       if (!a.expiry.isToday && b.expiry.isToday) return 1;
       return 0;
     });
+
+  if (isAuthChecking) {
+    return <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-primary)' }} />; // Blank screen to prevent flash
+  }
 
   return (
     <div className="desktop-layout home-isolated-layout">
