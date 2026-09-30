@@ -1,0 +1,114 @@
+/* ───────────────────────────────────────────────────
+   SplashScreen.css  –  RupeeFx holographic splash
+──────────────────────────────────────────────────── */
+
+.splash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.6s ease;
+}
+
+.splash-overlay.splash-fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Floating particles ── */
+.splash-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.splash-particle {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(0, 180, 255, 0.7);
+  box-shadow: 0 0 6px 2px rgba(0, 180, 255, 0.4);
+  animation: particleFloat linear infinite;
+}
+
+@keyframes particleFloat {
+  0%   { transform: translateY(0px) scale(1); opacity: 0.8; }
+  50%  { transform: translateY(-30px) scale(1.3); opacity: 1; }
+  100% { transform: translateY(0px) scale(1); opacity: 0.8; }
+}
+
+/* ── Geometric background lines ── */
+.splash-geo-lines {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(45deg, transparent 45%, rgba(0, 120, 255, 0.04) 50%, transparent 55%),
+    linear-gradient(-45deg, transparent 45%, rgba(0, 200, 255, 0.04) 50%, transparent 55%);
+  background-size: 80px 80px;
+  pointer-events: none;
+}
+
+/* ── Content ── */
+.splash-content {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  gap: 32px;
+}
+
+/* ── Main Image ── */
+.splash-image-wrapper {
+  width: min(480px, 92vw);
+  animation: splashImageIn 0.8s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes splashImageIn {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.splash-image {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 24px;
+  box-shadow:
+    0 0 60px rgba(0, 180, 255, 0.25),
+    0 0 120px rgba(0, 100, 255, 0.1);
+}
+
+/* ── Spinner ── */
+.splash-spinner-wrapper {
+  animation: splashFadeIn 0.5s ease 0.6s both;
+}
+
+@keyframes splashFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.splash-spinner {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 180, 255, 0.15);
+  border-top-color: #00b4ff;
+  border-right-color: #0066ff;
+  animation: splashSpin 0.9s linear infinite;
+  box-shadow: 0 0 12px rgba(0, 180, 255, 0.5);
+}
+
+@keyframes splashSpin {
+  to { transform: rotate(360deg); }
+}
