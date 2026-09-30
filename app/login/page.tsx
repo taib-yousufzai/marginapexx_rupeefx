@@ -28,20 +28,14 @@ export default function LoginPage() {
   const [passwordError, setPasswordError] = useState('');
   const [formError, setFormError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showSplash, setShowSplash] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
 
   const [showPopups, setShowPopups] = useState(false);
   const [pendingRoute, setPendingRoute] = useState<string | null>(null);
 
   const isLoggingInRef = useRef(false);
 
-  // Show splash only once per session
-  useEffect(() => {
-    const seen = sessionStorage.getItem('rupeefx_splash_seen');
-    if (!seen) {
-      setShowSplash(true);
-    }
-  }, []);
+
 
   // Redirect based on role if already authenticated
   useEffect(() => {
@@ -159,10 +153,7 @@ export default function LoginPage() {
     <>
       {showSplash && (
         <SplashScreen
-          onComplete={() => {
-            sessionStorage.setItem('rupeefx_splash_seen', '1');
-            setShowSplash(false);
-          }}
+          onComplete={() => setShowSplash(false)}
           duration={3200}
         />
       )}

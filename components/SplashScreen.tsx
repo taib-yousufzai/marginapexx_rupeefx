@@ -8,18 +8,32 @@ interface SplashScreenProps {
   duration?: number; // ms
 }
 
+interface Particle {
+  left: string;
+  top: string;
+  delay: string;
+  dur: string;
+}
+
 export default function SplashScreen({ onComplete, duration = 3000 }: SplashScreenProps) {
   const [phase, setPhase] = useState<'visible' | 'fading'>('visible');
+  const [particles, setParticles] = useState<Particle[]>([]);
+
+  // Generate particles only on client to avoid hydration mismatch
+  useEffect(() => {
+    setParticles(
+      Array.from({ length: 30 }).map(() => ({
+        left: `${Math.random() * 100}%`,
+        top: `${Math.random() * 100}%`,
+        delay: `${Math.random() * 3}s`,
+        dur: `${2 + Math.random() * 3}s`,
+      }))
+    );
+  }, []);
 
   useEffect(() => {
-    const fadeTimer = setTimeout(() => {
-      setPhase('fading');
-    }, duration - 600);
-
-    const doneTimer = setTimeout(() => {
-      onComplete();
-    }, duration);
-
+    const fadeTimer = setTimeout(() => setPhase('fading'), duration - 600);
+    const doneTimer = setTimeout(() => onComplete(), duration);
     return () => {
       clearTimeout(fadeTimer);
       clearTimeout(doneTimer);
@@ -30,13 +44,12 @@ export default function SplashScreen({ onComplete, duration = 3000 }: SplashScre
     <div className={`splash-overlay ${phase === 'fading' ? 'splash-fade-out' : ''}`}>
       {/* Particle dots */}
       <div className="splash-particles">
-        {Array.from({ length: 30 }).map((_, i) => (
-          <div key={i} className="splash-particle" style={{
-            left: `${Math.random() * 100}%`,
-            top: `${Math.random() * 100}%`,
-            animationDelay: `${Math.random() * 3}s`,
-            animationDuration: `${2 + Math.random() * 3}s`,
-          }} />
+        {particles.map((p, i) => (
+          <div
+            key={i}
+            className="splash-particle"
+            style={{ left: p.left, top: p.top, animationDelay: p.delay, animationDuration: p.dur }}
+          />
         ))}
       </div>
 
@@ -45,7 +58,6 @@ export default function SplashScreen({ onComplete, duration = 3000 }: SplashScre
 
       {/* Content */}
       <div className="splash-content">
-        {/* Main splash image (RupeeFx holographic globe design) */}
         <div className="splash-image-wrapper">
           <img
             src="/splash-screen.jpg"
@@ -53,8 +65,6 @@ export default function SplashScreen({ onComplete, duration = 3000 }: SplashScre
             className="splash-image"
           />
         </div>
-
-        {/* Loading spinner */}
         <div className="splash-spinner-wrapper">
           <div className="splash-spinner" />
         </div>
