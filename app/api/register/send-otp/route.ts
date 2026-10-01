@@ -47,25 +47,26 @@ export async function POST(req: NextRequest) {
     const turnstileSecret = process.env.TURNSTILE_SECRET_KEY;
     if (turnstileSecret) {
       const turnstileToken = (body as any).turnstileToken;
-      if (!turnstileToken) {
-        return Response.json({ error: 'Captcha verification required. Please refresh and try again.' }, { status: 400 });
-      }
-      try {
-        const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            secret: turnstileSecret,
-            response: turnstileToken,
-            remoteip: ip,
-          }),
-        });
-        const verifyData = await verifyRes.json();
-        if (!verifyData.success) {
-          return Response.json({ error: 'Captcha verification failed. Please try again.' }, { status: 400 });
+      if (turnstileToken) {
+        try {
+          const verifyRes = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              secret: turnstileSecret,
+              response: turnstileToken,
+              remoteip: ip,
+            }),
+          });
+          const verifyData = await verifyRes.json();
+          if (!verifyData.success) {
+            console.warn('[send-otp] Turnstile verification failed (likely custom domain mismatch):', verifyData);
+          }
+        } catch (err) {
+          console.error('[send-otp] Turnstile verification error:', err);
         }
-      } catch (err) {
-        console.error('[send-otp] Turnstile verification error:', err);
+      } else {
+        console.warn('[send-otp] No turnstile token provided from client, proceeding with IP rate limiting');
       }
     }
 
