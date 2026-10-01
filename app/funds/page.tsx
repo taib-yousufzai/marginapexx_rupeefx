@@ -413,215 +413,75 @@ export default function FundsPage() {
 
                     <div className="payment-box">
                       {activeTab === 'deposit' && (
-                        <div className="deposit-container">
-                          <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                            <span style={{ fontSize: '0.7rem', color: '#006400', background: 'rgba(0,100,0,0.1)', padding: '4px 8px', borderRadius: '4px', fontWeight: 700 }}><i className="fas fa-clock"></i> 24*7 Deposits Available</span>
+                        <div className="deposit-container fadeInUp">
+                          <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                            <span style={{ fontSize: '0.75rem', color: '#16a34a', background: 'rgba(22,163,74,0.1)', padding: '6px 14px', borderRadius: '20px', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                              <i className="fas fa-bolt"></i> Instant 24*7 Automated UPI & NetBanking
+                            </span>
                           </div>
-                          {!submitted && (
-                            <div className="deposit-stepper" style={{ display: 'flex', gap: '8px', marginBottom: '24px' }}>
-                              {[1, 2, 3].map(s => (
-                                <div key={s} style={{ flex: 1, height: '4px', background: depositStep >= s ? '#006400' : 'var(--border-card)', borderRadius: '2px' }} />
+
+                          <div className="step-1-area">
+                            <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '8px', display: 'block' }}>Deposit Amount (INR)</label>
+                            <div className="amount-input-wrapper" style={{ marginBottom: '16px' }}>
+                              <span className="currency-symbol">₹</span>
+                              <input 
+                                type="number" 
+                                className="amount-input" 
+                                value={amount} 
+                                onChange={(e) => setAmount(e.target.value)} 
+                                placeholder="300.00" 
+                              />
+                            </div>
+                            <div className="quick-amounts" style={{ marginBottom: '24px' }}>
+                              {[500, 1000, 2000, 5000, 10000].map(val => (
+                                <div key={val} className="quick-btn" onClick={() => setAmount(val.toString())}>+₹{val}</div>
                               ))}
                             </div>
-                          )}
 
-                          {depositStep === 1 && !submitted && (
-                            <div className="step-1-area fadeInUp">
-                              <label>Amount (INR)</label>
-                              <div className="amount-input-wrapper">
-                                <span className="currency-symbol">₹</span>
-                                <input type="number" className="amount-input" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
-                              </div>
-                              <div className="quick-amounts">
-                                {[1000, 2000, 5000, 10000].map(val => (
-                                  <div key={val} className="quick-btn" onClick={() => setAmount(val.toString())}>+₹{val}</div>
-                                ))}
-                              </div>
-
-                              <div className="method-choice-title" style={{ marginTop: '24px', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', marginBottom: '16px', textAlign: 'center', letterSpacing: '0.5px' }}>CHOOSE PAYMENT METHOD</div>
-                              
-                              {/* Instant PaisaPay Gateway Option */}
-                              <button
-                                type="button"
-                                className="method-btn-direct"
-                                style={{
-                                  width: '100%',
-                                  marginBottom: '16px',
-                                  background: 'linear-gradient(135deg, #16a34a, #15803d)',
-                                  color: '#ffffff',
-                                  border: 'none',
-                                  padding: '14px',
-                                  borderRadius: '12px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '10px',
-                                  fontWeight: 700,
-                                  cursor: 'pointer',
-                                  boxShadow: '0 4px 12px rgba(22, 163, 74, 0.25)',
-                                }}
-                                disabled={Number(amount) < 300 || gatewayLoading}
-                                onClick={handlePaisaPayPayment}
-                              >
-                                <i className={`fas ${gatewayLoading ? 'fa-spinner fa-spin' : 'fa-bolt'}`} style={{ fontSize: '1.1rem' }}></i>
-                                <span>{gatewayLoading ? 'Redirecting to Gateway...' : 'Instant UPI / Gateway (PaisaPay)'}</span>
-                              </button>
-
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '14px 0 16px' }}>
-                                <div style={{ flex: 1, height: '1px', background: 'var(--border-card)' }}></div>
-                                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OR MANUAL TRANSFER</span>
-                                <div style={{ flex: 1, height: '1px', background: 'var(--border-card)' }}></div>
-                              </div>
-
-                              <div className="method-choice-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                                <button className="method-btn-direct" disabled={Number(amount) < 1000 || activeAccountLoading} onClick={() => handleProceedToPay('UPI')}>
-                                  <i className="fas fa-qrcode"></i>
-                                  <span>Manual UPI QR</span>
-                                </button>
-                                <button className="method-btn-direct" disabled={Number(amount) < 1000 || activeAccountLoading} onClick={() => handleProceedToPay('BANK_TRANSFER')}>
-                                  <i className="fas fa-university"></i>
-                                  <span>Manual Bank</span>
-                                </button>
-                              </div>
-                              {Number(amount) < 300 && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center', fontWeight: 600 }}>Minimum deposit is ₹300</p>}
-                              {activeAccountError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{activeAccountError}</p>}
-                              {submitError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{submitError}</p>}
-                            </div>
-                          )}
-
-                          {depositStep === 2 && !submitted && (
-                            <div className="step-2-area fadeInUp">
-                              <div className="section-title" style={{ fontSize: '0.8rem', fontWeight: 800, marginBottom: '20px', color: 'var(--text-primary)' }}>
-                                PAYMENT DETAILS ({paymentMethod === 'UPI' ? 'UPI' : 'BANK'})
-                              </div>
-                              {!activeAccount ? (
-                                <div style={{ textAlign: 'center', padding: '40px 20px', background: 'var(--icon-bg)', borderRadius: '16px', border: '1px solid var(--border-card)' }}>
-                                  <i className="fas fa-university" style={{ fontSize: '2.5rem', color: '#8b949e', marginBottom: '16px', display: 'block' }}></i>
-                                  <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)' }}>No Banking Details Available</h3>
-                                  <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.5, maxWidth: '320px', marginLeft: 'auto', marginRight: 'auto' }}>
-                                    No active payment accounts have been configured for deposits. Please contact support or your administrator.
-                                  </p>
-                                  <button onClick={() => setDepositStep(1)} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginTop: '24px', background: 'var(--card-bg)', border: '1px solid var(--border-card)', padding: '10px 20px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', cursor: 'pointer' }}>
-                                    <i className="fas fa-arrow-left"></i> Change Amount / Method
-                                  </button>
+                            <div style={{ background: 'var(--icon-bg)', padding: '16px', borderRadius: '16px', border: '1px solid var(--border-card)', marginBottom: '24px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                                <i className="fas fa-shield-alt" style={{ color: '#16a34a', fontSize: '1.2rem' }}></i>
+                                <div>
+                                  <div style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)' }}>Secure Payment Gateway</div>
+                                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>UPI (GPay, PhonePe, Paytm), NetBanking & Cards</div>
                                 </div>
-                              ) : (
-                                <div className="payment-details-card">
-                                  <div className="amount-edit-row" style={{ marginBottom: '20px', padding: '16px', background: 'var(--icon-bg)', borderRadius: '16px', border: '1px solid var(--border-card)' }}>
-                                    <label style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>CONFIRM DEPOSIT AMOUNT</label>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                      <span style={{ fontSize: '1.5rem', fontWeight: 800 }}>₹</span>
-                                      <input
-                                        type="number"
-                                        value={amount}
-                                        onChange={(e) => setAmount(e.target.value)}
-                                        style={{ flex: 1, background: 'transparent', border: 'none', outline: 'none', fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', width: '100%' }}
-                                      />
-                                    </div>
-                                  </div>
-
-                                  {paymentMethod === 'UPI' ? (
-                                    <div className="upi-payment-info" style={{ textAlign: 'center' }}>
-                                      {activeAccount?.qr_image_url ? (
-                                        <div className="qr-box-wrapper" style={{ marginBottom: '24px' }}>
-                                          <div className="qr-container" style={{ background: 'white', padding: '20px', borderRadius: '24px', display: 'inline-block', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', border: '1px solid #eee' }}>
-                                            <img src={activeAccount.qr_image_url} alt="Payment QR" style={{ width: 200, height: 200, objectFit: 'contain' }} />
-                                          </div>
-                                          <button
-                                            onClick={downloadQRCode}
-                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '16px auto 0', background: 'var(--icon-bg)', border: '1px solid var(--border-card)', padding: '10px 20px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', cursor: 'pointer' }}
-                                          >
-                                            <i className="fas fa-download"></i> Download QR
-                                          </button>
-                                        </div>
-                                      ) : activeAccount?.upi_id ? (
-                                        <div className="qr-box-wrapper" style={{ marginBottom: '24px' }}>
-                                          <div className="qr-container" style={{ background: 'white', padding: '20px', borderRadius: '24px', display: 'inline-block', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', border: '1px solid #eee' }}>
-                                            <QRCode value={`upi://pay?pa=${activeAccount.upi_id}&pn=${encodeURIComponent(activeAccount.account_holder || '')}&am=${amount}&cu=INR`} size={200} />
-                                          </div>
-                                          <button
-                                            onClick={downloadQRCode}
-                                            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '16px auto 0', background: 'var(--icon-bg)', border: '1px solid var(--border-card)', padding: '10px 20px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-primary)', cursor: 'pointer' }}
-                                          >
-                                            <i className="fas fa-download"></i> Download QR
-                                          </button>
-                                        </div>
-                                      ) : (
-                                        <div style={{ padding: '20px', marginBottom: '20px', background: 'var(--icon-bg)', borderRadius: '12px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                                          -
-                                        </div>
-                                      )}
-
-                                      <div className="section-divider" style={{ height: '1px', background: 'var(--border-card)', margin: '20px 0', borderBottom: '1px dashed var(--border-card)' }}></div>
-
-                                      <div className="copyable-row" onClick={() => (activeAccount?.upi_id ? copyToClipboard(activeAccount.upi_id, 'UPI ID') : null)}>
-                                        <div><strong>UPI ID / VPA</strong><span>{activeAccount?.upi_id || '-'}</span></div>
-                                        {activeAccount?.upi_id ? <i className="fas fa-copy copy-icon"></i> : null}
-                                      </div>
-                                      <div className="copyable-row" onClick={() => (activeAccount?.account_holder ? copyToClipboard(activeAccount.account_holder, 'Beneficiary') : null)}>
-                                        <div><strong>Beneficiary Name</strong><span>{activeAccount?.account_holder || '-'}</span></div>
-                                        {activeAccount?.account_holder ? <i className="fas fa-copy copy-icon"></i> : null}
-                                      </div>
-
-                                      <p style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '16px', lineHeight: '1.5' }}>
-                                        <i className="fas fa-info-circle"></i> Scan the QR code or copy details to pay using any UPI app like PhonePe, Google Pay, or Paytm.
-                                      </p>
-                                    </div>
-                                  ) : (
-                                    <div className="bank-payment-info">
-                                      {[
-                                        { label: 'Beneficiary', value: activeAccount?.account_holder || '-' },
-                                        { label: 'Account No', value: activeAccount?.account_no || '-' },
-                                        { label: 'IFSC Code', value: activeAccount?.ifsc || '-' },
-                                        { label: 'Bank Name', value: activeAccount?.bank_name || '-' }
-                                      ].map((item, idx) => (
-                                        <div key={idx} className="copyable-row" onClick={() => item.value !== '-' && copyToClipboard(item.value, item.label)}>
-                                          <div><strong>{item.label}</strong><span>{item.value}</span></div>
-                                          {item.value !== '-' && <i className="fas fa-copy copy-icon"></i>}
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                  <button className="submit-funds-btn" style={{ marginTop: '24px' }} onClick={() => setDepositStep(3)}>
-                                    I Have Paid <i className="fas fa-chevron-right"></i>
-                                  </button>
-                                  <button className="back-link" onClick={() => setDepositStep(1)} style={{ display: 'block', width: '100%', textAlign: 'center', marginTop: '16px', background: 'none', border: 'none', color: 'var(--text-muted)', fontSize: '0.8rem', cursor: 'pointer' }}>
-                                    <i className="fas fa-arrow-left"></i> Change Amount / Method
-                                  </button>
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          {depositStep === 3 && !submitted && (
-                            <div className="step-3-area fadeInUp">
-                              <div className="section-title" style={{ fontSize: '0.8rem', fontWeight: 800, marginBottom: '20px', color: 'var(--text-primary)' }}>VERIFY TRANSACTION</div>
-                              <div className="input-group" style={{ marginBottom: '20px' }}>
-                                <label>12-DIGIT UTR NUMBER</label>
-                                <input type="text" className="amount-input" style={{ fontSize: '1.2rem', padding: '15px', background: 'var(--icon-bg)', borderRadius: '12px' }} maxLength={12} placeholder="Enter UTR / Ref No" value={utr} onChange={(e) => setUtr(e.target.value.replace(/[^0-9]/g, ''))} />
                               </div>
-                              <div className="upload-group" style={{ marginBottom: '24px' }}>
-                                <label>PAYMENT SCREENSHOT</label>
-                                <div className="screenshot-dropzone" style={{ border: '2px dashed var(--border-card)', borderRadius: '16px', padding: '30px', textAlign: 'center', cursor: 'pointer' }} onClick={() => fileInputRef.current?.click()}>
-                                  {screenshot ? <span><i className="fas fa-file-image"></i> {screenshot.name}</span> : <span><i className="fas fa-cloud-upload"></i> Upload Screenshot</span>}
-                                </div>
-                                <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={(e) => setScreenshot(e.target.files?.[0] || null)} />
+                              <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                                • Balance is added to your account instantly upon payment.<br/>
+                                • Minimum deposit amount: <strong>₹300</strong>.<br/>
+                                • Safe & 256-bit encrypted transaction.
                               </div>
-                              <button className="submit-funds-btn" disabled={(utr.length > 0 && utr.length !== 12) || !screenshot || submitting} onClick={handleConfirmDeposit}>
-                                {submitting ? 'Processing...' : 'Submit Deposit Request'}
-                              </button>
-                              {submitError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{submitError}</p>}
                             </div>
-                          )}
 
-                          {submitted && (
-                            <div className="success-area fadeInUp" style={{ textAlign: 'center', padding: '20px 0' }}>
-                              <div style={{ fontSize: '3rem', color: '#006400', marginBottom: '16px' }}><i className="fas fa-check-circle"></i></div>
-                              <h3 style={{ fontWeight: 800, marginBottom: '8px' }}>Request Submitted</h3>
-                              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '24px' }}>Your request for ₹{amount} is pending verification. Funds usually reflect within 60 mins.</p>
-                              <button className="submit-funds-btn" onClick={() => handleTabChange('deposit')}>Done</button>
-                            </div>
-                          )}
+                            <button
+                              type="button"
+                              className="submit-funds-btn"
+                              style={{
+                                width: '100%',
+                                background: 'linear-gradient(135deg, #16a34a, #15803d)',
+                                color: '#ffffff',
+                                border: 'none',
+                                padding: '16px',
+                                borderRadius: '14px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                gap: '10px',
+                                fontSize: '0.95rem',
+                                fontWeight: 800,
+                                cursor: 'pointer',
+                                boxShadow: '0 4px 16px rgba(22, 163, 74, 0.3)',
+                              }}
+                              disabled={Number(amount) < 300 || gatewayLoading}
+                              onClick={handlePaisaPayPayment}
+                            >
+                              <i className={`fas ${gatewayLoading ? 'fa-spinner fa-spin' : 'fa-lock'}`}></i>
+                              <span>{gatewayLoading ? 'Connecting Gateway...' : `Pay ₹${amount || '0'} via PaisaPay`}</span>
+                            </button>
+
+                            {Number(amount) < 300 && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center', fontWeight: 600 }}>Minimum deposit is ₹300</p>}
+                            {submitError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{submitError}</p>}
+                          </div>
                         </div>
                       )}
 
