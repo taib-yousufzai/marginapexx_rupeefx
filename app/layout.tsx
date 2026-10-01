@@ -21,7 +21,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: 'RupeeFX',
   description: 'Clean Icons & Trading App UI',
-  manifest: '/manifest.webmanifest?v=25',
+  manifest: '/manifest.webmanifest?v=30',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
