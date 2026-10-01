@@ -10,7 +10,7 @@ import { OrdersDataProvider } from '@/contexts/OrdersContext';
 import { BalanceDataProvider } from '@/contexts/BalanceContext';
 import ClientShell from '@/components/ClientShell';
 export const viewport: Viewport = {
-  themeColor: [{ media: '(prefers-color-scheme: light)', color: '#ffffff' }, { media: '(prefers-color-scheme: dark)', color: '#1E1E1E' }],
+  themeColor: '#000000',
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
@@ -21,7 +21,7 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: 'RupeeFX',
   description: 'Clean Icons & Trading App UI',
-  manifest: '/manifest.webmanifest?v=9',
+  manifest: '/manifest.webmanifest?v=25',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
