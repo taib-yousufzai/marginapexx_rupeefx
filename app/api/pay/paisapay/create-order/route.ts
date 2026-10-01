@@ -13,8 +13,8 @@ export async function POST(req: NextRequest) {
     const { amount, mobile } = body;
 
     const numAmount = Number(amount);
-    if (!numAmount || isNaN(numAmount) || numAmount < 100) {
-      return NextResponse.json({ error: 'Minimum deposit is ₹100' }, { status: 400 });
+    if (!numAmount || isNaN(numAmount) || numAmount < 300) {
+      return NextResponse.json({ error: 'Minimum deposit is ₹300' }, { status: 400 });
     }
 
     const cleanMobile = String(mobile || '').replace(/\D/g, '');

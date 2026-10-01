@@ -191,8 +191,8 @@ export default function FundsPage() {
   const handlePaisaPayPayment = async () => {
     setSubmitError(null);
     const numAmount = Number(amount);
-    if (!amount || isNaN(numAmount) || numAmount < 100) {
-      setToast({ message: 'Minimum deposit is ₹100', type: 'error' });
+    if (!amount || isNaN(numAmount) || numAmount < 300) {
+      setToast({ message: 'Minimum deposit is ₹300', type: 'error' });
       return;
     }
 
@@ -460,7 +460,7 @@ export default function FundsPage() {
                                   cursor: 'pointer',
                                   boxShadow: '0 4px 12px rgba(22, 163, 74, 0.25)',
                                 }}
-                                disabled={Number(amount) < 100 || gatewayLoading}
+                                disabled={Number(amount) < 300 || gatewayLoading}
                                 onClick={handlePaisaPayPayment}
                               >
                                 <i className={`fas ${gatewayLoading ? 'fa-spinner fa-spin' : 'fa-bolt'}`} style={{ fontSize: '1.1rem' }}></i>
@@ -483,7 +483,7 @@ export default function FundsPage() {
                                   <span>Manual Bank</span>
                                 </button>
                               </div>
-                              {Number(amount) < 100 && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center', fontWeight: 600 }}>Minimum deposit is ₹100</p>}
+                              {Number(amount) < 300 && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center', fontWeight: 600 }}>Minimum deposit is ₹300</p>}
                               {activeAccountError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{activeAccountError}</p>}
                               {submitError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{submitError}</p>}
                             </div>
