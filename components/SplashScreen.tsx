@@ -60,7 +60,7 @@ export default function SplashScreen({ onComplete, duration = 3000 }: SplashScre
       <div className="splash-content">
         <div className="splash-image-wrapper">
           <img
-            src="/splash-screen.jpg"
+            src="/RupeeFX_LOGO_Main.jpeg"
             alt="RupeeFx - Trade | Grow | Global"
             className="splash-image"
           />

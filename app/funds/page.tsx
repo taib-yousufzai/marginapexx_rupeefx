@@ -69,6 +69,7 @@ export default function FundsPage() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const [supportPhone, setSupportPhone] = useState<string>('');
+  const [gatewayLoading, setGatewayLoading] = useState<boolean>(false);
 
   useEffect(() => {
     api.get<{ support_phone?: string; broker_phone?: string }>('/api/user/profile')
@@ -184,6 +185,63 @@ export default function FundsPage() {
         setActiveAccountError('Network error. Please try again.');
         setActiveAccountLoading(false);
       }
+    }
+  };
+
+  const handlePaisaPayPayment = async () => {
+    setSubmitError(null);
+    const numAmount = Number(amount);
+    if (!amount || isNaN(numAmount) || numAmount < 100) {
+      setToast({ message: 'Minimum deposit is ₹100', type: 'error' });
+      return;
+    }
+
+    setGatewayLoading(true);
+    try {
+      const session = await getSession();
+      if (!session) {
+        setToast({ message: 'Please log in to make a deposit', type: 'error' });
+        return;
+      }
+
+      const mobile = session.user?.user_metadata?.phone || session.user?.phone || '9999999999';
+
+      const res = await fetch('/api/pay/paisapay/create-order', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: numAmount, mobile }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to initiate gateway payment');
+      }
+
+      // Automatically construct and submit POST form to PaisaPay
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = data.gatewayUrl;
+
+      const tokenInput = document.createElement('input');
+      tokenInput.type = 'hidden';
+      tokenInput.name = 'token';
+      tokenInput.value = data.token;
+      form.appendChild(tokenInput);
+
+      const payloadInput = document.createElement('input');
+      payloadInput.type = 'hidden';
+      payloadInput.name = 'payload';
+      payloadInput.value = data.payload;
+      form.appendChild(payloadInput);
+
+      document.body.appendChild(form);
+      form.submit();
+    } catch (err: any) {
+      console.error('PaisaPay initiation error:', err);
+      setSubmitError(err.message || 'Payment initiation failed');
+      setToast({ message: err.message || 'Payment initiation failed', type: 'error' });
+    } finally {
+      setGatewayLoading(false);
     }
   };
 
@@ -381,17 +439,51 @@ export default function FundsPage() {
                               </div>
 
                               <div className="method-choice-title" style={{ marginTop: '24px', fontSize: '0.75rem', fontWeight: 800, color: 'var(--text-muted)', marginBottom: '16px', textAlign: 'center', letterSpacing: '0.5px' }}>CHOOSE PAYMENT METHOD</div>
+                              
+                              {/* Instant PaisaPay Gateway Option */}
+                              <button
+                                type="button"
+                                className="method-btn-direct"
+                                style={{
+                                  width: '100%',
+                                  marginBottom: '16px',
+                                  background: 'linear-gradient(135deg, #16a34a, #15803d)',
+                                  color: '#ffffff',
+                                  border: 'none',
+                                  padding: '14px',
+                                  borderRadius: '12px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  gap: '10px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  boxShadow: '0 4px 12px rgba(22, 163, 74, 0.25)',
+                                }}
+                                disabled={Number(amount) < 100 || gatewayLoading}
+                                onClick={handlePaisaPayPayment}
+                              >
+                                <i className={`fas ${gatewayLoading ? 'fa-spinner fa-spin' : 'fa-bolt'}`} style={{ fontSize: '1.1rem' }}></i>
+                                <span>{gatewayLoading ? 'Redirecting to Gateway...' : 'Instant UPI / Gateway (PaisaPay)'}</span>
+                              </button>
+
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '14px 0 16px' }}>
+                                <div style={{ flex: 1, height: '1px', background: 'var(--border-card)' }}></div>
+                                <span style={{ fontSize: '0.65rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>OR MANUAL TRANSFER</span>
+                                <div style={{ flex: 1, height: '1px', background: 'var(--border-card)' }}></div>
+                              </div>
+
                               <div className="method-choice-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                                 <button className="method-btn-direct" disabled={Number(amount) < 1000 || activeAccountLoading} onClick={() => handleProceedToPay('UPI')}>
                                   <i className="fas fa-qrcode"></i>
-                                  <span>Pay via UPI</span>
+                                  <span>Manual UPI QR</span>
                                 </button>
                                 <button className="method-btn-direct" disabled={Number(amount) < 1000 || activeAccountLoading} onClick={() => handleProceedToPay('BANK_TRANSFER')}>
                                   <i className="fas fa-university"></i>
-                                  <span>Bank Transfer</span>
+                                  <span>Manual Bank</span>
                                 </button>
                               </div>
-                              {Number(amount) < 1000 && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center', fontWeight: 600 }}>Minimum deposit is ₹1,000</p>}
+                              {Number(amount) < 100 && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center', fontWeight: 600 }}>Minimum deposit is ₹100</p>}
                               {activeAccountError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{activeAccountError}</p>}
                               {submitError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{submitError}</p>}
                             </div>
