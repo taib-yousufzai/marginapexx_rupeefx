@@ -27,7 +27,7 @@ export default function SplashLoader() {
       style={{
         position: 'fixed',
         inset: 0,
-        backgroundColor: '#ffffff',
+        backgroundColor: '#000000',
         zIndex: 99999,
         display: hidden ? 'none' : 'flex',
         justifyContent: 'center',

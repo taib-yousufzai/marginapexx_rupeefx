@@ -57,6 +57,7 @@ export default function RootLayout({
         <style
           dangerouslySetInnerHTML={{
             __html: `
+              html, body { background-color: #000000 !important; color: #FFFFFF; }
               html.dark, html[data-theme="dark"], html.dark body, body.dark { background-color: #121212 !important; color: #FFFFFF; }
               html.black, html[data-theme="black"], html.black body, body.black { background-color: #000000 !important; color: #FFFFFF; }
               html.blue, html[data-theme="blue"], html.blue body, body.blue { background-color: #0A1128 !important; color: #FFFFFF; }
@@ -66,7 +67,7 @@ export default function RootLayout({
         />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('rupeefx_theme')||localStorage.getItem('marginApexTheme')||'light';var doc=document.documentElement;doc.classList.remove('dark','black','blue','light');doc.classList.add(t);doc.setAttribute('data-theme',t);var bg=t==='black'?'#000000':(t==='dark'?'#121212':(t==='blue'?'#0A1128':'#F0F2F5'));doc.style.backgroundColor=bg;var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);document.body.style.backgroundColor=bg;obs.disconnect();}});o.observe(doc,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
+            __html: `(function(){try{var t=localStorage.getItem('rupeefx_theme')||localStorage.getItem('marginApexTheme')||'black';var doc=document.documentElement;doc.classList.remove('dark','black','blue','light');doc.classList.add(t);doc.setAttribute('data-theme',t);var bg=t==='black'?'#000000':(t==='dark'?'#121212':(t==='blue'?'#0A1128':(t==='light'?'#F0F2F5':'#000000')));doc.style.backgroundColor=bg;var o=new MutationObserver(function(m,obs){if(document.body){document.body.classList.remove('dark','black','blue','light');document.body.classList.add(t);document.body.setAttribute('data-theme',t);document.body.style.backgroundColor=bg;obs.disconnect();}});o.observe(doc,{childList:true});}catch(e){}if('scrollRestoration' in history)history.scrollRestoration='manual';})();`
           }}
         />
       </head>
