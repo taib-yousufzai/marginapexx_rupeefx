@@ -139,6 +139,23 @@ export function evaluateOrderTriggerCondition(
   return { shouldTrigger, fillPrice };
 }
 
+// ── In-Memory Micro-Cache for ultra low-latency matching and minimal DB IO ───
+let cachedPendingOrders: any[] = [];
+let lastPendingOrdersFetch = 0;
+
+let cachedOpenPositions: any[] = [];
+let lastOpenPositionsFetch = 0;
+
+const cachedProfiles: Map<string, { balance: number; auto_sqoff: number; ts: number }> = new Map();
+const segmentSettingsCache: Map<string, { entry_buffer: number; exit_buffer: number }> = new Map();
+let lastSegSettingsFetch = 0;
+
+export function invalidateMatchingCache() {
+  lastPendingOrdersFetch = 0;
+  lastOpenPositionsFetch = 0;
+  cachedProfiles.clear();
+}
+
 /**
  * Iterates over all PENDING orders and open positions to check if they need to be triggered or updated.
  * Driven by the daily/regular price sync.
@@ -158,50 +175,78 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
     });
   }
 
-  // 1. Fetch pending orders and open positions in parallel
-  const [ordersRes, positionsRes] = await Promise.all([
-    admin.from('orders').select('*').eq('status', 'PENDING'),
-    admin.from('positions').select('*').eq('status', 'open')
-  ]);
+  const now = Date.now();
+  const PENDING_CACHE_TTL_MS = 500;
+  const POSITIONS_CACHE_TTL_MS = 500;
+  const SEG_SETTINGS_CACHE_TTL_MS = 10000;
 
-  const pendingOrders = ordersRes.data ?? [];
-  const openPositions = positionsRes.data ?? [];
+  let pendingOrders = cachedPendingOrders;
+  let openPositions = cachedOpenPositions;
 
-  if (ordersRes.error) {
-    console.error('[Order Matching] Error fetching pending orders:', ordersRes.error);
+  const fetchOrdersNeeded = now - lastPendingOrdersFetch > PENDING_CACHE_TTL_MS;
+  const fetchPositionsNeeded = now - lastOpenPositionsFetch > POSITIONS_CACHE_TTL_MS;
+
+  if (fetchOrdersNeeded || fetchPositionsNeeded) {
+    const promises: Promise<any>[] = [];
+    if (fetchOrdersNeeded) {
+      promises.push(admin.from('orders').select('*').eq('status', 'PENDING'));
+    } else {
+      promises.push(Promise.resolve(null));
+    }
+
+    if (fetchPositionsNeeded) {
+      promises.push(admin.from('positions').select('*').eq('status', 'open'));
+    } else {
+      promises.push(Promise.resolve(null));
+    }
+
+    const [ordersRes, positionsRes] = await Promise.all(promises);
+    if (ordersRes) {
+      if (!ordersRes.error && ordersRes.data) {
+        cachedPendingOrders = ordersRes.data;
+        lastPendingOrdersFetch = now;
+      }
+      pendingOrders = cachedPendingOrders;
+    }
+    if (positionsRes) {
+      if (!positionsRes.error && positionsRes.data) {
+        cachedOpenPositions = positionsRes.data;
+        lastOpenPositionsFetch = now;
+      }
+      openPositions = cachedOpenPositions;
+    }
   }
-  if (positionsRes.error) {
-    console.error('[Order Matching] Error fetching open positions:', positionsRes.error);
-  }
 
-  // Pre-fetch segment settings for all involved users in a single query
+  // Pre-fetch segment settings with 10s cache
   const userIds = Array.from(new Set([
     ...pendingOrders.map(o => o.user_id),
     ...openPositions.map(p => p.user_id)
-  ]));
+  ])).filter(Boolean);
 
-  const segmentSettingsCache = new Map<string, { entry_buffer: number; exit_buffer: number }>();
-  if (userIds.length > 0) {
-    const { data: allSegSettings, error: segSettingsErr } = await admin
-      .from('segment_settings')
-      .select('user_id, segment, side, entry_buffer, exit_buffer')
-      .in('user_id', userIds);
+  const missingUserIds = userIds.filter(uid => !Array.from(segmentSettingsCache.keys()).some(k => k.startsWith(`${uid}|`)));
 
-    const toDb = (val: any, fallback: number) => {
-      const num = Number(val);
-      if (!val || isNaN(num)) return fallback;
-      return num > 0.005 ? num / 100 : num;
-    };
+  if (now - lastSegSettingsFetch > SEG_SETTINGS_CACHE_TTL_MS || missingUserIds.length > 0) {
+    if (userIds.length > 0) {
+      const { data: allSegSettings, error: segSettingsErr } = await admin
+        .from('segment_settings')
+        .select('user_id, segment, side, entry_buffer, exit_buffer')
+        .in('user_id', userIds);
 
-    if (segSettingsErr) {
-      console.error('[Order Matching] Error pre-fetching segment settings:', segSettingsErr);
-    } else if (allSegSettings) {
-      for (const s of allSegSettings) {
-        const key = `${s.user_id}|${s.segment}|${s.side}`;
-        segmentSettingsCache.set(key, {
-          entry_buffer: toDb(s.entry_buffer, 0.003),
-          exit_buffer: toDb(s.exit_buffer, 0.0017)
-        });
+      const toDb = (val: any, fallback: number) => {
+        const num = Number(val);
+        if (!val || isNaN(num)) return fallback;
+        return num > 0.005 ? num / 100 : num;
+      };
+
+      if (!segSettingsErr && allSegSettings) {
+        for (const s of allSegSettings) {
+          const key = `${s.user_id}|${s.segment}|${s.side}`;
+          segmentSettingsCache.set(key, {
+            entry_buffer: toDb(s.entry_buffer, 0.003),
+            exit_buffer: toDb(s.exit_buffer, 0.0017)
+          });
+        }
+        lastSegSettingsFetch = now;
       }
     }
   }
@@ -428,21 +473,32 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
     const closedPositionIds = new Set<string>();
 
     // Evaluate Drawdown Limit per user
+    const PROFILE_CACHE_TTL_MS = 2000;
     for (const [userId, userPositions] of Object.entries(userOpenPositions)) {
-      // 1. Fetch user profile
-      const { data: profile, error: profileErr } = await admin
-        .from('profiles')
-        .select('balance, auto_sqoff')
-        .eq('id', userId)
-        .single();
+      // 1. Fetch user profile (2s cache)
+      let profileData = cachedProfiles.get(userId);
+      if (!profileData || now - profileData.ts > PROFILE_CACHE_TTL_MS) {
+        const { data: profile, error: profileErr } = await admin
+          .from('profiles')
+          .select('balance, auto_sqoff')
+          .eq('id', userId)
+          .single();
 
-      if (profileErr || !profile) {
-        console.error(`[Order Matching] Error fetching profile for user ${userId}:`, profileErr);
-        continue;
+        if (profileErr || !profile) {
+          console.error(`[Order Matching] Error fetching profile for user ${userId}:`, profileErr);
+          continue;
+        }
+
+        profileData = {
+          balance: Number(profile.balance || 0),
+          auto_sqoff: Number(profile.auto_sqoff ?? 90),
+          ts: now
+        };
+        cachedProfiles.set(userId, profileData);
       }
 
-      const balance = Number(profile.balance || 0);
-      const autoSqoffPercent = Number(profile.auto_sqoff ?? 90);
+      const balance = profileData.balance;
+      const autoSqoffPercent = profileData.auto_sqoff;
 
       // Guard: Bypass if balance is 0/negative or auto_sqoff is disabled (<= 0)
       if (balance <= 0 || autoSqoffPercent <= 0) {

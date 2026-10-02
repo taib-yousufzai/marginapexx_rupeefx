@@ -15,8 +15,12 @@ import { SubscriptionManager } from './subscriptionManager.ts';
 import { DbBatchWriter } from './dbWriter.ts';
 import { TickProcessor } from './processor.ts';
 import { BinanceTicker } from './binance.ts';
+import { ComexTicker } from './comex.ts';
+import { ForexTicker } from './forex.ts';
+import { USTicker } from './us.ts';
 import { WebSocketGateway } from './gateway.ts';
 import { CandleAggregator } from './candleAggregator.ts';
+import { AsyncDbWriter } from './asyncDbWriter.ts';
 
 import { processPendingOrdersAndPositions } from '../../lib/orderMatching.ts';
 import { telemetry } from '../../lib/metrics.ts';
@@ -30,7 +34,11 @@ class TickerDaemon {
   private dbWriter: DbBatchWriter;
   private processor: TickProcessor;
   private binanceTicker: BinanceTicker;
+  private comexTicker: ComexTicker;
+  private forexTicker: ForexTicker;
+  private usTicker: USTicker;
   private sessionMonitor: KiteSessionMonitor;
+  private asyncDbWriter: AsyncDbWriter;
 
   private gateway!: WebSocketGateway;
   private candleAggregator!: CandleAggregator;
@@ -45,11 +53,15 @@ class TickerDaemon {
 
   constructor() {
     this.subscriptionManager = new SubscriptionManager();
-    // Flush to DB once per 50ms for faster SL/TP and liquidation response
-    this.dbWriter = new DbBatchWriter(50);
+    // Batch process ticks at high-frequency 250ms for sub-second SL/TP response without overloading Postgres
+    this.dbWriter = new DbBatchWriter(250);
     this.processor = new TickProcessor(this.subscriptionManager, this.dbWriter);
     this.binanceTicker = new BinanceTicker(this.dbWriter);
+    this.comexTicker = new ComexTicker(this.dbWriter);
+    this.forexTicker = new ForexTicker(this.dbWriter);
+    this.usTicker = new USTicker(this.dbWriter);
     this.sessionMonitor = new KiteSessionMonitor();
+    this.asyncDbWriter = new AsyncDbWriter();
   }
 
   private async initKite() {
@@ -89,40 +101,56 @@ class TickerDaemon {
     // Create combined HTTP server for Health check, REST API, and WebSocket Gateway
     const port = Number(process.env.PORT || 8080);
     const server = http.createServer((req, res) => {
+      const rawUrl = req.url || '/';
+      const pathname = new URL(rawUrl, 'http://localhost').pathname;
+
+      const jsonHeaders = {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+      };
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, jsonHeaders);
+        res.end();
+        return;
+      }
+
       try {
-        const rawUrl = req.url || '/';
-        const pathname = rawUrl.split('?')[0];
-
-        const corsHeaders = {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        };
-
-        if (req.method === 'OPTIONS') {
-          res.writeHead(204, corsHeaders);
-          res.end();
+        // POST /api/fast-order — direct sub-second order placement route
+        if (pathname === '/api/fast-order' && req.method === 'POST') {
+          let bodyStr = '';
+          req.on('data', chunk => { bodyStr += chunk; });
+          req.on('end', async () => {
+            try {
+              const body = JSON.parse(bodyStr);
+              const result = await this.gateway.orderEngine.executeOrder(body);
+              res.writeHead(result.success ? 200 : 400, jsonHeaders);
+              res.end(JSON.stringify(result));
+            } catch (pErr: any) {
+              res.writeHead(400, jsonHeaders);
+              res.end(JSON.stringify({ success: false, error: pErr.message || 'Invalid JSON body' }));
+            }
+          });
           return;
         }
 
-        const jsonHeaders = { ...corsHeaders, 'Content-Type': 'application/json' };
-
-        // GET /health — structured health check for Railway and monitoring
+        // GET /health
         if (pathname === '/health' || pathname === '/') {
           const sessionStatus = this.sessionMonitor.getStatus();
-          const healthy = this.binanceTicker ? this.binanceTicker.connected : true;
           const redisHealth = getRedisHealthStatus();
           const payload = JSON.stringify({
-            status: healthy ? 'ok' : 'degraded',
-            uptime: process.uptime(),
-            kiteConnected: !!this.ticker && !this.isReconnecting,
+            status: 'ok',
+            kiteConnected: this.ticker ? this.ticker.connected() : false,
             kiteSessionValid: sessionStatus.sessionValid,
-            kiteSessionExpiresAt: sessionStatus.expiresAt?.toISOString() ?? null,
             minutesUntilExpiry: sessionStatus.minutesUntilExpiry,
             lastSuccessfulLogin: sessionStatus.lastSuccessfulLogin?.toISOString() ?? null,
             lastLoginAttempt: sessionStatus.lastLoginAttempt?.toISOString() ?? null,
             lastLoginFailure: sessionStatus.lastLoginFailure?.toISOString() ?? null,
             binanceConnected: this.binanceTicker ? this.binanceTicker.connected : false,
+            comexConnected: this.comexTicker ? this.comexTicker.connected : false,
+            forexConnected: this.forexTicker ? this.forexTicker.connected : false,
             activeOrders: 0,
             activePositions: 0,
             timestamp: new Date().toISOString(),
@@ -195,11 +223,15 @@ class TickerDaemon {
     logger.info('Stateless order matching mode active.');
 
 
-    // 2. Start database batch writer
+    // 2. Start database batch writer & Async DB persistence worker
     this.dbWriter.start();
+    this.asyncDbWriter.start();
 
-    // 3. Start Binance WebSocket Ticker
+    // 3. Start Binance WebSocket Ticker, COMEX Ticker, FOREX Ticker & US Ticker
     this.binanceTicker.start();
+    this.comexTicker.start();
+    this.forexTicker.start();
+    this.usTicker.start();
 
     // 4. Try to initialize Kite Ticker with current session from DB
     const initialSession = await getSharedKiteSession().catch(() => null);
@@ -461,8 +493,11 @@ class TickerDaemon {
           this.ticker.disconnect();
         }
 
-        logger.info('Stopping Binance WebSocket Ticker...');
+        logger.info('Stopping Binance, COMEX, FOREX & US Tickers...');
         this.binanceTicker.stop();
+        this.comexTicker.stop();
+        this.forexTicker.stop();
+        this.usTicker.stop();
 
         this.candleAggregator.stop();
 
