@@ -62,15 +62,20 @@ declare global {
   }
 }
 
-// Read cache safely from localStorage — used only for expiry list, never for strikes
+// Read/write optimistic local cache for instant zero-latency rendering
 function getLocalCache(key: string) {
-  // Always return null — we never serve stale option chain data from cache.
-  // The API is always called fresh so the ATM window reflects the current spot.
-  return null;
+  try {
+    const raw = typeof window !== 'undefined' ? sessionStorage.getItem(`oc_cache_${key}`) : null;
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
 }
 
-function setLocalCache(_key: string, _data: any) {
-  // No-op — caching disabled to ensure strikes are always fresh
+function setLocalCache(key: string, data: any) {
+  try {
+    if (typeof window !== 'undefined' && data) {
+      sessionStorage.setItem(`oc_cache_${key}`, JSON.stringify(data));
+    }
+  } catch { /* ignore */ }
 }
 
 function OptionChainContent() {
@@ -342,18 +347,16 @@ function OptionChainContent() {
     hasRefetchedRef.current = false;
   }, [normalizedSymbol]);
 
-  // Re-fetch when live spot price diverges from the API's underlyingPrice
-  // or when the server used a median fallback due to missing cold-start Redis quotes.
+  // Re-fetch only when live spot price diverges significantly beyond the 31-strike buffer
   const hasRefetchedRef = useRef(false);
   useEffect(() => {
     if (hasRefetchedRef.current || !data?.underlyingPrice || !spotPrice || spotPrice <= 0) return;
     const apiAtm = data.underlyingPrice;
     const absDiff = Math.abs(spotPrice - apiAtm);
     const strikeStep = normalizedSymbol.includes('MIDCP') ? 25 : (normalizedSymbol.includes('NIFTY') ? 50 : 100);
-    const usedFallback = (data as any)?.usedFallback;
 
-    // Trigger re-fetch if server used median fallback OR if spot differs by >= 1 strike step
-    if (usedFallback || absDiff >= strikeStep || (absDiff / apiAtm) > 0.0015) {
+    // Only trigger re-fetch if spot moves beyond 10 strike steps (outside the 31-strike window)
+    if (absDiff >= strikeStep * 10) {
       hasRefetchedRef.current = true;
       lastSpotPriceRef.current = spotPrice;
       (async () => {

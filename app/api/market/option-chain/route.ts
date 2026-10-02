@@ -39,6 +39,11 @@ const MCX_BASE_MAP: Record<string, string> = {
   GOLD: 'GOLDM', SILVER: 'SILVERM', CRUDEOIL: 'CRUDEOILM', NATURALGAS: 'NATGASMINI',
 };
 
+// High-performance in-memory caches (shared across requests in the Node.js process)
+const inMemoryExpiriesCache = new Map<string, { expiries: string[]; exp: number }>();
+const inMemoryOptionsCache = new Map<string, { options: any[]; exp: number }>();
+const inMemoryResponseCache = new Map<string, { data: any; exp: number }>();
+
 export async function GET(request: Request) {
   const supabase = getSupabase();
   try {
@@ -52,18 +57,25 @@ export async function GET(request: Request) {
     const isMcx     = MCX_SYMBOLS.has(symbol);
     const targetExchanges = isMcx ? ['MCX', 'NCO'] : ['NFO', 'BFO'];
 
-    const spotForBucket = parseFloat(spotParam || '0') || 0;
-    const atmBucket = spotForBucket > 0
-      ? Math.round(spotForBucket / (spotForBucket * 0.01)) * Math.round(spotForBucket * 0.01)
-      : 0;
-    const cacheKey = `optionChain:${symbol}_${expiry || 'default'}_${atmBucket}`;
+    const cacheKey = `optionChain:${symbol}_${expiry || 'default'}`;
+    const nowMs = Date.now();
+
+    // ── 1. In-Memory Process Response Cache (10s TTL — <1ms response) ────────
+    const memCached = inMemoryResponseCache.get(cacheKey);
+    if (memCached && memCached.exp > nowMs) {
+      return NextResponse.json(memCached.data);
+    }
+
     const redis = getRedisClient();
 
-    // ── 1. Full response cache (10s TTL) ──────────────────────────────────────
-    // Attempt Redis cache regardless of connection status — catch handles failures
+    // ── 2. Redis Shared Response Cache (20s TTL — <10ms response) ─────────────
     try {
       const cached = await redis.get(cacheKey);
-      if (cached) return NextResponse.json(JSON.parse(cached));
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        inMemoryResponseCache.set(cacheKey, { data: parsed, exp: nowMs + 10000 });
+        return NextResponse.json(parsed);
+      }
     } catch { /* Redis not ready or key missing — proceed to live fetch */ }
 
     // ── 2. Helper functions ───────────────────────────────────────────────────
@@ -103,12 +115,19 @@ export async function GET(request: Request) {
       } catch { return `MCX:${symbol}`; }
     }
 
-    // Fetch expiries (Redis 1h cache → Supabase)
+    // Fetch expiries (In-Memory 10m → Redis 5m → Supabase)
     async function getExpiries(): Promise<string[]> {
       const k = `optionChainExpiries:${symbol}`;
+      const mem = inMemoryExpiriesCache.get(k);
+      if (mem && mem.exp > Date.now()) return mem.expiries;
+
       try {
         const cached = await redis.get(k);
-        if (cached) return JSON.parse(cached);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          inMemoryExpiriesCache.set(k, { expiries: parsed, exp: Date.now() + 600000 });
+          return parsed;
+        }
       } catch { /* fall through */ }
       let { data, error } = await supabase
         .from('instruments')
@@ -137,17 +156,26 @@ export async function GET(request: Request) {
       }
 
       const expiries = Array.from(new Set((data || []).map((e: any) => e.expiry))) as string[];
-      if (expiries.length > 0)
-        redis.setex(k, 300, JSON.stringify(expiries)).catch(() => {}); // 5m cache to allow expiry transition
+      if (expiries.length > 0) {
+        inMemoryExpiriesCache.set(k, { expiries, exp: Date.now() + 600000 });
+        redis.setex(k, 300, JSON.stringify(expiries)).catch(() => {});
+      }
       return expiries;
     }
 
-    // Fetch options for a given expiry (Redis 1h cache → Supabase)
+    // Fetch options for a given expiry (In-Memory 30m → Redis 24h → Supabase)
     async function getOptions(forExpiry: string): Promise<any[]> {
       const k = `optionChainOptions:${symbol}_${forExpiry}`;
+      const mem = inMemoryOptionsCache.get(k);
+      if (mem && mem.exp > Date.now()) return mem.options;
+
       try {
         const cached = await redis.get(k);
-        if (cached) return JSON.parse(cached);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          inMemoryOptionsCache.set(k, { options: parsed, exp: Date.now() + 1800000 });
+          return parsed;
+        }
       } catch { /* fall through */ }
       let { data, error } = await supabase
         .from('instruments')
@@ -173,9 +201,12 @@ export async function GET(request: Request) {
         }
       }
 
-      if (data?.length)
-        redis.setex(k, 86400, JSON.stringify(data)).catch(() => {}); // 24h — instrument rows don't change intraday
-      return data ?? [];
+      const resOptions = data ?? [];
+      if (resOptions.length) {
+        inMemoryOptionsCache.set(k, { options: resOptions, exp: Date.now() + 1800000 });
+        redis.setex(k, 86400, JSON.stringify(resOptions)).catch(() => {});
+      }
+      return resOptions;
     }
 
     async function getStrikeConfig() {
