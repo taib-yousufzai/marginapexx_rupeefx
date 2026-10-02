@@ -306,8 +306,11 @@ export async function GET(request: Request) {
       usedFallback = true;
     }
 
-    // ── 6. Group by strike (all strikes for expiry returned for client-side live centering) ───
-    const filteredOptions: any[] = options;
+    // ── 6. Apply strike range filter (31 strikes window: 15 above, ATM, 15 below for fast payload & client centering) ───
+    const fetchRange = 31;
+    const filteredOptions: any[] = atmPrice
+      ? applyStrikeRangeFilter(options as Instrument[], atmPrice, fetchRange) as any[]
+      : options;
 
     // ── 7. Group by strike ────────────────────────────────────────────────────
     const strikeMap: Record<number, any> = {};
