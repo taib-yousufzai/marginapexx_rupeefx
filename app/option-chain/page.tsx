@@ -139,7 +139,7 @@ function OptionChainContent() {
 
   const handleAddToWatchlistClick = () => {
     if (!selectedContract) return;
-    const strikeMatch = data?.strikes.find(s => s.ce?.symbol === selectedContract.symbol || s.pe?.symbol === selectedContract.symbol);
+    const strikeMatch = (data?.strikes || []).find(s => s.ce?.symbol === selectedContract.symbol || s.pe?.symbol === selectedContract.symbol);
     const contractData = selectedContract.type === 'CE' ? strikeMatch?.ce : strikeMatch?.pe;
     if (!contractData) return;
 
@@ -293,7 +293,7 @@ function OptionChainContent() {
   const instrumentIds = React.useMemo(() => {
     if (!data) return [];
     const ids: string[] = data.underlyingSymbol ? [data.underlyingSymbol] : [];
-    data.strikes.forEach(s => {
+    (data.strikes || []).forEach(s => {
       if (s.ce?.id) ids.push(s.ce.id);
       if (s.pe?.id) ids.push(s.pe.id);
     });
@@ -499,19 +499,27 @@ function OptionChainContent() {
                       <div style={{ width: '60px', height: '22px', borderRadius: '14px', background: 'rgba(255,255,255,0.1)', animation: 'oc-pulse 1.4s ease-in-out infinite' }} />
                     </div>
                   ) : (
-                    data?.expiries.map((exp) => {
-                      const [year, monthNum, dayNum] = exp.split('-').map(Number);
-                      const dateObj = new Date(year, monthNum - 1, dayNum);
-                      const day = dateObj.getDate();
-                      const month = dateObj.toLocaleDateString('en-IN', { month: 'short' });
-                      const yr = String(year).slice(2);
+                    (data?.expiries || []).map((exp) => {
+                      if (!exp || typeof exp !== 'string') return null;
+                      const parts = exp.split('-');
+                      let label = exp;
+                      if (parts.length >= 3) {
+                        const [year, monthNum, dayNum] = parts.map(Number);
+                        const dateObj = new Date(year, monthNum - 1, dayNum);
+                        if (!isNaN(dateObj.getTime())) {
+                          const day = dateObj.getDate();
+                          const month = dateObj.toLocaleDateString('en-IN', { month: 'short' });
+                          const yr = String(year).slice(-2);
+                          label = `${day} ${month} ${yr}`;
+                        }
+                      }
                       return (
                         <button
                           key={exp}
                           className={`expiry-date-btn${selectedExpiry === exp ? ' active' : ''}`}
                           onClick={() => setSelectedExpiry(exp)}
                         >
-                          {day} {month} {yr}
+                          {label}
                         </button>
                       );
                     })
@@ -541,11 +549,15 @@ function OptionChainContent() {
                   </button>
                 </div>
               </div>
-            ) : !loading && (data?.strikes || []).length === 0 && loadingError ? (
-              <div className="no-data-state">
-                <i className="fas fa-search"></i>
-                <p>No options found for {symbol}</p>
-                <p className="sub">Try syncing instruments or check the symbol name.</p>
+            ) : !loading && (data?.strikes || []).length === 0 ? (
+              <div className="no-data-state" style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--text-secondary, #6b7280)' }}>
+                <i className="fas fa-search" style={{ fontSize: '2.5rem', marginBottom: '16px', opacity: 0.5 }}></i>
+                <p style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-primary, #1a1a1a)', margin: '0 0 8px' }}>
+                  {loadingError || `No options found for ${symbol}`}
+                </p>
+                <p className="sub" style={{ fontSize: '0.85rem', margin: 0 }}>
+                  {loadingError ? 'Please try again later.' : 'No active option contracts found for the selected expiry.'}
+                </p>
               </div>
             ) : (
               <>
@@ -1075,10 +1087,59 @@ function OptionChainContent() {
   );
 }
 
+class OptionChainErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('OptionChainErrorBoundary caught error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          minHeight: '60vh', padding: '24px', textAlign: 'center', color: 'var(--text-primary, #1a1a1a)'
+        }}>
+          <div style={{ fontSize: '2.5rem', marginBottom: '16px' }}>⚠️</div>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: '0 0 8px' }}>Unable to load Option Chain</h3>
+          <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary, #6b7280)', maxWidth: '400px', marginBottom: '20px' }}>
+            An error occurred while loading this option chain.
+          </p>
+          <button
+            onClick={() => this.setState({ hasError: false, error: null })}
+            style={{
+              padding: '10px 24px', background: '#C62E2E', color: '#fff', border: 'none',
+              borderRadius: '24px', fontWeight: 600, fontSize: '0.9rem', cursor: 'pointer'
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function OptionChainWrapper() {
   const searchParams = useSearchParams();
   const symbol = (searchParams.get('symbol') || 'NIFTY').toUpperCase();
-  return <OptionChainContent key={symbol} />;
+  return (
+    <OptionChainErrorBoundary>
+      <OptionChainContent key={symbol} />
+    </OptionChainErrorBoundary>
+  );
 }
 
 export default function OptionChainPage() {

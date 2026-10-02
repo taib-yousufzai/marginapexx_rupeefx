@@ -36,6 +36,7 @@ const INDEX_KITE_MAP: Record<string, string> = {
 
 const MCX_BASE_MAP: Record<string, string> = {
   GOLDM: 'GOLD', SILVERM: 'SILVER', CRUDEOILM: 'CRUDEOIL', NATGASMINI: 'NATURALGAS',
+  GOLD: 'GOLDM', SILVER: 'SILVERM', CRUDEOIL: 'CRUDEOILM', NATURALGAS: 'NATGASMINI',
 };
 
 export async function GET(request: Request) {
@@ -49,7 +50,7 @@ export async function GET(request: Request) {
     const spotParam = searchParams.get('spotPrice');
     const today     = new Date().toISOString().split('T')[0];
     const isMcx     = MCX_SYMBOLS.has(symbol);
-    const targetExchanges = isMcx ? ['MCX'] : ['NFO', 'BFO'];
+    const targetExchanges = isMcx ? ['MCX', 'NCO'] : ['NFO', 'BFO'];
 
     const spotForBucket = parseFloat(spotParam || '0') || 0;
     const atmBucket = spotForBucket > 0
@@ -79,8 +80,8 @@ export async function GET(request: Request) {
         const { data: futs } = await supabase
           .from('instruments')
           .select('tradingsymbol')
-          .eq('name', baseSymbol)
-          .eq('segment', 'MCX-FUT')
+          .in('name', [symbol, baseSymbol])
+          .in('segment', ['MCX-FUT', 'NCO-FUT'])
           .gte('expiry', today)
           .order('expiry', { ascending: true })
           .limit(5);
@@ -109,7 +110,7 @@ export async function GET(request: Request) {
         const cached = await redis.get(k);
         if (cached) return JSON.parse(cached);
       } catch { /* fall through */ }
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('instruments')
         .select('expiry')
         .eq('name', symbol)
@@ -119,7 +120,23 @@ export async function GET(request: Request) {
         .in('option_type', ['CE', 'PE'])
         .order('expiry', { ascending: true });
       if (error) throw error;
-      const expiries = Array.from(new Set(data.map((e: any) => e.expiry))) as string[];
+
+      if ((!data || data.length === 0) && isMcx && MCX_BASE_MAP[symbol]) {
+        const fallbackRes = await supabase
+          .from('instruments')
+          .select('expiry')
+          .eq('name', MCX_BASE_MAP[symbol])
+          .in('exchange', targetExchanges)
+          .not('expiry', 'is', null)
+          .gte('expiry', today)
+          .in('option_type', ['CE', 'PE'])
+          .order('expiry', { ascending: true });
+        if (fallbackRes.data && fallbackRes.data.length > 0) {
+          data = fallbackRes.data;
+        }
+      }
+
+      const expiries = Array.from(new Set((data || []).map((e: any) => e.expiry))) as string[];
       if (expiries.length > 0)
         redis.setex(k, 300, JSON.stringify(expiries)).catch(() => {}); // 5m cache to allow expiry transition
       return expiries;
@@ -132,7 +149,7 @@ export async function GET(request: Request) {
         const cached = await redis.get(k);
         if (cached) return JSON.parse(cached);
       } catch { /* fall through */ }
-      const { data, error } = await supabase
+      let { data, error } = await supabase
         .from('instruments')
         .select('id, instrument_token, tradingsymbol, strike_price, option_type, exchange')
         .eq('name', symbol)
@@ -141,6 +158,21 @@ export async function GET(request: Request) {
         .in('option_type', ['CE', 'PE'])
         .order('strike_price', { ascending: true });
       if (error) throw error;
+
+      if ((!data || data.length === 0) && isMcx && MCX_BASE_MAP[symbol]) {
+        const fallbackRes = await supabase
+          .from('instruments')
+          .select('id, instrument_token, tradingsymbol, strike_price, option_type, exchange')
+          .eq('name', MCX_BASE_MAP[symbol])
+          .in('exchange', targetExchanges)
+          .eq('expiry', forExpiry)
+          .in('option_type', ['CE', 'PE'])
+          .order('strike_price', { ascending: true });
+        if (fallbackRes.data && fallbackRes.data.length > 0) {
+          data = fallbackRes.data;
+        }
+      }
+
       if (data?.length)
         redis.setex(k, 86400, JSON.stringify(data)).catch(() => {}); // 24h — instrument rows don't change intraday
       return data ?? [];
