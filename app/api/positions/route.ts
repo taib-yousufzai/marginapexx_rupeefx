@@ -66,20 +66,13 @@ export async function GET(request: NextRequest) {
         // Case-insensitive matching for other status values (like 'closed')
         const lowerStatus = statusParam.toLowerCase();
         const upperStatus = statusParam.toUpperCase();
+        const queryStatuses = lowerStatus === 'closed'
+          ? ['closed', 'CLOSED', 'partially_closed', 'PARTIALLY_CLOSED', 'liquidated', 'LIQUIDATED', 'squared_off', 'SQUARED_OFF', 'auto_closed', 'AUTO_CLOSED']
+          : [lowerStatus, upperStatus];
         positionsQuery = positionsQuery
-          .in('status', [lowerStatus, upperStatus])
-          .order('updated_at', { ascending: false });
-
-        if (lowerStatus === 'closed' && historyResetAt) {
-          const resetIso = new Date(historyResetAt).toISOString();
-          positionsQuery = positionsQuery.or(`updated_at.gt.${resetIso},exit_time.gt.${resetIso},created_at.gt.${resetIso}`);
-        } else if (lowerStatus === 'closed' && searchParams.get('from')) {
-          const fromIso = `${searchParams.get('from')}T00:00:00+05:30`;
-          positionsQuery = positionsQuery.or(`updated_at.gte.${fromIso},exit_time.gte.${fromIso},created_at.gte.${fromIso}`);
-        }
-
-        // Cap at 500 to prevent full-table scans on large accounts
-        positionsQuery = positionsQuery.limit(500);
+          .in('status', queryStatuses)
+          .order('updated_at', { ascending: false })
+          .limit(500);
       }
     } else {
       // Default: only return open/active — closed positions are fetched explicitly (case-insensitive)
@@ -109,7 +102,29 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ positions: [] }, { status: 200 });
     }
 
-    const rawRows = posResult.data ?? [];
+    let rawRows = posResult.data ?? [];
+
+    // Filter closed positions in-memory for historyResetAt and date filters (prevents PostgREST OR syntax errors)
+    if (statusParam?.toLowerCase() === 'closed') {
+      if (historyResetAt) {
+        const resetTs = new Date(historyResetAt).getTime();
+        rawRows = rawRows.filter((p: any) => {
+          const updatedTs = p.updated_at ? new Date(p.updated_at).getTime() : 0;
+          const exitTs = p.exit_time ? new Date(p.exit_time).getTime() : 0;
+          const createdTs = p.created_at ? new Date(p.created_at).getTime() : 0;
+          return updatedTs > resetTs || exitTs > resetTs || createdTs > resetTs;
+        });
+      }
+      if (searchParams.get('from')) {
+        const fromTs = new Date(`${searchParams.get('from')}T00:00:00+05:30`).getTime();
+        rawRows = rawRows.filter((p: any) => {
+          const updatedTs = p.updated_at ? new Date(p.updated_at).getTime() : 0;
+          const exitTs = p.exit_time ? new Date(p.exit_time).getTime() : 0;
+          const createdTs = p.created_at ? new Date(p.created_at).getTime() : 0;
+          return updatedTs >= fromTs || exitTs >= fromTs || createdTs >= fromTs;
+        });
+      }
+    }
 
     // For open positions only, resolve synthetic futures and compute locked_margin
     // Closed positions return immediately for maximum speed (<20ms)
@@ -123,6 +138,12 @@ export async function GET(request: NextRequest) {
         brokerage: Number(p.brokerage || p.entry_brokerage || 0),
         locked_margin: 0,
       }));
+      // Sort newest exit first
+      positions.sort((a, b) => {
+        const aTs = new Date(a.exit_time || a.updated_at || a.created_at || 0).getTime();
+        const bTs = new Date(b.exit_time || b.updated_at || b.created_at || 0).getTime();
+        return bTs - aTs;
+      });
     } else {
       positions = rawRows.map((p: any) => ({
         ...p,
@@ -136,12 +157,13 @@ export async function GET(request: NextRequest) {
     const responsePayload = { positions };
     try {
       const redis = getRedisClient();
-      const ttl = isClosedQuery ? 5 : 15;
-      if (positions.length > 0) {
-        await redis.setex(cacheKey, ttl, JSON.stringify(responsePayload));
-        if (isClosedQuery) {
-          await redis.setex(`api:positions:${user.id}:closed_all`, ttl, JSON.stringify(responsePayload));
-        }
+      // Open positions: 3s TTL — ensures exit actions reflect within seconds on refresh
+      // Closed positions: 3s TTL
+      const ttl = 3;
+      // Always write cache (even empty list) so stale open-position cache is immediately overwritten
+      await redis.setex(cacheKey, ttl, JSON.stringify(responsePayload));
+      if (isClosedQuery) {
+        await redis.setex(`api:positions:${user.id}:closed_all`, ttl, JSON.stringify(responsePayload));
       }
     } catch (_) {}
 

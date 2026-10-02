@@ -181,45 +181,25 @@ export default function HistoryPage() {
         }
       }
 
-      // Reconcile pending in-flight optimistic items (<60s):
-      // Only inject optimistic/temp items when the DB query failed or returned empty.
-      // If the DB returned real data (positionsList/ordersList non-null), skip this to avoid
-      // ghost positions reappearing on refresh after a successful exit.
-      const nowMs = Date.now();
-      if (positionsList === null || ordersList === null) {
-        const existingItems = [
-          ...(historyDataRef.current || []),
-          ...getClientHistoryCache()
-        ];
+      // Reconcile and retain all confirmed closed items from local/session storage:
+      // Real DB records take precedence in posMap / orderMap, while any client-cached items
+      // are retained so trades never vanish upon page refresh or network lag.
+      const existingItems = [
+        ...(historyDataRef.current || []),
+        ...getClientHistoryCache()
+      ];
 
-        for (const existing of existingItems) {
-          if (!existing || !existing.id) continue;
-          const isRecent = (nowMs - (existing.timestamp || 0) < 60000);
-          if (!isRecent) continue;
+      for (const existing of existingItems) {
+        if (!existing || !existing.id) continue;
 
-          const isClosed = String(existing.status || '').toLowerCase() === 'closed';
-          if (isClosed && positionsList === null) {
-            // DB positions query failed — inject recent optimistic closed items as fallback
-            const isTempId = String(existing.id).startsWith('opt_') || String(existing.id).startsWith('pos_opt_');
-            if (!posMap.has(existing.id)) {
-              const hasMatchingDbPos = isTempId && Array.from(posMap.values()).some(p =>
-                p.scriptName === existing.scriptName && Math.abs((p.timestamp || 0) - (existing.timestamp || 0)) < 60000
-              );
-              if (!hasMatchingDbPos) {
-                posMap.set(existing.id, { ...existing, status: 'closed' });
-              }
-            }
-          } else if (!isClosed && ordersList === null) {
-            // DB orders query failed — inject recent optimistic orders as fallback
-            const isTempId = String(existing.id).startsWith('opt_');
-            if (!orderMap.has(existing.id)) {
-              const hasMatchingDbOrder = isTempId && Array.from(orderMap.values()).some(o =>
-                o.scriptName === existing.scriptName && Math.abs((o.timestamp || 0) - (existing.timestamp || 0)) < 60000
-              );
-              if (!hasMatchingDbOrder) {
-                orderMap.set(existing.id, existing);
-              }
-            }
+        const isClosed = String(existing.status || '').toLowerCase() === 'closed';
+        if (isClosed) {
+          if (!posMap.has(existing.id)) {
+            posMap.set(existing.id, { ...existing, status: 'closed' });
+          }
+        } else {
+          if (!orderMap.has(existing.id)) {
+            orderMap.set(existing.id, existing);
           }
         }
       }
@@ -247,22 +227,25 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    fetchHistory(historyDataRef.current.length > 0);
+    // Always fetch fresh from DB on page load so navigating here after a trade
+    // doesn't show stale Redis-cached data.
+    fetchHistory(historyDataRef.current.length > 0, true);
 
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     let followUpTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const triggerRefresh = (delay = 50) => {
+    const triggerRefresh = (delay = 0) => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      // Fire immediately (0ms) so the API refresh starts right away
       debounceTimer = setTimeout(() => {
-        fetchHistory(true);
+        fetchHistory(true, true);
       }, delay);
 
-      // Follow-up fetch to ensure backend DB commits/state transitions settle
+      // Follow-up fetch to ensure backend DB commits settle (reduced from 800ms → 300ms)
       if (followUpTimer) clearTimeout(followUpTimer);
       followUpTimer = setTimeout(() => {
-        fetchHistory(true);
-      }, 800);
+        fetchHistory(true, true);
+      }, 300);
     };
 
     // Instant optimistic update when position closure is initiated
@@ -273,7 +256,7 @@ export default function HistoryPage() {
       setHistoryData(updated);
       setInitialLoaded(true);
       setLoading(false);
-      triggerRefresh(150);
+      triggerRefresh(0);
     };
 
     // Instant optimistic update when an order is placed
@@ -306,7 +289,7 @@ export default function HistoryPage() {
       setHistoryData(updated);
       setInitialLoaded(true);
       setLoading(false);
-      triggerRefresh(150);
+      triggerRefresh(0);
     };
 
     const handleOptimisticRollback = (e: any) => {
@@ -353,9 +336,10 @@ export default function HistoryPage() {
     window.addEventListener('focus', handleFocus);
 
     // Active polling fallback every 15 seconds when visible (Realtime handles instant changes)
+    // Always pass fresh=true so the poll bypasses Redis and gets real DB data.
     const pollInterval = setInterval(() => {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-        fetchHistory(true);
+        fetchHistory(true, true);
       }
     }, 15000);
 

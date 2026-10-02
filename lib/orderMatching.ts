@@ -699,6 +699,15 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
             .eq('user_id', pos.user_id)
             .eq('status', 'PENDING')
             .or(`info.eq.${pos.id},linked_position_id.eq.${pos.id},symbol.eq.${pos.symbol}`);
+
+          try {
+            const { invalidateUserHistoryCache, invalidateUserPositionsCache, invalidateUserOrdersCache } = await import('@/lib/redisHistoryCache');
+            await Promise.all([
+              invalidateUserHistoryCache(pos.user_id),
+              invalidateUserPositionsCache(pos.user_id),
+              invalidateUserOrdersCache(pos.user_id),
+            ]);
+          } catch (_) {}
         }
       }
     }

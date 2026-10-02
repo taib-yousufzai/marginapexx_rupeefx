@@ -178,9 +178,10 @@ export async function checkAndExecuteAccountLiquidation(
     // Attempt close with retry & graceful exception handling
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
+        const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
         const { error: closeErr } = await admin.rpc('close_position_v2', {
           p_position_id:        pos.id,
-          p_close_qty:          Number(pos.qty_open),
+          p_close_qty:          closeQty,
           p_close_price:        exitPrice,
           p_closed_by:          'LIQUIDATION',
           p_expected_brokerage: carryBrokerage,
@@ -381,6 +382,17 @@ export async function checkAndExecuteAccountLiquidation(
       `Threshold: ₹${confirmedThreshold.toFixed(2)}` +
       (incrementalSettlement > 0 ? `, Settlement: ₹${incrementalSettlement.toFixed(2)}` : ''),
   });
+
+  if (positionsClosed > 0) {
+    try {
+      const { invalidateUserHistoryCache, invalidateUserPositionsCache, invalidateUserOrdersCache } = await import('@/lib/redisHistoryCache');
+      await Promise.all([
+        invalidateUserHistoryCache(userId),
+        invalidateUserPositionsCache(userId),
+        invalidateUserOrdersCache(userId),
+      ]);
+    } catch (_) {}
+  }
 
   return {
     liquidated: true,

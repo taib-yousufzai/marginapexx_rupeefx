@@ -483,7 +483,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           appendClosedPositionToCache,
           appendOrderToCache,
           invalidateUserOpenPositionsCache,
-          invalidateUserActiveOrdersCache
+          invalidateUserActiveOrdersCache,
+          invalidateUserHistoryCache
         } = await import('@/lib/redisHistoryCache');
 
         const closedPositions = positions.filter(p => successfulPosIds.includes(p.id));
@@ -525,6 +526,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }),
           invalidateUserOpenPositionsCache(user.id),
           invalidateUserActiveOrdersCache(user.id),
+          invalidateUserHistoryCache(user.id),
         ]);
       } catch (cacheErr) {
         console.warn('[POST /api/positions/close] Cache update warning:', cacheErr);

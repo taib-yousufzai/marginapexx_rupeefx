@@ -491,7 +491,8 @@ export async function POST(
       appendClosedPositionToCache, 
       appendOrderToCache, 
       invalidateUserOpenPositionsCache, 
-      invalidateUserActiveOrdersCache 
+      invalidateUserActiveOrdersCache,
+      invalidateUserHistoryCache
     } = await import('@/lib/redisHistoryCache');
 
     const closedPosRecord = {
@@ -530,6 +531,7 @@ export async function POST(
       appendOrderToCache(user.id, exitOrderRecord),
       invalidateUserOpenPositionsCache(user.id),
       invalidateUserActiveOrdersCache(user.id),
+      invalidateUserHistoryCache(user.id),
     ]);
   } catch (cacheErr) {
     console.warn('[POST /api/positions/[id]/close] Cache update warning:', cacheErr);
