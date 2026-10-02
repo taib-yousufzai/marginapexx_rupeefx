@@ -306,12 +306,8 @@ export async function GET(request: Request) {
       usedFallback = true;
     }
 
-    // ── 6. Apply strike range filter (minimum 31 strikes buffer so 5 strikes above and below ATM are always available) ───
-    const baseRange = isMcx ? strikeConfig.mcxOptionsRange : strikeConfig.indexOptionsRange;
-    const fetchRange = isMcx ? strikeConfig.mcxOptionsRange : Math.max(11, baseRange);
-    const filteredOptions: any[] = atmPrice
-      ? applyStrikeRangeFilter(options as Instrument[], atmPrice, fetchRange) as any[]
-      : options;
+    // ── 6. Group by strike (all strikes for expiry returned for client-side live centering) ───
+    const filteredOptions: any[] = options;
 
     // ── 7. Group by strike ────────────────────────────────────────────────────
     const strikeMap: Record<number, any> = {};

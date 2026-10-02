@@ -18,10 +18,8 @@ export function getCenteredStrikeWindow<T extends { strike: number }>(
 
   // 2. Determine ATM strike index from actual available strikes
   let atmIdx = Math.floor(sortedStrikes.length / 2);
-  const minStrike = sortedStrikes[0].strike;
-  const maxStrike = sortedStrikes[sortedStrikes.length - 1].strike;
 
-  if (spotPrice > 0 && spotPrice >= minStrike * 0.7 && spotPrice <= maxStrike * 1.4) {
+  if (spotPrice > 0) {
     let minDiff = Math.abs(sortedStrikes[0].strike - spotPrice);
     atmIdx = 0;
     for (let i = 1; i < sortedStrikes.length; i++) {
