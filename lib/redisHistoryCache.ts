@@ -171,13 +171,20 @@ export async function invalidateUserActiveOrdersCache(userId: string): Promise<v
 export async function invalidateUserHistoryCache(userId: string): Promise<void> {
   try {
     const redis = getRedisClient();
-    const orderKeys = (await redis.keys(`api:orders:${userId}:*`)) || [];
-    const posKeys = (await redis.keys(`api:positions:${userId}:*`)) || [];
-    const allKeys = [...orderKeys, ...posKeys, `api:orders:${userId}:history`, `api:orders:${userId}:active`];
-    const uniqueKeys = Array.from(new Set(allKeys));
-    if (uniqueKeys.length > 0) {
-      await redis.del(...uniqueKeys);
-    }
+    // Explicitly delete known keys instead of using the potentially disabled/slow 'keys' command
+    const keysToDelete = [
+      `api:orders:${userId}:history`,
+      `api:orders:${userId}:active`,
+      `api:orders:${userId}:open`,
+      `api:positions:${userId}:closed:all:`,
+      `api:positions:${userId}:closed:default:`,
+      `api:positions:${userId}:closed_all`,
+      `api:positions:${userId}:open:all:`,
+      `api:positions:${userId}:open:default:`,
+      `api:positions:${userId}:active:all:`,
+      `api:positions:${userId}:active:default:`
+    ];
+    await redis.del(...keysToDelete);
   } catch (err) {
     console.warn('[invalidateUserHistoryCache] Redis delete error:', err);
   }

@@ -415,7 +415,6 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
 
   // 2. PROCESS OPEN POSITIONS
   if (openPositions.length > 0) {
-    console.log(`[Order Matching] Found ${openPositions.length} open positions to evaluate.`);
 
     // Group open positions by user_id
     const userOpenPositions: Record<string, any[]> = {};
@@ -605,6 +604,7 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
         console.log(`[Order Matching] Triggering auto-exit for position ${pos.id} (${side} ${pos.symbol}) due to ${closeReason}. LTP: ${ltp}, SL: ${stopLoss}, Target: ${target}`);
 
         // Exit execution has 0 buffer (both entry and exit buffers collected on entry)
+        let exitPrice = ltp;
         if (pos.side === 'BUY') {
           exitPrice = priceObj.bid;
         } else {
@@ -612,13 +612,27 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
         }
         exitPrice = Math.round(exitPrice * 10000) / 10000;
 
-        const { error: closeRpcErr } = await admin.rpc('close_position', {
-          p_position_id: pos.id,
-          p_user_id: pos.user_id,
-          p_ltp: ltp,
-          p_exit_price: exitPrice,
-          p_closed_by: closeReason,
+        const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
+        const resV2 = await admin.rpc('close_position_v2', {
+          p_position_id:        pos.id,
+          p_close_qty:          closeQty,
+          p_close_price:        exitPrice,
+          p_closed_by:          closeReason,
+          p_expected_brokerage: 0,
         });
+
+        let closeRpcErr = resV2.error;
+        if (closeRpcErr) {
+          console.warn(`[Order Matching] close_position_v2 failed for ${pos.id}, falling back to v1:`, closeRpcErr);
+          const resV1 = await admin.rpc('close_position', {
+            p_position_id: pos.id,
+            p_user_id:     pos.user_id,
+            p_ltp:         ltp,
+            p_exit_price:  exitPrice,
+            p_closed_by:   closeReason,
+          });
+          closeRpcErr = resV1.error;
+        }
 
         if (closeRpcErr) {
           console.error(`[Order Matching] Failed to close position ${pos.id} via close_position RPC:`, closeRpcErr);

@@ -129,8 +129,6 @@ export class OrderEngine {
         };
       }
 
-      const orderType = order.order_type || 'MARKET';
-      const isImmediate = orderType === 'MARKET' || orderType === 'SL-M';
       const status = isImmediate ? 'EXECUTED' : 'PENDING';
 
       const executionLatency = Math.round(performance.now() - startTime);

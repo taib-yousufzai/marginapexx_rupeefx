@@ -1,8 +1,8 @@
 /**
- * Internal Order API — RupeeFX Trading platform orders
+ * Internal Order API — MarginApex platform orders
  *
  * GET  /api/orders          → user's own order history (from Supabase)
- * POST /api/orders          → place a new order through RupeeFX Trading
+ * POST /api/orders          → place a new order through MarginApex
  *
  * All order placement runs through this endpoint. Zerodha is NEVER called
  * to place orders — it is used read-only to fetch the LTP for fill price
@@ -44,9 +44,9 @@ function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: num
 function cleanSymHelper(s?: string | null): string {
   if (!s) return '';
   let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '')
-             .replace(/[\/\s\_\-]/g, '')
-             .replace(/(PERP|\.P|FUT)$/i, '')
-             .toUpperCase();
+    .replace(/[\/\s\_\-]/g, '')
+    .replace(/(PERP|\.P|FUT)$/i, '')
+    .toUpperCase();
   if (['XAUUSD', 'COMEX:XAUUSD', 'GC=F', 'GC', 'GOLD'].includes(str)) return 'XAUUSD';
   if (['XAGUSD', 'COMEX:XAGUSD', 'SI=F', 'SI', 'SILVER'].includes(str)) return 'XAGUSD';
   if (['XTIUSD', 'COMEX:XTIUSD', 'CL=F', 'CL', 'WTI', 'CRUDE', 'CRUDEOIL'].includes(str)) return 'XTIUSD';
@@ -141,7 +141,7 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
           }
         }
       }
-    } catch (_) {}
+    } catch (_) { }
 
     // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel with a fast timeout
     const [bookRes, priceRes] = await Promise.all([
@@ -371,7 +371,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     let ordersQuery = admin
       .from('orders')
-      .select('id, user_id, symbol, segment, side, status, qty, lots, fill_price, ltp_at_entry, price, order_type, product_type, info, linked_position_id, brokerage, client_price, trigger_price, stop_loss, target, is_exit, created_at, updated_at')
+      .select('*')
       .eq('user_id', user.id)
       .order('created_at', { ascending: false });
 
@@ -390,10 +390,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ordersQuery,
       includeVirtualOrders
         ? admin
-            .from('positions')
-            .select('id, symbol, side, qty_open, lots, avg_price, entry_price, product_type, settlement, stop_loss, sl, target, tp, created_at')
-            .eq('user_id', user.id)
-            .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+          .from('positions')
+          .select('*')
+          .eq('user_id', user.id)
+          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
         : Promise.resolve({ data: [] })
     ]);
 
@@ -515,7 +515,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
             target: target,
             created_at: pos.created_at || new Date().toISOString(),
           });
-        } 
+        }
         else if (stopLoss !== null && stopLoss > 0 && !realPendingExitKeys.has(exitKey)) {
           virtualOrders.push({
             id: `pos-sl-${pos.id}`,
@@ -565,7 +565,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     const combinedOrders = [...virtualOrders, ...orders];
     combinedOrders.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-    setCachedUserOrders(user.id, combinedOrders, isHistoryQuery).catch(() => {});
+    setCachedUserOrders(user.id, combinedOrders, isHistoryQuery).catch(() => { });
 
     return NextResponse.json({ orders: combinedOrders, page, limit });
   } catch (err) {
@@ -703,7 +703,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       admin.from('positions')
         .select('id, symbol, settlement, qty_open, lots, status, entry_price, side, product_type, entry_time')
         .eq('user_id', user.id)
-        .in('status', ['open', 'OPEN', 'active', 'ACTIVE']),
+        .in('status', ['open', 'OPEN', 'active', 'ACTIVE', 'PARTIALLY_CLOSED', 'PARTIAL_CLOSED']),
 
       // Fetch pending orders to verify total open lot limits
       admin.from('orders')
@@ -747,7 +747,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                 };
                 return { [kiteInst]: qObj, [symbol]: qObj, [`COMEX:${symbol}`]: qObj };
               }
-            } catch {}
+            } catch { }
             return {};
           } else if (
             dbSegment === 'US-EQ' || dbSegment === 'US' ||
@@ -773,7 +773,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
                   [`US-EQ:${clean}`]: qObj,
                 };
               }
-            } catch {}
+            } catch { }
             return {};
           } else {
             return fetchKiteQuotes(instrumentsToFetch);
@@ -792,6 +792,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     ]);
 
     const t4_backendQuoteRead = Date.now();
+    const openPositions = positionsResult?.data ?? [];
     const profile = cachedProfile ? {
       ...cachedProfile,
       balance: Number(balanceResult.data?.balance ?? 0),
@@ -916,7 +917,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       let totalOpenInstrumentLots = 0;
       const targetSymbolClean = cleanSymHelper(symbol);
 
-      const openPositions = positionsResult?.data ?? [];
       if (openPositions.length > 0) {
         for (const pos of openPositions) {
           const pSize = getLotSize(pos.symbol, dbScriptSettings);
@@ -1048,7 +1048,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     );
 
     const refEntry = (is_exit && activePosition) ? Number(activePosition.entry_price) : refPrice;
-    const isLong = (is_exit && activePosition) ? (activePosition.side === 'BUY') : (side === 'BUY');
+    // For exit orders: if activePosition found, use its side. Otherwise infer from order side
+    // (exit order side is OPPOSITE of position side: SELL exit = BUY position = isLong)
+    const isLong = (is_exit && activePosition)
+      ? (activePosition.side === 'BUY')
+      : (is_exit ? (side === 'SELL') : (side === 'BUY'));
 
     // Enforce Anti-Scalping hold duration for manual market exits
     if (is_exit && activePosition && (order_type === 'MARKET' || order_type === 'SLM')) {
@@ -1346,7 +1350,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       const { data: existingExitOrders } = await admin
         .from('orders')
-        .select('id, order_type, linked_position_id, info')
+        .select('*')
         .eq('user_id', user.id)
         .eq('symbol', symbol)
         .eq('side', exitSideForCheck)

@@ -93,11 +93,11 @@ export async function GET(request: Request) {
             catch { return false; }
           });
           if (live) {
-            redis.setex(cacheKeyMcx, 3600, live).catch(() => {});
+            redis.setex(cacheKeyMcx, 300, live).catch(() => {});
             return live;
           }
         } catch { /* fall through to first candidate */ }
-        redis.setex(cacheKeyMcx, 3600, candidates[0]).catch(() => {});
+        redis.setex(cacheKeyMcx, 300, candidates[0]).catch(() => {});
         return candidates[0];
       } catch { return `MCX:${symbol}`; }
     }
@@ -169,7 +169,7 @@ export async function GET(request: Request) {
     if (isMcx) underlyingKiteId = resolvedMcxId;
 
     const activeExpiries  = applyExpiryFilter(allExpiries, today, isMcx);
-    const selectedExpiry  = (expiry && !isExpiryDateExpired(expiry, isMcx)) ? expiry : activeExpiries[0];
+    const selectedExpiry  = (expiry && activeExpiries.includes(expiry) && !isExpiryDateExpired(expiry, isMcx)) ? expiry : activeExpiries[0];
 
     if (!selectedExpiry) {
       return NextResponse.json({
@@ -192,14 +192,29 @@ export async function GET(request: Request) {
     }
 
     // ── 5. Resolve ATM price ──────────────────────────────────────────────────
+    const sortedOptionsStrikes = options.map((o: any) => o.strike_price).sort((a: number, b: number) => a - b);
+    const minStrike = sortedOptionsStrikes[0] || 0;
+    const maxStrike = sortedOptionsStrikes[sortedOptionsStrikes.length - 1] || 0;
+    const medianStrike = sortedOptionsStrikes[Math.floor(sortedOptionsStrikes.length / 2)] || 0;
+
     let atmPrice = spotParam ? parseFloat(spotParam) || 0 : 0;
     let usedFallback = false;
 
-    if (!atmPrice && atmRedisRaw) {
-      try { atmPrice = JSON.parse(atmRedisRaw as string).last_price || 0; } catch { /* ignore */ }
+    // Check if spotParam is realistic
+    if (atmPrice > 0 && (atmPrice < minStrike * 0.4 || atmPrice > maxStrike * 2.5)) {
+      atmPrice = 0;
     }
 
-    // Try alternative Redis keys if primary underlyingKiteId had no price
+    if (!atmPrice && atmRedisRaw) {
+      try {
+        const parsedLp = JSON.parse(atmRedisRaw as string).last_price || 0;
+        if (parsedLp >= minStrike * 0.4 && parsedLp <= maxStrike * 2.5) {
+          atmPrice = parsedLp;
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Try alternative Redis keys if primary underlyingKiteId had no valid price
     if (!atmPrice) {
       try {
         const altKeys = [
@@ -211,8 +226,9 @@ export async function GET(request: Request) {
         for (const raw of altQuotes) {
           if (raw) {
             const parsed = JSON.parse(raw as string);
-            if (parsed.last_price > 0) {
-              atmPrice = parsed.last_price;
+            const lp = parsed.last_price || parsed.lastPrice || 0;
+            if (lp >= minStrike * 0.4 && lp <= maxStrike * 2.5) {
+              atmPrice = lp;
               break;
             }
           }
@@ -220,10 +236,27 @@ export async function GET(request: Request) {
       } catch { /* ignore */ }
     }
 
+    // If still missing, query live Ticker daemon directly
     if (!atmPrice) {
-      console.warn(`[option-chain] No ATM price for ${symbol}, using median strike fallback`);
+      try {
+        const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
+        const res = await fetch(`${tickerUrl}/quotes?symbols=${underlyingKiteId}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) }).catch(() => null);
+        if (res?.ok) {
+          const json = await res.json();
+          const tick = json?.data?.[underlyingKiteId];
+          const tickLtp = Number(tick?.last_price || tick?.lastPrice || 0);
+          if (tickLtp >= minStrike * 0.4 && tickLtp <= maxStrike * 2.5) {
+            atmPrice = tickLtp;
+            redis.hset('market:quotes', underlyingKiteId, JSON.stringify(tick)).catch(() => {});
+          }
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    if (!atmPrice) {
+      console.warn(`[option-chain] No valid ATM price for ${symbol}, using median strike fallback (${medianStrike})`);
       usedFallback = true;
-      atmPrice = options[Math.floor(options.length / 2)]?.strike_price || 0;
+      atmPrice = medianStrike;
     }
 
     // ── 6. Apply strike range filter (minimum 31 strikes buffer so 5 strikes above and below ATM are always available) ───

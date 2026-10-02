@@ -324,10 +324,11 @@ function OptionChainContent() {
     }
   }, [spotPrice]);
 
-  // Reset refetch tracking whenever symbol or expiry changes
+  // Reset selected expiry and refetch tracking whenever symbol changes
   useEffect(() => {
+    setSelectedExpiry(null);
     hasRefetchedRef.current = false;
-  }, [normalizedSymbol, selectedExpiry]);
+  }, [normalizedSymbol]);
 
   // Re-fetch when live spot price diverges from the API's underlyingPrice
   // or when the server used a median fallback due to missing cold-start Redis quotes.
@@ -407,8 +408,10 @@ function OptionChainContent() {
               <div className="premium-back-btn" onClick={() => router.back()}>
                 <i className="fas fa-arrow-left" style={{ fontSize: '0.9rem' }}></i>
               </div>
-              <div className="oc-capsule-info">
-                <div className="premium-symbol-name">{symbol}</div>
+              <div className="oc-capsule-info" onClick={() => setIsSegmentsOpen(true)} style={{ cursor: 'pointer' }}>
+                <div className="premium-symbol-name" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  {symbol} <i className="fas fa-chevron-down" style={{ fontSize: '0.65rem', opacity: 0.7 }}></i>
+                </div>
                 <div className="oc-capsule-sub">
                   <span className="premium-badge">OPTION CHAIN</span>
                   {connected ? (
@@ -478,22 +481,29 @@ function OptionChainContent() {
               {/* Date pills — inner capsule like B/A toggle */}
               <div className="expiry-dates-inner-capsule">
                 <div className="expiry-dates-scroll">
-                  {data?.expiries.map((exp) => {
-                    const [year, monthNum, dayNum] = exp.split('-').map(Number);
-                    const dateObj = new Date(year, monthNum - 1, dayNum);
-                    const day = dateObj.getDate();
-                    const month = dateObj.toLocaleDateString('en-IN', { month: 'short' });
-                    const yr = String(year).slice(2);
-                    return (
-                      <button
-                        key={exp}
-                        className={`expiry-date-btn${selectedExpiry === exp ? ' active' : ''}`}
-                        onClick={() => setSelectedExpiry(exp)}
-                      >
-                        {day} {month} {yr}
-                      </button>
-                    );
-                  })}
+                  {loading && (!data?.expiries || data.expiries.length === 0) ? (
+                    <div style={{ display: 'flex', gap: '4px', padding: '2px 4px' }}>
+                      <div style={{ width: '60px', height: '22px', borderRadius: '14px', background: 'rgba(255,255,255,0.18)', animation: 'oc-pulse 1.4s ease-in-out infinite' }} />
+                      <div style={{ width: '60px', height: '22px', borderRadius: '14px', background: 'rgba(255,255,255,0.1)', animation: 'oc-pulse 1.4s ease-in-out infinite' }} />
+                    </div>
+                  ) : (
+                    data?.expiries.map((exp) => {
+                      const [year, monthNum, dayNum] = exp.split('-').map(Number);
+                      const dateObj = new Date(year, monthNum - 1, dayNum);
+                      const day = dateObj.getDate();
+                      const month = dateObj.toLocaleDateString('en-IN', { month: 'short' });
+                      const yr = String(year).slice(2);
+                      return (
+                        <button
+                          key={exp}
+                          className={`expiry-date-btn${selectedExpiry === exp ? ' active' : ''}`}
+                          onClick={() => setSelectedExpiry(exp)}
+                        >
+                          {day} {month} {yr}
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             </div>
@@ -1053,10 +1063,16 @@ function OptionChainContent() {
   );
 }
 
+function OptionChainWrapper() {
+  const searchParams = useSearchParams();
+  const symbol = (searchParams.get('symbol') || 'NIFTY').toUpperCase();
+  return <OptionChainContent key={symbol} />;
+}
+
 export default function OptionChainPage() {
   return (
     <Suspense fallback={<AnimatedLoader text="Loading..." />}>
-      <OptionChainContent />
+      <OptionChainWrapper />
     </Suspense>
   );
 }

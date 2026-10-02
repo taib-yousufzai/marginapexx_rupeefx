@@ -2,6 +2,59 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { logAction, extractClientIp } from '@/lib/actionLogger';
 import { OrderService } from '@/lib/trading/OrderService';
+import { invalidateUserOrdersCache, invalidateUserPositionsCache } from '@/lib/redisSettingsCache';
+
+const OPEN_ORDER_STATUSES = [
+  'PENDING', 'pending',
+  'TRIGGER_PENDING', 'trigger_pending',
+  'OPEN', 'open',
+  'ACTIVE', 'active',
+  'VALIDATION_PENDING', 'validation_pending',
+  'SUBMITTING', 'submitting'
+];
+
+/**
+ * DELETE /api/orders/[id]
+ *
+ * Cancels an existing pending or virtual order.
+ */
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+): Promise<NextResponse> {
+  const ipAddress = extractClientIp(request.headers);
+  const { id } = await params;
+  const user = await getUserFromRequest(request);
+
+  const response = await handleCancelOrder(request, { id }, ipAddress, user, { status: 'CANCELLED' });
+
+  let errorMessage: string | null = null;
+  if (!response.ok) {
+    try {
+      const errorData = await response.clone().json();
+      errorMessage = errorData.error || errorData.message || 'Unknown error';
+    } catch {
+      errorMessage = 'Failed to parse error response';
+    }
+  }
+
+  logAction({
+    userId: user?.id,
+    username: user?.user_metadata?.username || user?.email,
+    role: user?.user_metadata?.role,
+    actionType: 'CANCEL_ORDER',
+    module: 'TRADING',
+    apiEndpoint: '/api/orders/[id]',
+    httpMethod: 'DELETE',
+    ipAddress,
+    requestPayload: { id, status: 'CANCELLED' },
+    responseStatus: response.status,
+    isSuccess: response.ok,
+    errorMessage: errorMessage || undefined,
+  });
+
+  return response;
+}
 
 /**
  * PUT /api/orders/[id]
@@ -140,13 +193,16 @@ async function handleModifyOrder(
         .update(updateField)
         .eq('id', positionId)
         .eq('user_id', user.id)
-        .eq('status', 'open')
+        .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) {
+      if (error || !data) {
         return NextResponse.json({ error: 'Could not update stop loss/target. The position might already be closed.' }, { status: 400 });
       }
+
+      await invalidateUserOrdersCache(user.id);
+      await invalidateUserPositionsCache(user.id);
 
       return NextResponse.json({ order: { id, ...data } });
     }
@@ -164,7 +220,7 @@ async function handleModifyOrder(
     }
 
     const statusUpper = (existingOrder.status || '').toUpperCase();
-    if (statusUpper !== 'PENDING' && statusUpper !== 'TRIGGER_PENDING') {
+    if (!OPEN_ORDER_STATUSES.map(s => s.toUpperCase()).includes(statusUpper)) {
       return NextResponse.json({ error: `Cannot modify order with status '${existingOrder.status}'. Only pending orders can be modified.` }, { status: 400 });
     }
 
@@ -531,6 +587,12 @@ async function handleModifyOrder(
       }
     }
 
+    // Invalidate Redis caches so next fetch returns fresh data immediately
+    await Promise.all([
+      invalidateUserOrdersCache(user.id),
+      invalidateUserPositionsCache(user.id),
+    ]);
+
     return NextResponse.json({
       success: true,
       order: newOrder,
@@ -557,11 +619,21 @@ async function handleCancelOrder(
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    if (status !== 'CANCELLED') {
+    if (status && status !== 'CANCELLED') {
       return NextResponse.json({ error: 'Invalid status update' }, { status: 400 });
     }
 
     const admin = getAdminClient();
+
+    // Check if optimistic order ID (client-side only, doesn't exist in DB)
+    if (id.startsWith('opt_') || id.startsWith('__optimistic__')) {
+      return NextResponse.json({
+        order: {
+          id,
+          status: 'CANCELLED',
+        }
+      });
+    }
 
     // Check if virtual order (SL/Target/GTT attached to position)
     const isVirtualSl = id.startsWith('pos-sl-');
@@ -576,18 +648,17 @@ async function handleCancelOrder(
       else if (isVirtualTarget) updateField = { target: null };
       else if (isVirtualGtt) updateField = { stop_loss: null, target: null };
 
-      const { data, error } = await admin
+      await admin
         .from('positions')
         .update(updateField)
         .eq('id', positionId)
         .eq('user_id', user.id)
-        .eq('status', 'open')
+        .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
         .select()
-        .single();
+        .maybeSingle();
 
-      if (error) {
-        return NextResponse.json({ error: 'Could not cancel stop loss/target. The position might already be closed.' }, { status: 400 });
-      }
+      await invalidateUserOrdersCache(user.id);
+      await invalidateUserPositionsCache(user.id);
 
       return NextResponse.json({
         order: {
@@ -597,19 +668,51 @@ async function handleCancelOrder(
       });
     }
 
-    // Update order status if it's still PENDING or TRIGGER_PENDING
+    // Check existing order in DB first
+    const { data: existingOrder } = await admin
+      .from('orders')
+      .select('*')
+      .eq('id', id)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (!existingOrder) {
+      // Order doesn't exist in DB (might already be pruned/cancelled/virtual)
+      await invalidateUserOrdersCache(user.id);
+      return NextResponse.json({
+        order: {
+          id,
+          status: 'CANCELLED',
+        }
+      });
+    }
+
+    const currentStatusUpper = String(existingOrder.status || '').toUpperCase();
+    if (currentStatusUpper === 'CANCELLED') {
+      return NextResponse.json({ order: existingOrder });
+    }
+
+    if (currentStatusUpper === 'EXECUTED' || currentStatusUpper === 'REJECTED') {
+      return NextResponse.json({ error: `Could not cancel order. Order is already ${currentStatusUpper.toLowerCase()}.` }, { status: 400 });
+    }
+
+    // Update order status across any pending/open status variant
     const { data, error } = await admin
       .from('orders')
       .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
       .eq('id', id)
       .eq('user_id', user.id)
-      .in('status', ['PENDING', 'TRIGGER_PENDING'])
+      .in('status', OPEN_ORDER_STATUSES)
       .select()
-      .single();
+      .maybeSingle();
 
-    if (error) {
+    if (error || !data) {
       return NextResponse.json({ error: 'Could not cancel order. It might already be executed or cancelled.' }, { status: 400 });
     }
+
+    // Invalidate Redis caches
+    await invalidateUserOrdersCache(user.id);
+    await invalidateUserPositionsCache(user.id);
 
     // After cancelling any real exit order (GTT, SL, SLM, TARGET/LIMIT exit),
     // ALWAYS clear stop_loss AND target on the linked position so the virtual
@@ -635,7 +738,7 @@ async function handleCancelOrder(
           .update(clearFields)
           .eq('id', linkedPosId)
           .eq('user_id', user.id)
-          .in('status', ['open', 'active']);
+          .in('status', ['open', 'OPEN', 'active', 'ACTIVE']);
         console.log(`[CANCEL] Cleared SL/Target on position ${linkedPosId}`);
       } else {
         // Strategy 2 (fallback): clear by symbol — find the open position for this symbol
@@ -646,7 +749,7 @@ async function handleCancelOrder(
             .update(clearFields)
             .eq('user_id', user.id)
             .eq('symbol', data.symbol)
-            .in('status', ['open', 'active']);
+            .in('status', ['open', 'OPEN', 'active', 'ACTIVE']);
           console.log(`[CANCEL] Cleared SL/Target on positions for symbol ${data.symbol} (fallback)`);
         }
       }

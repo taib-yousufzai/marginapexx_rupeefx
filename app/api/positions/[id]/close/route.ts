@@ -223,7 +223,7 @@ export async function POST(
     const targetSymbol = body?.symbol || (positionId && !isUuid ? positionId : '');
     const targetClean = cleanSym(targetSymbol);
 
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       const { data: userOpenPositions } = await admin
         .from('positions')
         .select('*')
@@ -246,8 +246,8 @@ export async function POST(
           break;
         }
       }
-      if (attempt < 2) {
-        await new Promise(r => setTimeout(r, 100));
+      if (attempt < 4) {
+        await new Promise(r => setTimeout(r, 50));
       }
     }
   }
