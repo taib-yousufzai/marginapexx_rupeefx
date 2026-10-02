@@ -254,9 +254,24 @@ export async function GET(request: Request) {
     }
 
     if (!atmPrice) {
-      console.warn(`[option-chain] No valid ATM price for ${symbol}, using median strike fallback (${medianStrike})`);
+      const upper = symbol.toUpperCase();
+      let baseline = 0;
+      if (upper.includes('CRUDE')) baseline = 5740;
+      else if (upper.includes('GOLD')) baseline = 73450;
+      else if (upper.includes('SILVER')) baseline = 85200;
+      else if (upper.includes('NATURALGAS') || upper.includes('NATGAS')) baseline = 198.5;
+      else if (upper.includes('SENSEX')) baseline = 82890;
+      else if (upper.includes('BANKNIFTY') || upper.includes('BANK')) baseline = 51780;
+      else if (upper.includes('MIDCP')) baseline = 12850;
+      else if (upper.includes('NIFTY')) baseline = 25380;
+
+      if (baseline > 0 && baseline >= minStrike * 0.4 && baseline <= maxStrike * 2.5) {
+        atmPrice = baseline;
+      } else {
+        console.warn(`[option-chain] No valid ATM price for ${symbol}, using median strike fallback (${medianStrike})`);
+        atmPrice = medianStrike;
+      }
       usedFallback = true;
-      atmPrice = medianStrike;
     }
 
     // ── 6. Apply strike range filter (minimum 31 strikes buffer so 5 strikes above and below ATM are always available) ───
