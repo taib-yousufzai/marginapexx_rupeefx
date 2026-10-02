@@ -73,9 +73,30 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const missingSymbols: string[] = [];
 
+    function isQuoteRealistic(sym: string, price: number): boolean {
+      if (!price || isNaN(price) || price <= 0) return false;
+      const upper = sym.toUpperCase();
+      if (price === 1000) {
+        if (upper.includes('NIFTY') || upper.includes('SENSEX') || upper.includes('BANK') ||
+            upper.includes('GOLD') || upper.includes('SILVER') || upper.includes('CRUDE') ||
+            upper.includes('USDINR') || upper.includes('NATURALGAS') || upper.includes('NATGAS')) {
+          return false;
+        }
+      }
+      if (upper.includes('GOLD')) return price >= 20000 && price <= 200000;
+      if (upper.includes('SILVER')) return price >= 20000 && price <= 200000;
+      if (upper.includes('CRUDE')) return price >= 2000 && price <= 20000;
+      if (upper.includes('NATURALGAS') || upper.includes('NATGAS')) return price >= 50 && price <= 2000;
+      if (upper.includes('USDINR')) return price >= 50 && price <= 150;
+      if (upper.includes('SENSEX')) return price >= 30000;
+      if (upper.includes('BANKNIFTY') || upper.includes('NIFTY BANK')) return price >= 20000;
+      if (upper.includes('NIFTY')) return price >= 10000;
+      return true;
+    }
+
     for (const item of redisResults) {
-      if (item.data && (item.data.last_price > 0 || item.data.lastPrice > 0)) {
-        const lp = Number(item.data.last_price || item.data.lastPrice || 0);
+      const lp = Number(item.data?.last_price || item.data?.lastPrice || 0);
+      if (item.data && isQuoteRealistic(item.sym, lp)) {
         const close = Number(item.data.ohlc?.close || item.data.close || item.data.prevClose || lp);
         const quoteObj = {
           timestamp: new Date().toISOString(),
@@ -96,6 +117,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         const cleanName = item.sym.includes(':') ? item.sym.split(':')[1] : item.sym;
         quotesMap[cleanName] = quoteObj;
       } else {
+        // If Redis had corrupted/stale 1000 data, actively purge it from Redis
+        if (item.data && lp > 0) {
+          redis.hdel('market:quotes', item.sym).catch(() => {});
+          const cleanName = item.sym.includes(':') ? item.sym.split(':')[1] : item.sym;
+          redis.hdel('market:quotes', cleanName).catch(() => {});
+        }
         missingSymbols.push(item.sym);
       }
     }

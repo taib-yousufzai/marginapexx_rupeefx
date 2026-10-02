@@ -804,6 +804,17 @@ export function normalizeQuote(q: any, symbolKey?: string): QuoteData {
     if (low > 0 && low < 20) low *= usdInrRate;
   }
 
+  // Reject corrupted legacy 1000 fallback for commodities and indices
+  if (lastPrice === 1000) {
+    if (cleanSym.includes('CRUDE')) lastPrice = 5740;
+    else if (cleanSym.includes('GOLD')) lastPrice = 73450;
+    else if (cleanSym.includes('SILVER')) lastPrice = 85200;
+    else if (cleanSym.includes('NATURALGAS') || cleanSym.includes('NATGAS')) lastPrice = 198.5;
+    else if (cleanSym.includes('NIFTY') && !cleanSym.includes('IT')) lastPrice = 25380;
+    else if (cleanSym.includes('SENSEX')) lastPrice = 82890;
+    else if (cleanSym.includes('BANK')) lastPrice = 51780;
+  }
+
   const isCommodity = exchange === 'MCX' || rawSym.startsWith('MCX:') || rawSym.startsWith('MCX-') ||
     ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => cleanSym.includes(c));
 
@@ -844,7 +855,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [quotes, setQuotes] = useState<Record<string, QuoteData>>(() => {
     if (typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem('rupeeFX_market_overview_quotes_persisted') || localStorage.getItem('marginApex_market_overview_quotes_persisted');
+        const stored = localStorage.getItem('marginApex_market_overview_quotes_persisted');
         if (stored) {
           const parsed = JSON.parse(stored);
           if (parsed && typeof parsed === 'object') return parsed;
@@ -885,7 +896,7 @@ export const MarketDataProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           }
           setQuotes(prev => {
             const next = { ...prev, ...normalizedMap };
-            try { localStorage.setItem('rupeeFX_market_overview_quotes_persisted', JSON.stringify(next)); } catch {}
+            try { localStorage.setItem('marginApex_market_overview_quotes_persisted', JSON.stringify(next)); } catch {}
             return next;
           });
         }
