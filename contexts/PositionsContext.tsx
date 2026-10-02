@@ -416,6 +416,17 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         }
       }
 
+      // Clear optimistic removal record for any position the server returns as open/active with qty_open > 0
+      rawPositionsFromServer.forEach(p => {
+        const pStatus = (p.status || '').toLowerCase();
+        const isOpen = !pStatus || pStatus === 'open' || pStatus === 'active';
+        if (isOpen && (p.qty_open === undefined || Number(p.qty_open) > 0)) {
+          optimisticallyRemovedIds.current.delete(p.id);
+          optimisticallyRemovedTimes.current.delete(p.id);
+        }
+      });
+      savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
+
       // Filter out any IDs that are in optimistic removal in the last 30s
       let basePositions: MyPosition[] = rawPositionsFromServer.filter(
         p => !optimisticallyRemovedIds.current.has(p.id)
@@ -636,97 +647,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
 
     const handleOrderPlacedWithData = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail) {
-        if (detail.is_exit) {
-          const exitQty = Number(detail.qty || detail.qty_open || 0);
-          const targetClean = cleanSym(detail.symbol || (detail as any).kite_instrument || '');
-          const now = Date.now();
-
-          setRawPositions(prev => {
-            const matchingPositions = prev.filter(p => {
-              if (detail.linked_position_id) return p.id === detail.linked_position_id;
-              if (targetClean && cleanSym(p.symbol || p.kite_instrument || '') === targetClean) return true;
-              return false;
-            });
-
-            if (matchingPositions.length === 0) return prev;
-
-            const totalQty = matchingPositions.reduce((sum, p) => sum + (p.qty_open || 0), 0);
-
-            if (!exitQty || exitQty >= totalQty) {
-              matchingPositions.forEach(p => {
-                optimisticallyRemovedIds.current.add(p.id);
-                optimisticallyRemovedTimes.current.set(p.id, now);
-              });
-              savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
-              const removeIds = new Set(matchingPositions.map(p => p.id));
-              const next = prev.filter(p => !removeIds.has(p.id));
-              if (typeof window !== 'undefined') {
-                try {
-                  // Clear from both main and optimistic localStorage caches immediately
-                  const storedMain = localStorage.getItem(POSITIONS_PERSIST_KEY);
-                  if (storedMain) {
-                    const parsed: MyPosition[] = JSON.parse(storedMain);
-                    localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(parsed.filter(p => !removeIds.has(p.id))));
-                  }
-                  const storedOpt = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
-                  if (storedOpt) {
-                    const parsed: MyPosition[] = JSON.parse(storedOpt);
-                    const filtered = parsed.filter(p => !removeIds.has(p.id) && cleanSym(p.symbol) !== targetClean);
-                    if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
-                    else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
-                  }
-                  savePersistedOptimisticPositions(next);
-                } catch { }
-              }
-              return next;
-            } else {
-              let remExit = exitQty;
-              const sortedMatching = [...matchingPositions].sort((a, b) => {
-                if (detail.linked_position_id) {
-                  if (a.id === detail.linked_position_id) return -1;
-                  if (b.id === detail.linked_position_id) return 1;
-                }
-                return 0;
-              });
-
-              const updatedMap = new Map<string, number | null>();
-              for (const p of sortedMatching) {
-                if (remExit <= 0) break;
-                const curQty = p.qty_open || 0;
-                if (curQty <= remExit) {
-                  remExit -= curQty;
-                  optimisticallyRemovedIds.current.add(p.id);
-                  optimisticallyRemovedTimes.current.set(p.id, now);
-                  updatedMap.set(p.id, null);
-                } else {
-                  const newQ = curQty - remExit;
-                  remExit = 0;
-                  updatedMap.set(p.id, newQ);
-                }
-              }
-              savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
-
-              const next = prev.map(p => {
-                if (updatedMap.has(p.id)) {
-                  const newQ = updatedMap.get(p.id);
-                  if (newQ === null) return null;
-                  return { ...p, qty_open: newQ, qty_total: newQ };
-                }
-                return p;
-              }).filter((p): p is MyPosition => p !== null);
-              if (typeof window !== 'undefined') {
-                try {
-                  localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
-                  savePersistedOptimisticPositions(next);
-                } catch { }
-              }
-              return next;
-            }
-          });
-        } else if (!detail.is_exit) {
-          addOptimisticPosition(detail);
-        }
+      if (detail && !detail.is_exit) {
+        addOptimisticPosition(detail);
       }
       // Immediate fetch with fresh cache buster
       fetchPositions({ fresh: true });

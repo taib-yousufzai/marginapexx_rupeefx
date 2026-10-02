@@ -1184,20 +1184,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
           handleCloseAnimation();
 
-          const isMarketExit = resolvedOrderType === 'MARKET' && Boolean(currentLinkedPosId);
-          const targetOpenQty = Number(targetPos?.qty_open || targetPos?.qty_total || 0);
-          const isFullExit = isMarketExit && (targetOpenQty <= 0 || Number(finalQty) >= targetOpenQty);
-          console.log('[DEBUG-TRADE] Executing exit. isMarketExit:', isMarketExit, 'isFullExit:', isFullExit, 'linkedPosId:', currentLinkedPosId, 'qty:', finalQty, 'openQty:', targetOpenQty);
+          console.log('[DEBUG-TRADE] Executing exit order. linkedPosId:', currentLinkedPosId, 'qty:', finalQty, 'order_type:', resolvedOrderType);
 
-          const executionPromise = isFullExit
-            ? closePosition(
-              currentLinkedPosId!,
-              resolvedClientPrice ?? currentLtp,
-              item.symbol,
-              isCrypto ? 'CRYPTO' : (dbSeg || item.segment),
-              targetPosSide
-            )
-            : placeOrder(orderPayload);
+          const executionPromise = placeOrder(orderPayload);
 
           executionPromise.then(res => {
             if (res.success || (res as any).isProcessing) {
