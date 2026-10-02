@@ -207,10 +207,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
   const comexSymbolKey = item?.comexSymbol || (item?.symbol?.endsWith('=F') ? item.symbol : (
     (item?.name || item?.symbol || '').toUpperCase().includes('SILVER') ? 'XAGUSD' :
-    (item?.name || item?.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
-    (item?.name || item?.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
-    (item?.name || item?.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
-    (item?.name || item?.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
+      (item?.name || item?.symbol || '').toUpperCase().includes('GOLD') ? 'XAUUSD' :
+        (item?.name || item?.symbol || '').toUpperCase().includes('CRUDE') ? 'XTIUSD' :
+          (item?.name || item?.symbol || '').toUpperCase().includes('COPPER') ? 'XCUUSD' :
+            (item?.name || item?.symbol || '').toUpperCase().includes('NAT') ? 'XNGUSD' : ''
   ));
 
   const comexSymbols = useMemo(() => {
@@ -243,10 +243,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
     currentChangePercent = (cryptoQuote as any).changePercent ?? (prevClose > 0 ? ((currentLtp - prevClose) / prevClose) * 100 : 0);
   } else if (isComex && (comexSymbolKey || item?.symbol || item?.comexSymbol)) {
     const q = (comexSymbolKey && comexQuotes[comexSymbolKey]) ||
-              (item?.comexSymbol && comexQuotes[item.comexSymbol]) ||
-              (comexSymbolKey && marketQuotes[comexSymbolKey]) ||
-              (item?.symbol && marketQuotes[item.symbol]) ||
-              activeKiteQuote;
+      (item?.comexSymbol && comexQuotes[item.comexSymbol]) ||
+      (comexSymbolKey && marketQuotes[comexSymbolKey]) ||
+      (item?.symbol && marketQuotes[item.symbol]) ||
+      activeKiteQuote;
     if (q) {
       currentLtp = q.lastPrice || (q as any).price || currentLtp;
       currentChangePercent = q.changePercent || 0;
@@ -1150,7 +1150,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
 
           const cachedPos = typeof window !== 'undefined' && (window as any).__lastPositionsMap && currentLinkedPosId ? (window as any).__lastPositionsMap.get(currentLinkedPosId) : null;
           const targetPos = (currentLinkedPosId ? activePositions.find(p => p.id === currentLinkedPosId) : undefined) || existingPos || cachedPos;
-          
+
           let targetPosSide: 'BUY' | 'SELL';
           let orderExitSide: 'BUY' | 'SELL';
           if (targetPos?.side) {
@@ -1185,16 +1185,18 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           handleCloseAnimation();
 
           const isMarketExit = resolvedOrderType === 'MARKET' && Boolean(currentLinkedPosId);
-          console.log('[DEBUG-TRADE] Executing exit. isMarketExit:', isMarketExit, 'linkedPosId:', currentLinkedPosId);
+          const targetOpenQty = Number(targetPos?.qty_open || targetPos?.qty_total || 0);
+          const isFullExit = isMarketExit && (targetOpenQty <= 0 || Number(finalQty) >= targetOpenQty);
+          console.log('[DEBUG-TRADE] Executing exit. isMarketExit:', isMarketExit, 'isFullExit:', isFullExit, 'linkedPosId:', currentLinkedPosId, 'qty:', finalQty, 'openQty:', targetOpenQty);
 
-          const executionPromise = isMarketExit
+          const executionPromise = isFullExit
             ? closePosition(
-                currentLinkedPosId!,
-                resolvedClientPrice ?? currentLtp,
-                item.symbol,
-                isCrypto ? 'CRYPTO' : (dbSeg || item.segment),
-                targetPosSide
-              )
+              currentLinkedPosId!,
+              resolvedClientPrice ?? currentLtp,
+              item.symbol,
+              isCrypto ? 'CRYPTO' : (dbSeg || item.segment),
+              targetPosSide
+            )
             : placeOrder(orderPayload);
 
           executionPromise.then(res => {
@@ -1240,6 +1242,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         // Modify flow: update the pending order in place via PUT /api/orders/[id]
         if (isModify && modifyingOrderId && !modifyingOrderId.startsWith('pos-')) {
           try {
+            const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote;
+            const currentLiveLtp = activeQuoteObj?.lastPrice ?? (activeQuoteObj as any)?.last_price ?? currentLtp;
+            
             const updatePayload = {
               price: resolvedClientPrice,
               trigger_price: resolvedTriggerPrice ?? null,
@@ -1250,6 +1255,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               order_type: resolvedOrderType,
               is_exit: initialOrder?.is_exit !== undefined ? Boolean(initialOrder.is_exit) : false,
               linked_position_id: currentLinkedPosId || initialOrder?.linked_position_id || initialOrder?.linkedPosId || null,
+              frontend_ltp: currentLiveLtp,
             };
             const res: any = await api.put(`/api/orders/${modifyingOrderId}`, updatePayload);
             if (res?.order) {
