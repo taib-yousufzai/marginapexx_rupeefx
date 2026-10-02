@@ -113,7 +113,7 @@ export function useOrderEntry() {
 
     const matchingOppositePositions = allPositionsPool.filter(
       p => {
-        if (state.linked_position_id && p.id === state.linked_position_id) return true;
+        if (state.linked_position_id) return p.id === state.linked_position_id;
         const pStatus = (p.status || '').toLowerCase();
         const isOpen = !pStatus || pStatus === 'open' || pStatus === 'active';
         const pSide = (p.side || '').toUpperCase();
@@ -192,6 +192,7 @@ export function useOrderEntry() {
             const curQty = Number(p.qty_open || p.qty_total || (p as any).qty || 1);
             const closedQty = Math.min(curQty, remExit);
             remExit -= closedQty;
+            const remainingQty = curQty - closedQty;
 
             const posSide = (p.side || 'BUY') as 'BUY' | 'SELL';
             const pnl = posSide === 'BUY' ? (exitPrice - entryPrice) * closedQty : (entryPrice - exitPrice) * closedQty;
@@ -218,13 +219,13 @@ export function useOrderEntry() {
             const optimisticClosedPos = {
               ...p,
               id: p.id,
-              status: 'closed',
+              status: remainingQty <= 0 ? 'closed' : 'open',
               exit_price: exitPrice,
               pnl,
               total_pnl: pnl,
               pnl_percent: pnlPercent,
-              qty_total: p.qty_total || p.qty_open || closedQty,
-              qty_open: 0,
+              qty_total: closedQty,
+              qty_open: remainingQty,
               closed_at: new Date(now).toISOString(),
               exit_time: new Date(now).toISOString(),
               updated_at: new Date(now).toISOString(),
@@ -232,21 +233,24 @@ export function useOrderEntry() {
 
             optimisticClosedPositions.push(optimisticClosedPos);
             if (p.id) {
-              if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-                (window as any).__lastPositionsMap.delete(p.id);
+              if (remainingQty <= 0) {
+                // Fully closed: remove from active positions map and context
+                if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+                  (window as any).__lastPositionsMap.delete(p.id);
+                }
+                if (positionsContext?.removePositionLocally) {
+                  positionsContext.removePositionLocally(p.id);
+                }
+              } else {
+                // Partially closed: update remaining quantity in place
+                const updatedPos = { ...p, qty_open: remainingQty, qty_total: remainingQty };
+                if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+                  (window as any).__lastPositionsMap.set(p.id, updatedPos);
+                }
+                if (positionsContext?.updatePositionLocally) {
+                  positionsContext.updatePositionLocally(p.id, { qty_open: remainingQty, qty_total: remainingQty });
+                }
               }
-              if (positionsContext?.removePositionLocally) {
-                positionsContext.removePositionLocally(p.id);
-              }
-            }
-          }
-
-          if (effectiveLinkedPosId) {
-            if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-              (window as any).__lastPositionsMap.delete(effectiveLinkedPosId);
-            }
-            if (positionsContext?.removePositionLocally) {
-              positionsContext.removePositionLocally(effectiveLinkedPosId);
             }
           }
 

@@ -644,7 +644,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
 
           setRawPositions(prev => {
             const matchingPositions = prev.filter(p => {
-              if (detail.linked_position_id && p.id === detail.linked_position_id) return true;
+              if (detail.linked_position_id) return p.id === detail.linked_position_id;
               if (targetClean && cleanSym(p.symbol || p.kite_instrument || '') === targetClean) return true;
               return false;
             });
@@ -711,7 +711,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
                 if (updatedMap.has(p.id)) {
                   const newQ = updatedMap.get(p.id);
                   if (newQ === null) return null;
-                  return { ...p, qty_open: newQ };
+                  return { ...p, qty_open: newQ, qty_total: newQ };
                 }
                 return p;
               }).filter((p): p is MyPosition => p !== null);
@@ -750,7 +750,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       const detail = (e as CustomEvent).detail;
       const positions = detail?.positions || (detail?.position ? [detail.position] : []);
       const now = Date.now();
-      positions.forEach((p: any) => {
+      const fullyClosedPositions = positions.filter((p: any) => p?.status === 'closed' || p?.qty_open === 0);
+      fullyClosedPositions.forEach((p: any) => {
         if (p?.id) {
           optimisticallyRemovedIds.current.add(p.id);
           optimisticallyRemovedTimes.current.set(p.id, now);
@@ -758,7 +759,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       });
       savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
       setRawPositions(prev => {
-        const closedIdSet = new Set(positions.map((p: any) => p?.id).filter(Boolean));
+        const closedIdSet = new Set(fullyClosedPositions.map((p: any) => p?.id).filter(Boolean));
+        if (closedIdSet.size === 0) return prev;
         const next = prev.filter(p => !closedIdSet.has(p.id));
         savePersistedOptimisticPositions(next);
         return next;
