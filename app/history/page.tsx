@@ -412,14 +412,25 @@ export default function HistoryPage() {
     return base;
   }, [historyData, currentTab, appliedFromDate, appliedToDate, fromDate, toDate]);
 
+  const getItemBrokerage = useCallback((h: HistoryItem) => {
+    const direct = Number(h.brokerage || 0);
+    if (direct > 0) return direct;
+    const entryBrk = Number((h as any).entry_brokerage || 0);
+    if (entryBrk > 0) return entryBrk;
+    const intraday = Number(h.entry_intraday_brokerage || 0) + Number(h.exit_intraday_brokerage || 0) + Number(h.intraday_brokerage || 0);
+    const carry = Number(h.entry_carry_brokerage || 0) + Number(h.exit_carry_brokerage || 0) + Number(h.carry_brokerage || 0);
+    const gtt = Number(h.entry_gtt_brokerage || 0) + Number(h.exit_gtt_brokerage || 0) + Number(h.gtt_brokerage || 0);
+    return intraday + carry + gtt;
+  }, []);
+
   const summary = useMemo(() => {
     const posHistory = filteredData.filter(h => String(h.status || '').toLowerCase() === 'closed');
     const gp = posHistory.filter(h => h.pnl > 0).reduce((acc, h) => acc + h.pnl, 0);
     const gl = posHistory.filter(h => h.pnl < 0).reduce((acc, h) => acc + Math.abs(h.pnl), 0);
-    const b = filteredData.reduce((acc, h) => acc + (h.brokerage || (h as any).entry_brokerage || 0), 0);
+    const b = filteredData.reduce((acc, h) => acc + getItemBrokerage(h), 0);
     const s = posHistory.reduce((acc, h) => acc + (h.settlementAmount ?? 0), 0);
     return { gp, gl, b, s, n: gp - gl - b - s };
-  }, [filteredData]);
+  }, [filteredData, getItemBrokerage]);
 
   const formatPrice = (val: number) => {
     const sign = val >= 0 ? '' : '-';
@@ -703,22 +714,7 @@ export default function HistoryPage() {
                                 return `Intraday: ₹${intraday}\nCarry: ₹${carry}\nGTT: ₹${gtt}`;
                               }
                             })()} style={{ position: 'relative' }}>
-                              <i className="fas fa-receipt"></i> {(() => {
-                                // Use brokerage field directly; fall back to entry_brokerage or sum of breakdown columns
-                                // for positions that predate the brokerage column being populated
-                                const direct = item.brokerage || 0;
-                                if (direct > 0) return formatPrice(direct);
-                                // Fallback to entry_brokerage if available (since brokerage was charged upfront at entry)
-                                const entryBrk = (item as any).entry_brokerage || 0;
-                                if (entryBrk > 0) return formatPrice(entryBrk);
-                                if (currentTab === 'position') {
-                                  const computed = (item.entry_intraday_brokerage || 0) + (item.entry_carry_brokerage || 0) +
-                                    (item.exit_intraday_brokerage || 0) + (item.exit_carry_brokerage || 0);
-                                  return formatPrice(computed);
-                                }
-                                const computed = (item.intraday_brokerage || 0) + (item.carry_brokerage || 0) + (item.gtt_brokerage || 0);
-                                return formatPrice(computed);
-                              })()}
+                              <i className="fas fa-receipt"></i> {formatPrice(getItemBrokerage(item))}
                             </span>
                             {currentTab === 'position' && (
                               <span className="detail-item" style={{ color: '#64748b', fontSize: '0.7rem' }}>
