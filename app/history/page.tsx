@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '@/hooks/useAuth';
-import { useRouter } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { api, ApiError } from '@/lib/api';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
@@ -22,13 +22,14 @@ export type { HistoryItem };
 export default function HistoryPage() {
   useAuth();
   const router = useRouter();
+  const pathname = usePathname();
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentTab, setCurrentTab] = useState<'position' | 'order'>('position');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [appliedFromDate, setAppliedFromDate] = useState('');
   const [appliedToDate, setAppliedToDate] = useState('');
-  
+
   const [historyData, setHistoryData] = useState<HistoryItem[]>(() => getClientHistoryCache());
   const historyDataRef = useRef<HistoryItem[]>(historyData);
   historyDataRef.current = historyData;
@@ -227,7 +228,20 @@ export default function HistoryPage() {
   }, []);
 
   useEffect(() => {
-    // Always fetch fresh from DB on page load so navigating here after a trade
+    // Immediate 0ms hydration from cache on route navigation to /history
+    if (pathname === '/history' || pathname?.includes('/history')) {
+      const cached = getClientHistoryCache();
+      if (cached.length > 0) {
+        setHistoryData(cached);
+        setInitialLoaded(true);
+        setLoading(false);
+      }
+      fetchHistory(true, true);
+    }
+  }, [pathname, fetchHistory]);
+
+  useEffect(() => {
+    // Always fetch fresh from DB on mount so navigating here after a trade
     // doesn't show stale Redis-cached data.
     fetchHistory(historyDataRef.current.length > 0, true);
 
@@ -236,12 +250,12 @@ export default function HistoryPage() {
 
     const triggerRefresh = (delay = 0) => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      // Fire immediately (0ms) so the API refresh starts right away
+      // Fire immediately so the API refresh starts right away
       debounceTimer = setTimeout(() => {
         fetchHistory(true, true);
       }, delay);
 
-      // Follow-up fetch to ensure backend DB commits settle (reduced from 800ms → 300ms)
+      // Follow-up fetch to ensure backend DB commits settle
       if (followUpTimer) clearTimeout(followUpTimer);
       followUpTimer = setTimeout(() => {
         fetchHistory(true, true);
@@ -310,8 +324,54 @@ export default function HistoryPage() {
 
     // Smooth background refresh on trade events without wiping UI
     const handleCloseOrOrderEvent = () => {
+      const cached = getClientHistoryCache();
+      if (cached.length > 0) {
+        setHistoryData(cached);
+        setInitialLoaded(true);
+        setLoading(false);
+      }
       triggerRefresh(50);
     };
+
+    // Cache updated directly by helper
+    const handleCacheUpdated = (e: any) => {
+      const all = e.detail?.all || getClientHistoryCache();
+      if (Array.isArray(all) && all.length > 0) {
+        setHistoryData(all);
+        setInitialLoaded(true);
+        setLoading(false);
+      }
+      triggerRefresh(150);
+    };
+
+    // Storage event for multi-tab synchronization
+    const handleStorage = (e: StorageEvent) => {
+      if (!e.key || e.key === 'history_cache_v2' || e.key.includes('history')) {
+        const cached = getClientHistoryCache();
+        if (cached.length > 0) {
+          setHistoryData(cached);
+          setInitialLoaded(true);
+          setLoading(false);
+        }
+      }
+    };
+
+    // BroadcastChannel for cross-component / cross-tab instant messaging
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        bc = new BroadcastChannel('marginapexx_history_bus');
+        bc.onmessage = () => {
+          const cached = getClientHistoryCache();
+          if (cached.length > 0) {
+            setHistoryData(cached);
+            setInitialLoaded(true);
+            setLoading(false);
+          }
+          triggerRefresh(100);
+        };
+      }
+    } catch (_) {}
 
     // Listen for all order and position lifecycle events
     const genericEventList = [
@@ -322,23 +382,36 @@ export default function HistoryPage() {
       'order_cancelled',
       'order_failed',
       'balance_updated',
+      'market_order_update',
     ];
 
     genericEventList.forEach(evt => window.addEventListener(evt, handleCloseOrOrderEvent));
     window.addEventListener('position_closed', handleConfirmedClose);
     window.addEventListener('position_closed_optimistic', handleConfirmedClose);
     window.addEventListener('history_updated', handleConfirmedClose);
+    window.addEventListener('history_cache_updated', handleCacheUpdated);
     window.addEventListener('position_closed_rollback', handleOptimisticRollback);
     window.addEventListener('order_placed_optimistic', handleOptimisticOrder);
     window.addEventListener('order_placed_with_data', handleOptimisticOrder);
+    window.addEventListener('storage', handleStorage);
 
     // Instant sync when tab/app becomes visible or focused
     const handleVisibility = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+        const cached = getClientHistoryCache();
+        if (cached.length > 0) {
+          setHistoryData(cached);
+        }
         triggerRefresh(50);
       }
     };
-    const handleFocus = () => triggerRefresh(50);
+    const handleFocus = () => {
+      const cached = getClientHistoryCache();
+      if (cached.length > 0) {
+        setHistoryData(cached);
+      }
+      triggerRefresh(50);
+    };
 
     document.addEventListener('visibilitychange', handleVisibility);
     window.addEventListener('focus', handleFocus);
@@ -367,12 +440,19 @@ export default function HistoryPage() {
       if (debounceTimer) clearTimeout(debounceTimer);
       if (followUpTimer) clearTimeout(followUpTimer);
       clearInterval(pollInterval);
+      if (bc) {
+        try {
+          bc.close();
+        } catch (_) {}
+      }
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('storage', handleStorage);
       genericEventList.forEach(evt => window.removeEventListener(evt, handleCloseOrOrderEvent));
       window.removeEventListener('position_closed', handleConfirmedClose);
       window.removeEventListener('position_closed_optimistic', handleConfirmedClose);
       window.removeEventListener('history_updated', handleConfirmedClose);
+      window.removeEventListener('history_cache_updated', handleCacheUpdated);
       window.removeEventListener('position_closed_rollback', handleOptimisticRollback);
       window.removeEventListener('order_placed_optimistic', handleOptimisticOrder);
       window.removeEventListener('order_placed_with_data', handleOptimisticOrder);
@@ -472,319 +552,319 @@ export default function HistoryPage() {
       }
     `}</style>
       <div className="history-root">
-              {/* ── Header (Mobile Only) ── */}
-              <div className="app-header mobile-only">
-                <div className="header-top">
-                  <div className="logo-area">
-                    <div className="logo-text">Weekly Trade History</div>
-                  </div>
-                  <div className="header-buttons">
-                    <button
-                      suppressHydrationWarning
-                      className={`header-btn ${currentTab === 'position' ? 'active' : ''}`}
-                      onClick={() => setCurrentTab('position')}
-                    >
-                      Position History
-                    </button>
-                    <button
-                      suppressHydrationWarning
-                      className={`header-btn ${currentTab === 'order' ? 'active' : ''}`}
-                      onClick={() => setCurrentTab('order')}
-                    >
-                      Order History
-                    </button>
-                  </div>
-                </div>
-                <div className="date-filter-row">
-                  <div className="filter-group">
-                    <i className="fas fa-calendar-alt"></i>
-                    <div className="date-input-wrapper">
-                      {!fromDate && <div className="date-placeholder">From</div>}
-                      <input
-                        type="date"
-                        className="date-input-compact"
-                        value={fromDate}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setFromDate(val);
-                          setAppliedFromDate(val);
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <span style={{ color: '#C62E2E', fontSize: '0.7rem' }}>→</span>
-                  <div className="filter-group">
-                    <i className="fas fa-calendar-alt"></i>
-                    <div className="date-input-wrapper">
-                      {!toDate && <div className="date-placeholder">To</div>}
-                      <input
-                        type="date"
-                        className="date-input-compact"
-                        value={toDate}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setToDate(val);
-                          setAppliedToDate(val);
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="filter-buttons" style={{ marginLeft: 'auto' }}>
-                    <button className="filter-btn apply" onClick={handleApplyFilter}>Apply</button>
-                    <button className="filter-btn clear" onClick={handleClearFilter}>Clear</button>
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Desktop Page Header ── */}
-              <div className="desktop-only" style={{ padding: '20px 24px 0 24px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-                  <div>
-                    <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Weekly Trade History</h1>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 4 }}>Historical execution logs & performance</p>
-                  </div>
-                  <div className="header-buttons" style={{ display: 'flex', gap: 10, background: 'var(--bg-card)', padding: 4, borderRadius: 12, border: '1px solid var(--border-color)' }}>
-                    <button
-                      className={`header-btn ${currentTab === 'position' ? 'active' : ''}`}
-                      onClick={() => setCurrentTab('position')}
-                      style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-                    >
-                      Position History
-                    </button>
-                    <button
-                      className={`header-btn ${currentTab === 'order' ? 'active' : ''}`}
-                      onClick={() => setCurrentTab('order')}
-                      style={{ padding: '8px 16px', fontSize: '0.85rem' }}
-                    >
-                      Order History
-                    </button>
-                  </div>
-                </div>
-
-                <div className="date-filter-row" style={{ background: 'var(--bg-card)', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 15 }}>
-                  <div className="filter-group">
-                    <i className="fas fa-calendar-alt" style={{ color: 'var(--text-secondary)' }}></i>
-                    <input
-                      type="date"
-                      className="date-input-compact"
-                      value={fromDate}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setFromDate(val);
-                        setAppliedFromDate(val);
-                      }}
-                    />
-                  </div>
-                  <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>to</span>
-                  <div className="filter-group">
-                    <i className="fas fa-calendar-alt" style={{ color: 'var(--text-secondary)' }}></i>
-                    <input
-                      type="date"
-                      className="date-input-compact"
-                      value={toDate}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setToDate(val);
-                        setAppliedToDate(val);
-                      }}
-                    />
-                  </div>
-                  <div className="filter-buttons" style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
-                    <button className="filter-btn apply" onClick={handleApplyFilter} style={{ padding: '8px 24px' }}>Apply Filter</button>
-                    <button className="filter-btn clear" onClick={handleClearFilter} style={{ padding: '8px 16px' }}>Reset</button>
-                  </div>
-                </div>
-
-                {/* ── Desktop Performance KPI Cards ── */}
-                <div className="desktop-summary-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginTop: 16 }}>
-                  <div className="summary-card" style={{ background: 'var(--bg-card)', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-color)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="fas fa-chart-bar"></i> Gross P&L
-                    </div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: 6 }} className={summary.gp - summary.gl >= 0 ? 'pnl positive' : 'pnl negative'}>
-                      {formatPrice(summary.gp - summary.gl)}
-                    </div>
-                  </div>
-                  <div className="summary-card" style={{ background: 'var(--bg-card)', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-color)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="fas fa-receipt"></i> Total Brokerage
-                    </div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: 6, color: 'var(--text-primary)' }}>
-                      {formatPrice(summary.b)}
-                    </div>
-                  </div>
-                  <div className="summary-card" style={{ background: 'var(--bg-card)', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-color)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="fas fa-chart-line"></i> Net P&L
-                    </div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: 6 }} className={summary.n >= 0 ? 'pnl positive' : 'pnl negative'}>
-                      {formatPrice(summary.n)}
-                    </div>
-                  </div>
-                  <div className="summary-card" style={{ background: 'var(--bg-card)', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-color)' }}>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <i className="fas fa-handshake"></i> Settlement
-                    </div>
-                    <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: 6, color: summary.s > 0 ? '#C62E2E' : 'var(--text-primary)' }}>
-                      {summary.s > 0 ? `-₹${summary.s.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₹0.00'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="main-content" ref={scrollResetRef}>
-                <div className="history-list">
-                  {loading ? (
-                    <div style={{ padding: '60px 0', textAlign: 'center' }}>
-                      <AnimatedLoader text={currentTab === 'position' ? "Loading position history..." : "Loading order history..."} />
-                    </div>
-                  ) : filteredData.length === 0 ? (
-                    <div className="empty-history">
-                      <i className={currentTab === 'position' ? "fas fa-folder-open" : "fas fa-list-ul"}></i>
-                      <p>No history found</p>
-                    </div>
-                  ) : (
-                    filteredData.filter(Boolean).map((item) => {
-                      const itemType = (item.type || 'BUY').toLowerCase();
-                      const scriptName = item.scriptName || 'UNKNOWN';
-                      const displaySymbol = (scriptName || '').replace(/^(COMEX:|CRYPTO:|BINANCE:|FOREX:|NSE:|BSE:|MCX:|NFO:|US:|US-EQ:)/i, '');
-                      return (
-                        <div key={item.id} className="history-card" style={{ cursor: 'pointer' }} onClick={() => router.push(`/watchlist?symbol=${encodeURIComponent(scriptName)}&action=detail`)}>
-                          <div className="history-card-header">
-                            <div className="script-info">
-                              <span className="script-name">{displaySymbol}</span>
-                              <div className="script-badges">
-                                <span className={`order-type-badge ${itemType}`}>
-                                  {item.type || 'BUY'}
-                                </span>
-                                <span style={{ fontSize: '0.55rem', color: '#9AA4BF' }}>{item.orderType || 'INTRADAY'}</span>
-                                {currentTab === 'order' && (
-                                  <span className={`order-type-badge ${String(item.status || '').toLowerCase() === 'executed' ? 'completed' : 'pending'}`}>
-                                    {item.status || 'unknown'}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <div className={currentTab === 'position' ? `pnl ${item.pnl >= 0 ? 'positive' : 'negative'}` : 'price-value'}>
-                              {currentTab === 'position' ? (() => {
-                                const brokerage = item.brokerage || 0;
-                                const isPositive = item.pnl >= 0;
-                                const pctBase = item.entryPrice ? (item.pnl / (item.entryPrice * item.qty)) * 100 : 0;
-                                const pctStr = pctBase.toFixed(2);
-                                return (
-                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                                    <span className={isPositive ? 'positive' : 'negative'}>
-                                      {`${isPositive ? '+' : ''}${formatPrice(item.pnl)}`}
-                                    </span>
-                                    <span style={{ fontSize: '0.7rem', fontWeight: 600, marginTop: '2px' }}>
-                                      {`(${isPositive ? '+' : ''}${pctStr}%)`}
-                                    </span>
-                                    {brokerage > 0 && (
-                                      <span style={{ fontSize: '0.6rem', color: '#6e7681', marginTop: '1px' }}>
-                                        {`Brk: -${formatPrice(brokerage)}`}
-                                      </span>
-                                    )}
-                                  </div>
-                                );
-                              })() : (
-                                formatPrice(item.price)
-                              )}
-                            </div>
-                          </div>
-                          <div className="history-card-details">
-                            <span className="detail-item"><i className="fas fa-layer-group"></i> {item.qty}</span>
-                            {currentTab === 'position' ? (
-                              <>
-                                <span className="detail-item"><i className="fas fa-arrow-right"></i> {formatPrice(item.entryPrice || 0)}</span>
-                                <span className="detail-item"><i className="fas fa-arrow-left"></i> {formatPrice(item.exitPrice || 0)}</span>
-                                <span className="detail-item"><i className="far fa-calendar"></i> {item.exitDate}</span>
-                              </>
-                            ) : (
-                              <>
-                                <span className="detail-item"><i className="fas fa-clock"></i> {item.orderType}</span>
-                                <span className="detail-item"><i className="far fa-calendar"></i> {item.date.split(' ')[0]}</span>
-                              </>
-                            )}
-                          </div>
-                          <div className="history-card-details" style={{ marginTop: '4px' }}>
-                            <span className="detail-item tooltip" data-tooltip={(() => {
-                              if (currentTab === 'order') {
-                                const total = (item.intraday_brokerage || 0) + (item.carry_brokerage || 0) + (item.gtt_brokerage || 0);
-                                if (total === 0 && (item.brokerage || 0) > 0) {
-                                  return item.productType === 'CARRY'
-                                    ? `Intraday: ₹0\nCarry: ₹${item.brokerage}\nGTT: ₹0`
-                                    : `Intraday: ₹${item.brokerage}\nCarry: ₹0\nGTT: ₹0`;
-                                }
-                                return `Intraday: ₹${item.intraday_brokerage || 0}\nCarry: ₹${item.carry_brokerage || 0}\nGTT: ₹${item.gtt_brokerage || 0}`;
-                              } else {
-                                const intraday = (item.entry_intraday_brokerage || 0) + (item.exit_intraday_brokerage || 0);
-                                const carry = (item.entry_carry_brokerage || 0) + (item.exit_carry_brokerage || 0);
-                                const gtt = (item.entry_gtt_brokerage || 0) + (item.exit_gtt_brokerage || 0);
-                                if (intraday + carry + gtt === 0 && (item.brokerage || 0) > 0) {
-                                  return item.productType === 'CARRY'
-                                    ? `Intraday: ₹0\nCarry: ₹${item.brokerage}\nGTT: ₹0`
-                                    : `Intraday: ₹${item.brokerage}\nCarry: ₹0\nGTT: ₹0`;
-                                }
-                                return `Intraday: ₹${intraday}\nCarry: ₹${carry}\nGTT: ₹${gtt}`;
-                              }
-                            })()} style={{ position: 'relative' }}>
-                              <i className="fas fa-receipt"></i> {formatPrice(getItemBrokerage(item))}
-                            </span>
-                            {currentTab === 'position' && (
-                              <span className="detail-item" style={{ color: '#64748b', fontSize: '0.7rem' }}>
-                                <i className="fas fa-handshake"></i> ₹{(item.settlementAmount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </span>
-                            )}
-                            {currentTab === 'position' && isAdmin && item.closedBy && (
-                              <span className="detail-item" style={{ color: '#64748b', fontSize: '0.7rem' }}>
-                                <i className={item.closedBy === 'USER_ACTION' ? 'fas fa-user' : 'fas fa-robot'}></i> {
-                                  item.closedBy === 'AUTO_LIQUIDATION' ? 'Auto Sq-Off' :
-                                    item.closedBy === 'ADMIN_ACTION' ? 'Admin Sq-Off' :
-                                      item.closedBy === 'STOP_LOSS' ? 'Stop Loss' :
-                                        item.closedBy === 'TARGET_HIT' ? 'Target Hit' :
-                                          item.closedBy === 'SYSTEM_ACTION' ? 'System Sq-Off' :
-                                            item.closedBy === 'USER_ACTION' ? 'User Exit' :
-                                              item.closedBy === 'GTT_TARGET' ? 'GTT Target' :
-                                                item.closedBy === 'GTT_STOP_LOSS' ? 'GTT SL' :
-                                                  item.closedBy
-                                }
-                              </span>
-                            )}
-                            {currentTab === 'order' && <span className="detail-item"><i className="fas fa-hourglass-half"></i> {item.date.split(' ')[1] || ''}</span>}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Summary — in normal flow inside .history-root, sits below scrollable cards */}
-              <div className="history-footer mobile-only">
-                <div className="footer-row">
-                  <span className="footer-label"><i className="fas fa-chart-bar"></i> Gross P&L</span>
-                  <span className={`footer-value ${summary.gp - summary.gl >= 0 ? 'net-profit' : 'net-loss'}`}>
-                    {formatPrice(summary.gp - summary.gl)}
-                  </span>
-                </div>
-                <div className="footer-row">
-                  <span className="footer-label"><i className="fas fa-receipt"></i> Brokerage</span>
-                  <span className="footer-value">{formatPrice(summary.b)}</span>
-                </div>
-                <div className="footer-row">
-                  <span className="footer-label"><i className="fas fa-chart-line"></i> Net P&L</span>
-                  <span className={`footer-value ${summary.n >= 0 ? 'net-profit' : 'net-loss'}`}>
-                    {formatPrice(summary.n)}
-                  </span>
-                </div>
-                <div className="footer-row">
-                  <span className="footer-label"><i className="fas fa-handshake"></i> Settlement</span>
-                  <span className="footer-value" style={{ color: summary.s > 0 ? '#C62E2E' : 'inherit' }}>
-                    {summary.s > 0 ? `-₹${summary.s.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₹0.00'}
-                  </span>
-                </div>
+        {/* ── Header (Mobile Only) ── */}
+        <div className="app-header mobile-only">
+          <div className="header-top">
+            <div className="logo-area">
+              <div className="logo-text">Weekly Trade History</div>
+            </div>
+            <div className="header-buttons">
+              <button
+                suppressHydrationWarning
+                className={`header-btn ${currentTab === 'position' ? 'active' : ''}`}
+                onClick={() => setCurrentTab('position')}
+              >
+                Position History
+              </button>
+              <button
+                suppressHydrationWarning
+                className={`header-btn ${currentTab === 'order' ? 'active' : ''}`}
+                onClick={() => setCurrentTab('order')}
+              >
+                Order History
+              </button>
+            </div>
+          </div>
+          <div className="date-filter-row">
+            <div className="filter-group">
+              <i className="fas fa-calendar-alt"></i>
+              <div className="date-input-wrapper">
+                {!fromDate && <div className="date-placeholder">From</div>}
+                <input
+                  type="date"
+                  className="date-input-compact"
+                  value={fromDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFromDate(val);
+                    setAppliedFromDate(val);
+                  }}
+                />
               </div>
             </div>
+            <span style={{ color: '#C62E2E', fontSize: '0.7rem' }}>→</span>
+            <div className="filter-group">
+              <i className="fas fa-calendar-alt"></i>
+              <div className="date-input-wrapper">
+                {!toDate && <div className="date-placeholder">To</div>}
+                <input
+                  type="date"
+                  className="date-input-compact"
+                  value={toDate}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setToDate(val);
+                    setAppliedToDate(val);
+                  }}
+                />
+              </div>
+            </div>
+            <div className="filter-buttons" style={{ marginLeft: 'auto' }}>
+              <button className="filter-btn apply" onClick={handleApplyFilter}>Apply</button>
+              <button className="filter-btn clear" onClick={handleClearFilter}>Clear</button>
+            </div>
+          </div>
+        </div>
+
+        {/* ── Desktop Page Header ── */}
+        <div className="desktop-only" style={{ padding: '20px 24px 0 24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+            <div>
+              <h1 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--text-primary)', margin: 0 }}>Weekly Trade History</h1>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: 4 }}>Historical execution logs & performance</p>
+            </div>
+            <div className="header-buttons" style={{ display: 'flex', gap: 10, background: 'var(--bg-card)', padding: 4, borderRadius: 12, border: '1px solid var(--border-color)' }}>
+              <button
+                className={`header-btn ${currentTab === 'position' ? 'active' : ''}`}
+                onClick={() => setCurrentTab('position')}
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              >
+                Position History
+              </button>
+              <button
+                className={`header-btn ${currentTab === 'order' ? 'active' : ''}`}
+                onClick={() => setCurrentTab('order')}
+                style={{ padding: '8px 16px', fontSize: '0.85rem' }}
+              >
+                Order History
+              </button>
+            </div>
+          </div>
+
+          <div className="date-filter-row" style={{ background: 'var(--bg-card)', padding: '12px 16px', borderRadius: 12, border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', gap: 15 }}>
+            <div className="filter-group">
+              <i className="fas fa-calendar-alt" style={{ color: 'var(--text-secondary)' }}></i>
+              <input
+                type="date"
+                className="date-input-compact"
+                value={fromDate}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setFromDate(val);
+                  setAppliedFromDate(val);
+                }}
+              />
+            </div>
+            <span style={{ color: 'var(--text-secondary)', fontWeight: 600 }}>to</span>
+            <div className="filter-group">
+              <i className="fas fa-calendar-alt" style={{ color: 'var(--text-secondary)' }}></i>
+              <input
+                type="date"
+                className="date-input-compact"
+                value={toDate}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setToDate(val);
+                  setAppliedToDate(val);
+                }}
+              />
+            </div>
+            <div className="filter-buttons" style={{ marginLeft: 'auto', display: 'flex', gap: 10 }}>
+              <button className="filter-btn apply" onClick={handleApplyFilter} style={{ padding: '8px 24px' }}>Apply Filter</button>
+              <button className="filter-btn clear" onClick={handleClearFilter} style={{ padding: '8px 16px' }}>Reset</button>
+            </div>
+          </div>
+
+          {/* ── Desktop Performance KPI Cards ── */}
+          <div className="desktop-summary-cards" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginTop: 16 }}>
+            <div className="summary-card" style={{ background: 'var(--bg-card)', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <i className="fas fa-chart-bar"></i> Gross P&L
+              </div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: 6 }} className={summary.gp - summary.gl >= 0 ? 'pnl positive' : 'pnl negative'}>
+                {formatPrice(summary.gp - summary.gl)}
+              </div>
+            </div>
+            <div className="summary-card" style={{ background: 'var(--bg-card)', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <i className="fas fa-receipt"></i> Total Brokerage
+              </div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: 6, color: 'var(--text-primary)' }}>
+                {formatPrice(summary.b)}
+              </div>
+            </div>
+            <div className="summary-card" style={{ background: 'var(--bg-card)', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <i className="fas fa-chart-line"></i> Net P&L
+              </div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: 6 }} className={summary.n >= 0 ? 'pnl positive' : 'pnl negative'}>
+                {formatPrice(summary.n)}
+              </div>
+            </div>
+            <div className="summary-card" style={{ background: 'var(--bg-card)', padding: '14px 18px', borderRadius: 12, border: '1px solid var(--border-color)' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <i className="fas fa-handshake"></i> Settlement
+              </div>
+              <div style={{ fontSize: '1.25rem', fontWeight: 800, marginTop: 6, color: summary.s > 0 ? '#C62E2E' : 'var(--text-primary)' }}>
+                {summary.s > 0 ? `-₹${summary.s.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₹0.00'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="main-content" ref={scrollResetRef}>
+          <div className="history-list">
+            {loading ? (
+              <div style={{ padding: '60px 0', textAlign: 'center' }}>
+                <AnimatedLoader text={currentTab === 'position' ? "Loading position history..." : "Loading order history..."} />
+              </div>
+            ) : filteredData.length === 0 ? (
+              <div className="empty-history">
+                <i className={currentTab === 'position' ? "fas fa-folder-open" : "fas fa-list-ul"}></i>
+                <p>No history found</p>
+              </div>
+            ) : (
+              filteredData.filter(Boolean).map((item) => {
+                const itemType = (item.type || 'BUY').toLowerCase();
+                const scriptName = item.scriptName || 'UNKNOWN';
+                const displaySymbol = (scriptName || '').replace(/^(COMEX:|CRYPTO:|BINANCE:|FOREX:|NSE:|BSE:|MCX:|NFO:|US:|US-EQ:)/i, '');
+                return (
+                  <div key={item.id} className="history-card" style={{ cursor: 'pointer' }} onClick={() => router.push(`/watchlist?symbol=${encodeURIComponent(scriptName)}&action=detail`)}>
+                    <div className="history-card-header">
+                      <div className="script-info">
+                        <span className="script-name">{displaySymbol}</span>
+                        <div className="script-badges">
+                          <span className={`order-type-badge ${itemType}`}>
+                            {item.type || 'BUY'}
+                          </span>
+                          <span style={{ fontSize: '0.55rem', color: '#9AA4BF' }}>{item.orderType || 'INTRADAY'}</span>
+                          {currentTab === 'order' && (
+                            <span className={`order-type-badge ${String(item.status || '').toLowerCase() === 'executed' ? 'completed' : 'pending'}`}>
+                              {item.status || 'unknown'}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className={currentTab === 'position' ? `pnl ${item.pnl >= 0 ? 'positive' : 'negative'}` : 'price-value'}>
+                        {currentTab === 'position' ? (() => {
+                          const brokerage = item.brokerage || 0;
+                          const isPositive = item.pnl >= 0;
+                          const pctBase = item.entryPrice ? (item.pnl / (item.entryPrice * item.qty)) * 100 : 0;
+                          const pctStr = pctBase.toFixed(2);
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                              <span className={isPositive ? 'positive' : 'negative'}>
+                                {`${isPositive ? '+' : ''}${formatPrice(item.pnl)}`}
+                              </span>
+                              <span style={{ fontSize: '0.7rem', fontWeight: 600, marginTop: '2px' }}>
+                                {`(${isPositive ? '+' : ''}${pctStr}%)`}
+                              </span>
+                              {brokerage > 0 && (
+                                <span style={{ fontSize: '0.6rem', color: '#6e7681', marginTop: '1px' }}>
+                                  {`Brk: -${formatPrice(brokerage)}`}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })() : (
+                          formatPrice(item.price)
+                        )}
+                      </div>
+                    </div>
+                    <div className="history-card-details">
+                      <span className="detail-item"><i className="fas fa-layer-group"></i> {item.qty}</span>
+                      {currentTab === 'position' ? (
+                        <>
+                          <span className="detail-item"><i className="fas fa-arrow-right"></i> {formatPrice(item.entryPrice || 0)}</span>
+                          <span className="detail-item"><i className="fas fa-arrow-left"></i> {formatPrice(item.exitPrice || 0)}</span>
+                          <span className="detail-item"><i className="far fa-calendar"></i> {item.exitDate}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="detail-item"><i className="fas fa-clock"></i> {item.orderType}</span>
+                          <span className="detail-item"><i className="far fa-calendar"></i> {item.date.split(' ')[0]}</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="history-card-details" style={{ marginTop: '4px' }}>
+                      <span className="detail-item tooltip" data-tooltip={(() => {
+                        if (currentTab === 'order') {
+                          const total = (item.intraday_brokerage || 0) + (item.carry_brokerage || 0) + (item.gtt_brokerage || 0);
+                          if (total === 0 && (item.brokerage || 0) > 0) {
+                            return item.productType === 'CARRY'
+                              ? `Intraday: ₹0\nCarry: ₹${item.brokerage}\nGTT: ₹0`
+                              : `Intraday: ₹${item.brokerage}\nCarry: ₹0\nGTT: ₹0`;
+                          }
+                          return `Intraday: ₹${item.intraday_brokerage || 0}\nCarry: ₹${item.carry_brokerage || 0}\nGTT: ₹${item.gtt_brokerage || 0}`;
+                        } else {
+                          const intraday = (item.entry_intraday_brokerage || 0) + (item.exit_intraday_brokerage || 0);
+                          const carry = (item.entry_carry_brokerage || 0) + (item.exit_carry_brokerage || 0);
+                          const gtt = (item.entry_gtt_brokerage || 0) + (item.exit_gtt_brokerage || 0);
+                          if (intraday + carry + gtt === 0 && (item.brokerage || 0) > 0) {
+                            return item.productType === 'CARRY'
+                              ? `Intraday: ₹0\nCarry: ₹${item.brokerage}\nGTT: ₹0`
+                              : `Intraday: ₹${item.brokerage}\nCarry: ₹0\nGTT: ₹0`;
+                          }
+                          return `Intraday: ₹${intraday}\nCarry: ₹${carry}\nGTT: ₹${gtt}`;
+                        }
+                      })()} style={{ position: 'relative' }}>
+                        <i className="fas fa-receipt"></i> {formatPrice(getItemBrokerage(item))}
+                      </span>
+                      {currentTab === 'position' && (
+                        <span className="detail-item" style={{ color: '#64748b', fontSize: '0.7rem' }}>
+                          <i className="fas fa-handshake"></i> ₹{(item.settlementAmount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                      )}
+                      {currentTab === 'position' && isAdmin && item.closedBy && (
+                        <span className="detail-item" style={{ color: '#64748b', fontSize: '0.7rem' }}>
+                          <i className={item.closedBy === 'USER_ACTION' ? 'fas fa-user' : 'fas fa-robot'}></i> {
+                            item.closedBy === 'AUTO_LIQUIDATION' ? 'Auto Sq-Off' :
+                              item.closedBy === 'ADMIN_ACTION' ? 'Admin Sq-Off' :
+                                item.closedBy === 'STOP_LOSS' ? 'Stop Loss' :
+                                  item.closedBy === 'TARGET_HIT' ? 'Target Hit' :
+                                    item.closedBy === 'SYSTEM_ACTION' ? 'System Sq-Off' :
+                                      item.closedBy === 'USER_ACTION' ? 'User Exit' :
+                                        item.closedBy === 'GTT_TARGET' ? 'GTT Target' :
+                                          item.closedBy === 'GTT_STOP_LOSS' ? 'GTT SL' :
+                                            item.closedBy
+                          }
+                        </span>
+                      )}
+                      {currentTab === 'order' && <span className="detail-item"><i className="fas fa-hourglass-half"></i> {item.date.split(' ')[1] || ''}</span>}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </div>
+
+        {/* Summary — in normal flow inside .history-root, sits below scrollable cards */}
+        <div className="history-footer mobile-only">
+          <div className="footer-row">
+            <span className="footer-label"><i className="fas fa-chart-bar"></i> Gross P&L</span>
+            <span className={`footer-value ${summary.gp - summary.gl >= 0 ? 'net-profit' : 'net-loss'}`}>
+              {formatPrice(summary.gp - summary.gl)}
+            </span>
+          </div>
+          <div className="footer-row">
+            <span className="footer-label"><i className="fas fa-receipt"></i> Brokerage</span>
+            <span className="footer-value">{formatPrice(summary.b)}</span>
+          </div>
+          <div className="footer-row">
+            <span className="footer-label"><i className="fas fa-chart-line"></i> Net P&L</span>
+            <span className={`footer-value ${summary.n >= 0 ? 'net-profit' : 'net-loss'}`}>
+              {formatPrice(summary.n)}
+            </span>
+          </div>
+          <div className="footer-row">
+            <span className="footer-label"><i className="fas fa-handshake"></i> Settlement</span>
+            <span className="footer-value" style={{ color: summary.s > 0 ? '#C62E2E' : 'inherit' }}>
+              {summary.s > 0 ? `-₹${summary.s.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '₹0.00'}
+            </span>
+          </div>
+        </div>
+      </div>
     </>
   );
 }

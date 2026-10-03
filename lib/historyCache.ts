@@ -39,8 +39,13 @@ const HISTORY_STORAGE_KEY = 'history_cache_v2';
 export function getClientHistoryCache(): HistoryItem[] {
   if (typeof window === 'undefined') return [];
   try {
-    if (Array.isArray((window as any).__historyCache) && (window as any).__historyCache.length > 0) {
-      return (window as any).__historyCache;
+    const localStored = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (localStored) {
+      const parsed = JSON.parse(localStored);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        (window as any).__historyCache = parsed;
+        return parsed;
+      }
     }
     const sessionStored = sessionStorage.getItem(HISTORY_STORAGE_KEY);
     if (sessionStored) {
@@ -50,13 +55,8 @@ export function getClientHistoryCache(): HistoryItem[] {
         return parsed;
       }
     }
-    const localStored = localStorage.getItem(HISTORY_STORAGE_KEY);
-    if (localStored) {
-      const parsed = JSON.parse(localStored);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        (window as any).__historyCache = parsed;
-        return parsed;
-      }
+    if (Array.isArray((window as any).__historyCache) && (window as any).__historyCache.length > 0) {
+      return (window as any).__historyCache;
     }
   } catch (_) {}
   return [];
@@ -86,6 +86,16 @@ export function prependToClientHistoryCache(newItems: HistoryItem | HistoryItem[
   merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   const capped = merged.length > 500 ? merged.slice(0, 500) : merged;
   saveClientHistoryCache(capped);
+
+  try {
+    if ('BroadcastChannel' in window) {
+      const bc = new BroadcastChannel('marginapexx_history_bus');
+      bc.postMessage({ type: 'PREPEND', items: incoming });
+      bc.close();
+    }
+    window.dispatchEvent(new CustomEvent('history_cache_updated', { detail: { items: incoming, all: capped } }));
+  } catch (_) {}
+
   return capped;
 }
 
@@ -95,5 +105,15 @@ export function removeFromClientHistoryCache(ids: string[]): HistoryItem[] {
   const current = getClientHistoryCache();
   const filtered = current.filter(i => !idSet.has(i.id));
   saveClientHistoryCache(filtered);
+
+  try {
+    if ('BroadcastChannel' in window) {
+      const bc = new BroadcastChannel('marginapexx_history_bus');
+      bc.postMessage({ type: 'REMOVE', ids });
+      bc.close();
+    }
+    window.dispatchEvent(new CustomEvent('history_cache_updated', { detail: { removedIds: ids, all: filtered } }));
+  } catch (_) {}
+
   return filtered;
 }

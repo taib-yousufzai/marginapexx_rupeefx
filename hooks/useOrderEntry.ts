@@ -1,7 +1,7 @@
 /**
  * useOrderEntry
  * 
- * Manages the state and logic for placing an order through the RupeeFX Trading platform.
+ * Manages the state and logic for placing an order through the MarginApex platform.
  */
 
 import { useState, useCallback } from 'react';
@@ -66,7 +66,7 @@ export function useOrderEntry() {
 
     // 0. Client Pre-Flight Validation is delegated to server order engine with accurate leverage calculation
 
-    const isImmediate = ['MARKET', 'SLM'].includes(state.order_type || 'MARKET');
+    const isImmediate = ['MARKET', 'SLM'].includes(state.order_type ?? '');
 
     // 1. Two-stage optimistic UI: create a pending submission order in <16ms
     const tempId = `opt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -362,7 +362,7 @@ export function useOrderEntry() {
 
       soundEngine.playOrderExecuted();
     } else {
-      soundEngine.playOrderPlaced();
+      soundEngine.playOrderSubmitted();
     }
 
     try {
@@ -431,7 +431,7 @@ export function useOrderEntry() {
       if (typeof window !== 'undefined') {
         if (isImmediate) {
           try {
-            const existingHistory = (window as any).__historyCache || [];
+            const existingHistory = getClientHistoryCache();
             const updatedHistory = existingHistory.map((h: any) => {
               if (h.id === tempId) {
                 return {
@@ -443,27 +443,36 @@ export function useOrderEntry() {
               }
               return h;
             });
-            (window as any).__historyCache = updatedHistory;
-            localStorage.setItem('marginApex_history_cache_persisted', JSON.stringify(updatedHistory));
+            saveClientHistoryCache(updatedHistory);
           } catch { }
         }
 
-        window.dispatchEvent(new CustomEvent('order_placed_with_data', {
-          detail: {
-            symbol: state.symbol,
-            settlement: state.segment,
-            side: state.side,
-            qty_open: state.qty,
-            entry_price: result.fill_price || state.client_price,
-            ltp: result.fill_price || state.client_price,
-            product_type: state.product_type,
-            is_exit: effectiveIsExit,
-            linked_position_id: effectiveLinkedPosId,
-            opt_id: tempId,
-            order: confirmedOrder,
-          }
-        }));
+        if (isImmediate || confirmedOrder.status === 'EXECUTED') {
+          window.dispatchEvent(new CustomEvent('order_placed_with_data', {
+            detail: {
+              symbol: state.symbol,
+              settlement: state.segment,
+              side: state.side,
+              qty_open: state.qty,
+              entry_price: result.fill_price || state.client_price,
+              ltp: result.fill_price || state.client_price,
+              product_type: state.product_type,
+              is_exit: effectiveIsExit,
+              linked_position_id: effectiveLinkedPosId,
+              opt_id: tempId,
+              order: confirmedOrder,
+            }
+          }));
+        }
         window.dispatchEvent(new Event('order_placed'));
+
+        // For SLM orders, backend inserts a linked SL exit order slightly after the main order response.
+        // Fire a delayed second refresh so the linked SL order appears quickly without waiting for polling.
+        if (state.order_type === 'SLM') {
+          setTimeout(() => {
+            window.dispatchEvent(new Event('order_placed'));
+          }, 1200);
+        }
       }
 
       return { success: true, order: result, fill_price: result.fill_price };
@@ -594,13 +603,13 @@ export function useOrderEntry() {
           qty,
           entry_price: entryPrice,
           product_type: existingPos?.product_type || 'INTRADAY'
-        }, { timeout: 30000 });
+        }, { timeout: 45000 });
       }
 
       const finalExitPrice = Number(result?.exit_price || result?.price || resolvedExitPrice);
       const finalPnl = entryPrice > 0 ? (isBuy ? (finalExitPrice - entryPrice) * qty : (entryPrice - finalExitPrice) * qty) : pnl;
 
-      const confirmedHistoryItem: any = {
+      const confirmedHistoryItem: HistoryItem = {
         id: positionId,
         scriptName: existingPos?.symbol || symbol || 'UNKNOWN',
         type: posSide as 'BUY' | 'SELL',
@@ -669,7 +678,7 @@ export function useOrderEntry() {
         const errName = (err as any).name;
         const errMessage = (err as any).message || String(err);
         if (errName === 'AbortError' || errMessage.includes('abort')) {
-          message = 'Position exit timed out. Please try again.';
+          message = 'Exit is being processed. Check Positions — if still open, try exit again.';
         } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
           message = 'Network connection error. Please try again.';
         } else {
@@ -728,7 +737,7 @@ export function useOrderEntry() {
         result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 45000 });
       }
 
-      const confirmedHistoryItems: any[] = [];
+      const confirmedHistoryItems: HistoryItem[] = [];
       const confirmedClosedPositions: any[] = [];
 
       ids.forEach(id => {
