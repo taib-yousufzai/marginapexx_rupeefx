@@ -447,6 +447,27 @@ export function useOrderEntry() {
           } catch { }
         }
 
+        if (effectiveIsExit) {
+          if (optimisticHistoryItems.length > 0) {
+            const confirmedHistory = optimisticHistoryItems.map(h => ({
+              ...h,
+              price: result?.fill_price || h.price,
+              exitPrice: result?.fill_price || h.exitPrice,
+            }));
+            prependToClientHistoryCache(confirmedHistory);
+          }
+          window.dispatchEvent(new CustomEvent('position_closed', {
+            detail: {
+              positions: optimisticClosedPositions,
+              historyItems: optimisticHistoryItems,
+              position: optimisticClosedPositions[0],
+              historyItem: optimisticHistoryItems[0],
+            }
+          }));
+          window.dispatchEvent(new Event('position-closed'));
+          window.dispatchEvent(new Event('history_updated'));
+        }
+
         if (isImmediate || confirmedOrder.status === 'EXECUTED') {
           window.dispatchEvent(new CustomEvent('order_placed_with_data', {
             detail: {

@@ -62,11 +62,13 @@ export default function PositionPage() {
   } = useMyPositions(5000);
   const { closePosition, closePositionsBatch, loading: closingPos } = useOrderEntry();
 
-  // Listen for position-closed events fired by TradingChart so we eventually
-  // refresh without waiting for the next 5-second poll cycle
+  // Listen for position-closed events fired by TradingChart so we immediately
+  // refresh without waiting for polling cycle
   useEffect(() => {
-    // position-closed from TradingChart: delay refresh so server has time to commit the exit
-    const handler = () => { setTimeout(() => { refresh(); fetchClosed(); }, 3500); };
+    const handler = () => {
+      refresh();
+      fetchClosed();
+    };
     window.addEventListener('position-closed', handler);
     return () => window.removeEventListener('position-closed', handler);
   }, [refresh]);
@@ -119,18 +121,9 @@ export default function PositionPage() {
     fetchClosed();
     // Closed positions refresh on events + 30s slow fallback
     const iv = setInterval(fetchClosed, 30000);
-    const onOrderPlaced = (e?: Event) => {
-      // For exit events, delay refresh so the DB can commit before we pull fresh data.
-      // Fetching immediately returns stale (pre-close) data and causes the position to reappear.
-      const isExit = e instanceof CustomEvent && e.detail?.is_exit;
-      const delayMs = isExit ? 3500 : 0;
-      if (delayMs > 0) {
-        setTimeout(() => { refresh(); fetchClosed(); }, delayMs);
-        setTimeout(() => { refresh(); fetchClosed(); }, delayMs + 2500);
-      } else {
-        refresh();
-        setTimeout(() => { refresh(); fetchClosed(); }, 200);
-      }
+    const onOrderPlaced = () => {
+      refresh();
+      setTimeout(() => { refresh(); fetchClosed(); }, 150);
     };
 
     const handleOptimisticClosedPos = (e: any) => {
@@ -152,11 +145,10 @@ export default function PositionPage() {
 
     window.addEventListener('order_placed', onOrderPlaced);
     window.addEventListener('order_placed_with_data', onOrderPlaced);
-    // position-closed / position_closed / history_updated are plain Events (no is_exit info)
-    // — always delay them so the DB can commit before we pull fresh data.
     const onPositionClosed = () => {
-      setTimeout(() => { refresh(); fetchClosed(); }, 3500);
-      setTimeout(() => { refresh(); fetchClosed(); }, 6000);
+      refresh();
+      fetchClosed();
+      setTimeout(() => { refresh(); fetchClosed(); }, 200);
     };
     window.addEventListener('position-closed', onPositionClosed);
     window.addEventListener('position_closed', onPositionClosed);
@@ -1078,7 +1070,7 @@ export default function PositionPage() {
               <div className="pos-header mobile-only">
                 <div className="pos-header-left">
                   <div className="pos-brand">
-                    <span>RUPEE<span className="apex-text">FX</span></span>
+                    <span>MARGIN<span className="apex-text">APEX</span></span>
                   </div>
 
                 </div>
