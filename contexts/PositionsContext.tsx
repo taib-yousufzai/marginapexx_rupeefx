@@ -24,6 +24,14 @@ export interface EnrichedPosition extends MyPosition {
   is_closing?: boolean;
 }
 
+export interface PositionReductionItem {
+  posId: string;
+  qty_open: number;
+  qty_total?: number;
+  isFullyClosed: boolean;
+  positionObj?: Partial<MyPosition>;
+}
+
 export interface PositionsContextType {
   positions: EnrichedPosition[];
   loading: boolean;
@@ -31,6 +39,7 @@ export interface PositionsContextType {
   refresh: () => Promise<void>;
   updatePositionLocally: (posId: string, updatedFields: Partial<MyPosition>) => void;
   removePositionLocally: (posId: string, positionObj?: Partial<MyPosition>) => void;
+  batchReducePositionsLocally: (reductions: PositionReductionItem[]) => void;
   restorePositionLocally: (posId?: string, fallbackPos?: Partial<MyPosition>) => void;
   startConversion: (posId: string, newType: string) => void;
   endConversion: (posId: string) => void;
@@ -253,8 +262,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
 
 
   const recentlyRemovedPositionsRef = useRef<Map<string, MyPosition>>(new Map());
+  const optimisticallyUpdatedPositions = useRef<Map<string, { qty_open: number; qty_total?: number; time: number }>>(new Map());
 
   const updatePositionLocally = useCallback((posId: string, updatedFields: Partial<MyPosition>) => {
+    if (updatedFields.qty_open !== undefined) {
+      optimisticallyUpdatedPositions.current.set(posId, {
+        qty_open: Number(updatedFields.qty_open),
+        qty_total: updatedFields.qty_total !== undefined ? Number(updatedFields.qty_total) : undefined,
+        time: Date.now()
+      });
+    }
     setRawPositions(prev =>
       prev.map(p => (p.id === posId ? { ...p, ...updatedFields } : p))
     );
@@ -263,6 +280,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
   const removePositionLocally = useCallback((posId: string, positionObj?: Partial<MyPosition>) => {
     optimisticallyRemovedIds.current.add(posId);
     optimisticallyRemovedTimes.current.set(posId, Date.now());
+    optimisticallyUpdatedPositions.current.delete(posId);
     savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
     setRawPositions(prev => {
       const target = prev.find(p => p.id === posId);
@@ -271,7 +289,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       } else if (positionObj && positionObj.symbol) {
         recentlyRemovedPositionsRef.current.set(posId, { id: posId, ...positionObj } as MyPosition);
       }
-      const removedSymClean = cleanSym(target?.symbol || positionObj?.symbol || '');
       const next = prev.filter(p => p.id !== posId);
       if (typeof window !== 'undefined') {
         const lastMap = (window as any).__lastPositionsMap || new Map();
@@ -286,9 +303,82 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
           if (storedOpt) {
             const parsed: MyPosition[] = JSON.parse(storedOpt);
             const filtered = parsed.filter(p =>
-              p.id !== posId &&
-              (removedSymClean ? cleanSym(p.symbol || p.kite_instrument) !== removedSymClean : true)
+              p.id !== posId
             );
+            if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
+            else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
+          }
+        } catch { }
+      }
+      return next;
+    });
+  }, []);
+
+  const batchReducePositionsLocally = useCallback((reductions: PositionReductionItem[]) => {
+    if (!reductions || reductions.length === 0) return;
+    const now = Date.now();
+    const removedSet = new Set<string>();
+
+    reductions.forEach(r => {
+      if (r.isFullyClosed || r.qty_open <= 0) {
+        removedSet.add(r.posId);
+        optimisticallyRemovedIds.current.add(r.posId);
+        optimisticallyRemovedTimes.current.set(r.posId, now);
+        optimisticallyUpdatedPositions.current.delete(r.posId);
+      } else {
+        optimisticallyUpdatedPositions.current.set(r.posId, {
+          qty_open: r.qty_open,
+          qty_total: r.qty_total,
+          time: now
+        });
+      }
+    });
+    savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
+
+    setRawPositions(prev => {
+      const reductionMap = new Map(reductions.map(r => [r.posId, r]));
+      const next: MyPosition[] = [];
+      for (const p of prev) {
+        if (removedSet.has(p.id)) {
+          recentlyRemovedPositionsRef.current.set(p.id, p);
+          continue;
+        }
+        const red = reductionMap.get(p.id);
+        if (red) {
+          next.push({
+            ...p,
+            qty_open: red.qty_open,
+            qty_total: red.qty_total !== undefined ? red.qty_total : red.qty_open,
+          });
+        } else {
+          next.push(p);
+        }
+      }
+
+      if (typeof window !== 'undefined') {
+        const lastMap = (window as any).__lastPositionsMap || new Map();
+        reductions.forEach(r => {
+          if (r.isFullyClosed || r.qty_open <= 0) {
+            lastMap.delete(r.posId);
+          } else {
+            const existing = lastMap.get(r.posId) || r.positionObj;
+            if (existing) {
+              lastMap.set(r.posId, {
+                ...existing,
+                qty_open: r.qty_open,
+                qty_total: r.qty_total !== undefined ? r.qty_total : r.qty_open
+              });
+            }
+          }
+        });
+        (window as any).__lastPositionsMap = lastMap;
+
+        try {
+          localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
+          const storedOpt = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
+          if (storedOpt) {
+            const parsed: MyPosition[] = JSON.parse(storedOpt);
+            const filtered = parsed.filter(p => !removedSet.has(p.id));
             if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
             else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
           }
@@ -406,31 +496,39 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         rawPositionsFromServer = data.positions || [];
       }
 
-      // Clean up optimisticallyRemovedIds strictly based on 30s TTL
+      // Clean up optimisticallyRemovedIds strictly based on 20s TTL
       const now = Date.now();
       for (const id of Array.from(optimisticallyRemovedIds.current)) {
         const removedAt = optimisticallyRemovedTimes.current.get(id) || 0;
-        if (now - removedAt > 30000) {
+        if (now - removedAt > 20000) {
           optimisticallyRemovedIds.current.delete(id);
           optimisticallyRemovedTimes.current.delete(id);
         }
       }
-
-      // Clear optimistic removal record for any position the server returns as open/active with qty_open > 0
-      rawPositionsFromServer.forEach(p => {
-        const pStatus = (p.status || '').toLowerCase();
-        const isOpen = !pStatus || pStatus === 'open' || pStatus === 'active';
-        if (isOpen && (p.qty_open === undefined || Number(p.qty_open) > 0)) {
-          optimisticallyRemovedIds.current.delete(p.id);
-          optimisticallyRemovedTimes.current.delete(p.id);
-        }
-      });
       savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
 
-      // Filter out any IDs that are in optimistic removal in the last 30s
-      let basePositions: MyPosition[] = rawPositionsFromServer.filter(
-        p => !optimisticallyRemovedIds.current.has(p.id)
-      );
+      // Filter out any IDs that are in optimistic removal in the last 20s, and apply optimistic partial updates
+      let basePositions: MyPosition[] = rawPositionsFromServer
+        .filter(p => !optimisticallyRemovedIds.current.has(p.id))
+        .map(p => {
+          const optUpdate = optimisticallyUpdatedPositions.current.get(p.id);
+          if (optUpdate) {
+            if (now - optUpdate.time < 15000) {
+              if (Number(p.qty_open) > optUpdate.qty_open) {
+                return {
+                  ...p,
+                  qty_open: optUpdate.qty_open,
+                  qty_total: optUpdate.qty_total !== undefined ? optUpdate.qty_total : optUpdate.qty_open
+                };
+              } else {
+                optimisticallyUpdatedPositions.current.delete(p.id);
+              }
+            } else {
+              optimisticallyUpdatedPositions.current.delete(p.id);
+            }
+          }
+          return p;
+        });
 
       // Reconcile optimistic positions with server response
       const persistedOpt = getPersistedOptimisticPositions();
@@ -564,14 +662,32 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
         const now = Date.now();
         for (const id of Array.from(optimisticallyRemovedIds.current)) {
           const removedAt = optimisticallyRemovedTimes.current.get(id) || 0;
-          if (now - removedAt > 30000) {
+          if (now - removedAt > 20000) {
             optimisticallyRemovedIds.current.delete(id);
             optimisticallyRemovedTimes.current.delete(id);
           }
         }
-        let basePositions: MyPosition[] = rawPositionsFromServer.filter(
-          p => !optimisticallyRemovedIds.current.has(p.id)
-        );
+        let basePositions: MyPosition[] = rawPositionsFromServer
+          .filter(p => !optimisticallyRemovedIds.current.has(p.id))
+          .map(p => {
+            const optUpdate = optimisticallyUpdatedPositions.current.get(p.id);
+            if (optUpdate) {
+              if (now - optUpdate.time < 15000) {
+                if (Number(p.qty_open) > optUpdate.qty_open) {
+                  return {
+                    ...p,
+                    qty_open: optUpdate.qty_open,
+                    qty_total: optUpdate.qty_total !== undefined ? optUpdate.qty_total : optUpdate.qty_open
+                  };
+                } else {
+                  optimisticallyUpdatedPositions.current.delete(p.id);
+                }
+              } else {
+                optimisticallyUpdatedPositions.current.delete(p.id);
+              }
+            }
+            return p;
+          });
         const persistedOpt = getPersistedOptimisticPositions();
         setRawPositions(prev => {
           const existingOptMap = new Map<string, MyPosition>();
@@ -672,18 +788,42 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       const detail = (e as CustomEvent).detail;
       const positions = detail?.positions || (detail?.position ? [detail.position] : []);
       const now = Date.now();
-      const fullyClosedPositions = positions.filter((p: any) => p?.status === 'closed' || p?.qty_open === 0);
+      const fullyClosedPositions = positions.filter((p: any) => p?.status === 'closed' || Number(p?.qty_open) === 0);
+      const partialPositions = positions.filter((p: any) => p?.status !== 'closed' && Number(p?.qty_open) > 0);
+
       fullyClosedPositions.forEach((p: any) => {
         if (p?.id) {
           optimisticallyRemovedIds.current.add(p.id);
           optimisticallyRemovedTimes.current.set(p.id, now);
+          optimisticallyUpdatedPositions.current.delete(p.id);
+        }
+      });
+      partialPositions.forEach((p: any) => {
+        if (p?.id) {
+          optimisticallyUpdatedPositions.current.set(p.id, {
+            qty_open: Number(p.qty_open),
+            qty_total: p.qty_total !== undefined ? Number(p.qty_total) : Number(p.qty_open),
+            time: now
+          });
         }
       });
       savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
       setRawPositions(prev => {
         const closedIdSet = new Set(fullyClosedPositions.map((p: any) => p?.id).filter(Boolean));
-        if (closedIdSet.size === 0) return prev;
-        const next = prev.filter(p => !closedIdSet.has(p.id));
+        const partialMap = new Map(partialPositions.map((p: any) => [p.id, p]));
+        const next = prev
+          .filter(p => !closedIdSet.has(p.id))
+          .map(p => {
+            const partial = partialMap.get(p.id);
+            if (partial) {
+              return {
+                ...p,
+                qty_open: Number(partial.qty_open),
+                qty_total: partial.qty_total !== undefined ? Number(partial.qty_total) : Number(partial.qty_open),
+              };
+            }
+            return p;
+          });
         savePersistedOptimisticPositions(next);
         return next;
       });
@@ -915,6 +1055,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       refresh: fetchPositions,
       updatePositionLocally,
       removePositionLocally,
+      batchReducePositionsLocally,
       restorePositionLocally,
       startConversion,
       endConversion,

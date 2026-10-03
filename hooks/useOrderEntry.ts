@@ -175,7 +175,13 @@ export function useOrderEntry() {
               if (a.id === effectiveLinkedPosId) return -1;
               if (b.id === effectiveLinkedPosId) return 1;
             }
-            return 0;
+            const timeA = new Date(a.entry_time || (a as any).created_at || 0).getTime();
+            const timeB = new Date(b.entry_time || (b as any).created_at || 0).getTime();
+            if (timeA !== timeB) return timeA - timeB;
+            const qtyA = Number(a.qty_open || a.qty_total || 0);
+            const qtyB = Number(b.qty_open || b.qty_total || 0);
+            if (qtyA !== qtyB) return qtyA - qtyB;
+            return (a.id || '').localeCompare(b.id || '');
           });
 
           let totalClosedQty = 0;
@@ -184,6 +190,7 @@ export function useOrderEntry() {
           let totalBrokerage = 0;
           let totalSettlementAmount = 0;
           let derivedSettlement = '';
+          const localReductions: Array<{ posId: string; qty_open: number; qty_total?: number; isFullyClosed: boolean; positionObj?: any }> = [];
 
           for (const p of sortedMatching) {
             if (remExit <= 0) break;
@@ -233,24 +240,24 @@ export function useOrderEntry() {
 
             optimisticClosedPositions.push(optimisticClosedPos);
             if (p.id) {
-              if (remainingQty <= 0) {
-                // Fully closed: remove from active positions map and context
-                if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-                  (window as any).__lastPositionsMap.delete(p.id);
-                }
-                if (positionsContext?.removePositionLocally) {
-                  positionsContext.removePositionLocally(p.id);
-                }
-              } else {
-                // Partially closed: update remaining quantity in place
-                const updatedPos = { ...p, qty_open: remainingQty, qty_total: remainingQty };
-                if (typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-                  (window as any).__lastPositionsMap.set(p.id, updatedPos);
-                }
-                if (positionsContext?.updatePositionLocally) {
-                  positionsContext.updatePositionLocally(p.id, { qty_open: remainingQty, qty_total: remainingQty });
-                }
-              }
+              localReductions.push({
+                posId: p.id,
+                qty_open: remainingQty,
+                qty_total: remainingQty,
+                isFullyClosed: remainingQty <= 0,
+                positionObj: p,
+              });
+            }
+          }
+
+          if (localReductions.length > 0) {
+            if ((positionsContext as any)?.batchReducePositionsLocally) {
+              (positionsContext as any).batchReducePositionsLocally(localReductions);
+            } else {
+              localReductions.forEach(r => {
+                if (r.isFullyClosed) positionsContext?.removePositionLocally?.(r.posId, r.positionObj);
+                else positionsContext?.updatePositionLocally?.(r.posId, { qty_open: r.qty_open, qty_total: r.qty_total });
+              });
             }
           }
 
