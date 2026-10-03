@@ -567,63 +567,6 @@ export function useOrderEntry() {
     const isBuy = posSide === 'BUY';
     const pnl = entryPrice > 0 ? (isBuy ? (resolvedExitPrice - entryPrice) * qty : (entryPrice - resolvedExitPrice) * qty) : 0;
 
-    const optimisticHistoryItem: any = {
-      id: positionId,
-      scriptName: existingPos?.symbol || symbol || 'UNKNOWN',
-      type: posSide as 'BUY' | 'SELL',
-      orderType: existingPos?.product_type || 'INTRADAY',
-      qty,
-      price: resolvedExitPrice,
-      entryPrice,
-      exitPrice: resolvedExitPrice,
-      pnl,
-      date: new Date(existingPos?.created_at || now).toLocaleString(),
-      exitDate: new Date(now).toLocaleDateString(),
-      status: 'closed',
-      brokerage: Number(existingPos?.brokerage || 0),
-      closedBy: 'USER_ACTION',
-      productType: existingPos?.product_type || 'INTRADAY',
-      settlement: existingPos?.settlement || settlement || 'NSE',
-      settlementAmount: 0,
-      timestamp: now,
-    };
-
-    const optimisticClosedPos = {
-      id: positionId,
-      symbol: existingPos?.symbol || symbol || 'UNKNOWN',
-      side: posSide,
-      status: 'closed',
-      exit_price: resolvedExitPrice,
-      pnl,
-      total_pnl: pnl,
-      pnl_percent: entryPrice > 0 ? ((resolvedExitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
-      qty_total: qty,
-      qty_open: 0,
-      closed_at: new Date(now).toISOString(),
-      exit_time: new Date(now).toISOString(),
-      updated_at: new Date(now).toISOString(),
-    };
-
-    // Optimistically remove position locally in 0ms for instant UI responsiveness
-    if (positionsContext?.removePositionLocally) {
-      positionsContext.removePositionLocally(positionId, existingPos);
-    }
-
-    prependToClientHistoryCache(optimisticHistoryItem);
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
-        detail: {
-          positions: [optimisticClosedPos],
-          historyItems: [optimisticHistoryItem],
-          position: optimisticClosedPos,
-          historyItem: optimisticHistoryItem,
-        }
-      }));
-      window.dispatchEvent(new Event('history_updated'));
-    }
-
-    soundEngine.playOrderExecuted();
-
     try {
       let result: any = null;
 
@@ -654,13 +597,69 @@ export function useOrderEntry() {
         }, { timeout: 30000 });
       }
 
+      const finalExitPrice = Number(result?.exit_price || result?.price || resolvedExitPrice);
+      const finalPnl = entryPrice > 0 ? (isBuy ? (finalExitPrice - entryPrice) * qty : (entryPrice - finalExitPrice) * qty) : pnl;
+
+      const confirmedHistoryItem: any = {
+        id: positionId,
+        scriptName: existingPos?.symbol || symbol || 'UNKNOWN',
+        type: posSide as 'BUY' | 'SELL',
+        orderType: existingPos?.product_type || 'INTRADAY',
+        qty,
+        price: finalExitPrice,
+        entryPrice,
+        exitPrice: finalExitPrice,
+        pnl: finalPnl,
+        date: new Date(existingPos?.created_at || now).toLocaleString(),
+        exitDate: new Date(now).toLocaleDateString(),
+        status: 'closed',
+        brokerage: Number(existingPos?.brokerage || 0),
+        closedBy: 'USER_ACTION',
+        productType: existingPos?.product_type || 'INTRADAY',
+        settlement: existingPos?.settlement || settlement || 'NSE',
+        settlementAmount: 0,
+        timestamp: now,
+      };
+
+      const closedPos = {
+        id: positionId,
+        symbol: existingPos?.symbol || symbol || 'UNKNOWN',
+        side: posSide,
+        status: 'closed',
+        exit_price: finalExitPrice,
+        pnl: finalPnl,
+        total_pnl: finalPnl,
+        pnl_percent: entryPrice > 0 ? ((finalExitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
+        qty_total: qty,
+        qty_open: 0,
+        closed_at: new Date(now).toISOString(),
+        exit_time: new Date(now).toISOString(),
+        updated_at: new Date(now).toISOString(),
+      };
+
+      // Confirmed removal from positions
+      if (positionsContext?.removePositionLocally) {
+        positionsContext.removePositionLocally(positionId, existingPos);
+      }
+
+      // Add confirmed item to client history cache
+      prependToClientHistoryCache(confirmedHistoryItem);
+
       if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('position_closed', {
+          detail: {
+            position: closedPos,
+            positions: [closedPos],
+            historyItem: confirmedHistoryItem,
+            historyItems: [confirmedHistoryItem],
+          }
+        }));
         window.dispatchEvent(new Event('order_placed'));
         window.dispatchEvent(new Event('position-closed'));
-        window.dispatchEvent(new Event('position_closed'));
         window.dispatchEvent(new Event('history_updated'));
       }
 
+      soundEngine.playOrderExecuted();
       return { success: true, ...result };
     } catch (err) {
       let message = 'Unknown error';
@@ -680,6 +679,9 @@ export function useOrderEntry() {
 
       // If position is already closed (e.g. concurrent exit or fast-pipe already closed it), treat as success
       if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+        if (positionsContext?.removePositionLocally) {
+          positionsContext.removePositionLocally(positionId, existingPos);
+        }
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new Event('order_placed'));
           window.dispatchEvent(new Event('position-closed'));
@@ -687,16 +689,6 @@ export function useOrderEntry() {
           window.dispatchEvent(new Event('history_updated'));
         }
         return { success: true, alreadyClosed: true };
-      }
-
-      if (positionsContext?.restorePositionLocally) {
-        positionsContext.restorePositionLocally(positionId, existingPos);
-      }
-      removeFromClientHistoryCache([positionId]);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('position_closed_rollback', {
-          detail: { positionIds: [positionId] }
-        }));
       }
 
       setError(message);
@@ -711,90 +703,8 @@ export function useOrderEntry() {
     setError(null);
 
     const now = Date.now();
-    const optHistoryItems: any[] = [];
-    const optClosedPositions: any[] = [];
-
     const rawList = Array.isArray(positionIds) ? positionIds : [positionIds];
     const ids = rawList.map((p: any) => (typeof p === 'string' ? p : p?.id)).filter(Boolean);
-
-    ids.forEach(id => {
-      let existingPos = positionsContext?.positions?.find(p => p.id === id);
-      if (!existingPos && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-        existingPos = (window as any).__lastPositionsMap.get(id);
-      }
-      if (!existingPos) {
-        existingPos = rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id);
-      }
-
-      const exitPrice = existingPos?.current_ltp || existingPos?.ltp || existingPos?.entry_price || 0;
-      const entryPrice = Number(existingPos?.entry_price || existingPos?.avg_price || 0);
-      const qty = Number(existingPos?.qty_total || existingPos?.qty_open || (existingPos as any)?.qty || 1);
-      const posSide = (existingPos?.side || 'BUY').toUpperCase();
-      const isBuy = posSide === 'BUY';
-      const pnl = entryPrice > 0 ? (isBuy ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty) : 0;
-
-      optHistoryItems.push({
-        id,
-        scriptName: existingPos?.symbol || 'UNKNOWN',
-        type: posSide as 'BUY' | 'SELL',
-        orderType: existingPos?.product_type || 'INTRADAY',
-        qty,
-        price: exitPrice,
-        entryPrice,
-        exitPrice,
-        pnl,
-        date: new Date(existingPos?.created_at || now).toLocaleString(),
-        exitDate: new Date(now).toLocaleDateString(),
-        status: 'closed',
-        brokerage: Number(existingPos?.brokerage || 0),
-        closedBy: 'USER_ACTION',
-        productType: existingPos?.product_type || 'INTRADAY',
-        settlement: existingPos?.settlement || 'NSE',
-        settlementAmount: 0,
-        timestamp: now,
-      });
-
-      optClosedPositions.push({
-        id,
-        symbol: existingPos?.symbol || 'UNKNOWN',
-        side: posSide,
-        status: 'closed',
-        exit_price: exitPrice,
-        pnl,
-        total_pnl: pnl,
-        pnl_percent: entryPrice > 0 ? ((exitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
-        qty_total: qty,
-        qty_open: 0,
-        closed_at: new Date(now).toISOString(),
-        exit_time: new Date(now).toISOString(),
-        updated_at: new Date(now).toISOString(),
-      });
-    });
-
-    // Optimistically remove positions locally in 0ms
-    if (positionsContext?.removePositionLocally) {
-      ids.forEach(id => {
-        const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
-        positionsContext.removePositionLocally(id, pObj);
-      });
-    }
-
-    if (optHistoryItems.length > 0) {
-      prependToClientHistoryCache(optHistoryItems as any);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('position_closed_optimistic', {
-          detail: {
-            positions: optClosedPositions,
-            historyItems: optHistoryItems,
-            position: optClosedPositions[0],
-            historyItem: optHistoryItems[0],
-          }
-        }));
-        window.dispatchEvent(new Event('history_updated'));
-      }
-    }
-
-    soundEngine.playOrderExecuted();
 
     try {
       let result: any = null;
@@ -818,13 +728,89 @@ export function useOrderEntry() {
         result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 45000 });
       }
 
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('order_placed'));
-        window.dispatchEvent(new Event('position-closed'));
-        window.dispatchEvent(new Event('position_closed'));
-        window.dispatchEvent(new Event('history_updated'));
+      const confirmedHistoryItems: any[] = [];
+      const confirmedClosedPositions: any[] = [];
+
+      ids.forEach(id => {
+        let existingPos = positionsContext?.positions?.find(p => p.id === id);
+        if (!existingPos && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+          existingPos = (window as any).__lastPositionsMap.get(id);
+        }
+        if (!existingPos) {
+          existingPos = rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id);
+        }
+
+        const exitPrice = existingPos?.current_ltp || existingPos?.ltp || existingPos?.entry_price || 0;
+        const entryPrice = Number(existingPos?.entry_price || existingPos?.avg_price || 0);
+        const qty = Number(existingPos?.qty_total || existingPos?.qty_open || (existingPos as any)?.qty || 1);
+        const posSide = (existingPos?.side || 'BUY').toUpperCase();
+        const isBuy = posSide === 'BUY';
+        const pnl = entryPrice > 0 ? (isBuy ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty) : 0;
+
+        confirmedHistoryItems.push({
+          id,
+          scriptName: existingPos?.symbol || 'UNKNOWN',
+          type: posSide as 'BUY' | 'SELL',
+          orderType: existingPos?.product_type || 'INTRADAY',
+          qty,
+          price: exitPrice,
+          entryPrice,
+          exitPrice,
+          pnl,
+          date: new Date(existingPos?.created_at || now).toLocaleString(),
+          exitDate: new Date(now).toLocaleDateString(),
+          status: 'closed',
+          brokerage: Number(existingPos?.brokerage || 0),
+          closedBy: 'USER_ACTION',
+          productType: existingPos?.product_type || 'INTRADAY',
+          settlement: existingPos?.settlement || 'NSE',
+          settlementAmount: 0,
+          timestamp: now,
+        });
+
+        confirmedClosedPositions.push({
+          id,
+          symbol: existingPos?.symbol || 'UNKNOWN',
+          side: posSide,
+          status: 'closed',
+          exit_price: exitPrice,
+          pnl,
+          total_pnl: pnl,
+          pnl_percent: entryPrice > 0 ? ((exitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
+          qty_total: qty,
+          qty_open: 0,
+          closed_at: new Date(now).toISOString(),
+          exit_time: new Date(now).toISOString(),
+          updated_at: new Date(now).toISOString(),
+        });
+      });
+
+      // Confirmed removal from positions in 0ms
+      if (positionsContext?.removePositionLocally) {
+        ids.forEach(id => {
+          const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
+          positionsContext.removePositionLocally(id, pObj);
+        });
       }
 
+      if (confirmedHistoryItems.length > 0) {
+        prependToClientHistoryCache(confirmedHistoryItems);
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('position_closed', {
+            detail: {
+              positions: confirmedClosedPositions,
+              historyItems: confirmedHistoryItems,
+              position: confirmedClosedPositions[0],
+              historyItem: confirmedHistoryItems[0],
+            }
+          }));
+          window.dispatchEvent(new Event('order_placed'));
+          window.dispatchEvent(new Event('position-closed'));
+          window.dispatchEvent(new Event('history_updated'));
+        }
+      }
+
+      soundEngine.playOrderExecuted();
       return { success: true, ...result };
     } catch (err) {
       let message = 'Unknown error';
@@ -851,17 +837,6 @@ export function useOrderEntry() {
           window.dispatchEvent(new Event('history_updated'));
         }
         return { success: true, alreadyClosed: true };
-      }
-
-      if (positionsContext?.restorePositionLocally) {
-        positionIds.forEach(id => positionsContext.restorePositionLocally(id));
-      }
-      const failedBatchIds = Array.from(new Set([...positionIds, ...optHistoryItems.map(i => i.id)]));
-      removeFromClientHistoryCache(failedBatchIds);
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('position_closed_rollback', {
-          detail: { positionIds }
-        }));
       }
 
       setError(message);

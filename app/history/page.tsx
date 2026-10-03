@@ -248,15 +248,23 @@ export default function HistoryPage() {
       }, 300);
     };
 
-    // Instant optimistic update when position closure is initiated
-    const handleOptimisticClose = (e: any) => {
+    // Instant update when confirmed position closure event arrives
+    const handleConfirmedClose = (e: any) => {
       const items = e.detail?.historyItems || (e.detail?.historyItem ? [e.detail.historyItem] : []);
-      if (items.length === 0) return;
-      const updated = prependToClientHistoryCache(items);
-      setHistoryData(updated);
-      setInitialLoaded(true);
-      setLoading(false);
-      triggerRefresh(0);
+      if (items.length > 0) {
+        const updated = prependToClientHistoryCache(items);
+        setHistoryData(updated);
+        setInitialLoaded(true);
+        setLoading(false);
+      } else {
+        const cached = getClientHistoryCache();
+        if (cached.length > 0) {
+          setHistoryData(cached);
+          setInitialLoaded(true);
+          setLoading(false);
+        }
+      }
+      triggerRefresh(150);
     };
 
     // Instant optimistic update when an order is placed
@@ -289,7 +297,7 @@ export default function HistoryPage() {
       setHistoryData(updated);
       setInitialLoaded(true);
       setLoading(false);
-      triggerRefresh(0);
+      triggerRefresh(150);
     };
 
     const handleOptimisticRollback = (e: any) => {
@@ -306,20 +314,20 @@ export default function HistoryPage() {
     };
 
     // Listen for all order and position lifecycle events
-    const eventList = [
+    const genericEventList = [
       'order_placed',
       'position-closed',
-      'position_closed',
       'position_updated',
       'order_executed',
       'order_cancelled',
       'order_failed',
-      'history_updated',
       'balance_updated',
     ];
 
-    eventList.forEach(evt => window.addEventListener(evt, handleCloseOrOrderEvent));
-    window.addEventListener('position_closed_optimistic', handleOptimisticClose);
+    genericEventList.forEach(evt => window.addEventListener(evt, handleCloseOrOrderEvent));
+    window.addEventListener('position_closed', handleConfirmedClose);
+    window.addEventListener('position_closed_optimistic', handleConfirmedClose);
+    window.addEventListener('history_updated', handleConfirmedClose);
     window.addEventListener('position_closed_rollback', handleOptimisticRollback);
     window.addEventListener('order_placed_optimistic', handleOptimisticOrder);
     window.addEventListener('order_placed_with_data', handleOptimisticOrder);
@@ -361,7 +369,13 @@ export default function HistoryPage() {
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', handleVisibility);
       window.removeEventListener('focus', handleFocus);
-      eventList.forEach(evt => window.removeEventListener(evt, handleCloseOrOrderEvent));
+      genericEventList.forEach(evt => window.removeEventListener(evt, handleCloseOrOrderEvent));
+      window.removeEventListener('position_closed', handleConfirmedClose);
+      window.removeEventListener('position_closed_optimistic', handleConfirmedClose);
+      window.removeEventListener('history_updated', handleConfirmedClose);
+      window.removeEventListener('position_closed_rollback', handleOptimisticRollback);
+      window.removeEventListener('order_placed_optimistic', handleOptimisticOrder);
+      window.removeEventListener('order_placed_with_data', handleOptimisticOrder);
       if (channel) {
         supabase.removeChannel(channel);
       }
