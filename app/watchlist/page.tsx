@@ -1001,14 +1001,70 @@ function WatchlistContent() {
     // would re-open the deep-linked chart whenever a new item is added from the library.
     if (deepLinkHandledRef.current) return;
     deepLinkHandledRef.current = true;
+    // Recognized benchmark overview cards from Home/Dashboard
+    const rawQuery = deepLinkSymbol.toUpperCase().trim();
+    const rawClean = rawQuery.replace(/[\/\s\_]/g, '');
+
+    const benchmarkConfigs: { matchers: string[]; item: WatchlistItem }[] = [
+      {
+        matchers: ['NIFTY50', 'NSE:NIFTY50', 'NIFTY_INDEX', 'NIFTY'],
+        item: { name: 'NIFTY 50', symbol: 'NIFTY_INDEX', kiteSymbol: 'NSE:NIFTY 50', segment: 'NSE - Equity', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+      {
+        matchers: ['SENSEX', 'BSE:SENSEX', 'SENSEX_INDEX'],
+        item: { name: 'SENSEX', symbol: 'SENSEX_INDEX', kiteSymbol: 'BSE:SENSEX', segment: 'BSE - Equity', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+      {
+        matchers: ['BANKNIFTY', 'NSE:NIFTYBANK', 'BANKNIFTY_INDEX', 'NIFTYBANK'],
+        item: { name: 'BANK NIFTY', symbol: 'BANKNIFTY_INDEX', kiteSymbol: 'NSE:NIFTY BANK', segment: 'NSE - Equity', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+      {
+        matchers: ['USDINR', 'CDS:USDINR'],
+        item: { name: 'USD/INR', symbol: getCurrentFuturesSymbol('CDS', 'USDINR'), kiteSymbol: getCurrentFuturesSymbol('CDS', 'USDINR'), segment: 'CDS - Futures', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+      {
+        matchers: ['CRUDEOIL', 'MCX:CRUDEOIL', 'CRUDE', 'CL=F'],
+        item: { name: 'CRUDE OIL', symbol: getCurrentFuturesSymbol('MCX', 'CRUDEOIL'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'CRUDEOIL'), comexSymbol: 'CL=F', segment: 'MCX - Futures', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+      {
+        matchers: ['GOLD', 'MCX:GOLD', 'GC=F'],
+        item: { name: 'GOLD', symbol: getCurrentFuturesSymbol('MCX', 'GOLD'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'GOLD'), comexSymbol: 'GC=F', segment: 'MCX - Futures', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+      {
+        matchers: ['SILVER', 'MCX:SILVER', 'SI=F'],
+        item: { name: 'SILVER', symbol: getCurrentFuturesSymbol('MCX', 'SILVER'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'SILVER'), comexSymbol: 'SI=F', segment: 'MCX - Futures', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+      {
+        matchers: ['NATGAS', 'NATURALGAS', 'MCX:NATURALGAS', 'NG=F'],
+        item: { name: 'NAT GAS', symbol: getCurrentFuturesSymbol('MCX', 'NATURALGAS'), kiteSymbol: getCurrentFuturesSymbol('MCX', 'NATURALGAS'), comexSymbol: 'NG=F', segment: 'MCX - Futures', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+    ];
+
+    const benchmarkFound = benchmarkConfigs.find(b =>
+      b.matchers.some(m => m === rawClean || rawClean.includes(m.replace(/[\/\s\_:]/g, '')) || m.includes(rawClean))
+    );
+
+    if (benchmarkFound) {
+      const benchmarkItem = benchmarkFound.item;
+      const itemTab = getTabForItem(benchmarkItem);
+      if (itemTab !== activeTab) setActiveTab(itemTab);
+      if (deepLinkAction === 'detail') {
+        openDetailSheet(benchmarkItem);
+      } else {
+        setChartItem(benchmarkItem);
+        setIsBenchmarkChart(true);
+      }
+      return;
+    }
+
     // Map dashboard display names back to their standard search terms
     const aliasMap: Record<string, string> = {
       'NAT GAS': 'NATURALGAS',
       'CRUDE OIL': 'CRUDEOIL',
       'BANK NIFTY': 'BANKNIFTY',
+      'USD/INR': 'USDINR',
     };
 
-    const rawQuery = deepLinkSymbol.toUpperCase();
     let query = rawQuery;
     if (aliasMap[query]) {
       query = aliasMap[query];

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
 import { getSession, getRole } from '@/lib/auth';
@@ -191,7 +192,6 @@ export default function Page() {
   const [allowedSegments, setAllowedSegments] = useState<string[]>([]);
   // scriptSettings comes from the shared TradeConfigProvider
   const { scriptSettings } = useTradeConfig();
-  const [isAuthChecking, setIsAuthChecking] = useState(true);
 
   useEffect(() => {
     getSession().then((session) => {
@@ -199,7 +199,6 @@ export default function Page() {
       const role = getRole(session.user);
       if (role === 'admin' || role === 'super_admin') { router.replace('/admin'); return; }
       if (role === 'broker') { router.replace('/broker'); return; }
-      setIsAuthChecking(false);
     });
   }, [router]);
 
@@ -460,18 +459,19 @@ export default function Page() {
   const kiteConnected = connectionStatus === 'connected';
   const kiteLoading = marketLoading;
 
-  const buildRow = (instruments: string[]): (MarketItem & { expired?: boolean })[] => {
+  const buildRow = (instruments: string[]): (MarketItem & { expired?: boolean; key: string })[] => {
     return instruments.map((key) => {
       const q = quotes[key];
       const display = getDisplayInfo(key);
       const expired = !isResolvingContracts && isContractExpired(key);
       if (expired) {
         // Don't show stale 0/0 values — surface expiry to the user instead
-        return { name: display.name, price: 0, change: 0, changeAmt: 0, type: 'positive', icon: display.icon, expired: true };
+        return { name: display.name, key, price: 0, change: 0, changeAmt: 0, type: 'positive', icon: display.icon, expired: true };
       }
-      if (!q) return { name: display.name, price: 0, change: 0, changeAmt: 0, type: 'positive', icon: display.icon };
+      if (!q) return { name: display.name, key, price: 0, change: 0, changeAmt: 0, type: 'positive', icon: display.icon };
       return {
         name: display.name,
+        key,
         price: q.lastPrice,
         change: q.changePercent,
         changeAmt: q.change,
@@ -536,10 +536,6 @@ export default function Page() {
       return 0;
     });
 
-  if (isAuthChecking) {
-    return <div style={{ minHeight: '100vh', backgroundColor: 'var(--bg-primary)' }} />; // Blank screen to prevent flash
-  }
-
   return (
     <div className="desktop-layout home-isolated-layout">
       
@@ -548,7 +544,7 @@ export default function Page() {
           {/* Mobile Navigation Bar */}
           <div className="nav-bar-full mobile-only">
             <div className="nav-icon-btn" onClick={() => setIsNotifDrawerOpen(true)}><i className="fas fa-bell"></i></div>
-            <div className="nav-app-name">RUPEE<span style={{ color: '#006400' }}>FX</span></div>
+            <div className="nav-app-name">MARGIN<span style={{ color: '#006400' }}>APEX</span></div>
             <div className="nav-group">
               <div className="nav-icon-btn" onClick={toggleTheme}><i className={(theme === 'dark' || theme === 'black' || theme === 'blue') ? "fas fa-sun" : "fas fa-moon"}></i></div>
               <div className="nav-funds" onClick={() => router.push('/funds')}><i className="fas fa-coins"></i><span>Funds</span></div>
@@ -599,11 +595,17 @@ export default function Page() {
                     <div className="scrollable-instruments">
                       <div className="instruments-row">
                         {instruments.map((inst, i) => (
-                          <div className="circle-instrument" key={i} onClick={() => router.push(`/option-chain?symbol=${encodeURIComponent(inst.name)}`)}>
+                          <Link
+                            href={`/option-chain?symbol=${encodeURIComponent(inst.name)}`}
+                            prefetch={true}
+                            className="circle-instrument"
+                            key={i}
+                            style={{ textDecoration: 'none', color: 'inherit' }}
+                          >
                             <div className="circle-icon"><i className={inst.icon}></i></div>
                             <div className="circle-label">{inst.name}</div>
                             <div className="circle-sub">{inst.sub}</div>
-                          </div>
+                          </Link>
                         ))}
                       </div>
                     </div>
@@ -649,7 +651,7 @@ export default function Page() {
                                 <div
                                   className={`market-rectangle${(market as any).expired ? ' market-rectangle--expired' : ''}`}
                                   key={i}
-                                  onClick={() => !(market as any).expired && router.push(`/watchlist?symbol=${encodeURIComponent(market.name)}`)}
+                                  onClick={() => !(market as any).expired && router.push(`/watchlist?symbol=${encodeURIComponent(market.key || market.name)}`)}
                                   style={(market as any).expired ? { cursor: 'default', opacity: 0.6 } : undefined}
                                 >
                                   <div className="market-rect-header">
@@ -747,13 +749,13 @@ export default function Page() {
             {/* List */}
             <div className="ew-list">
               {filteredExpiryIndexes.map((item, i) => (
-                <div
+                <Link
                   key={i}
+                  href={`/option-chain?symbol=${encodeURIComponent(item.name)}`}
+                  prefetch={true}
                   className={`ew-item${item.expiry.isToday ? ' ew-item--today' : ''}`}
-                  onClick={() => {
-                    setIsExpiryDrawerOpen(false);
-                    router.push(`/option-chain?symbol=${encodeURIComponent(item.name)}`);
-                  }}
+                  onClick={() => setIsExpiryDrawerOpen(false)}
+                  style={{ textDecoration: 'none', color: 'inherit' }}
                 >
                   {/* EXPIRES TODAY banner */}
                   {item.expiry.isToday && (
@@ -778,7 +780,7 @@ export default function Page() {
                   <div className={`ew-arrow${item.expiry.isToday ? ' ew-arrow--today' : ''}`}>
                     <i className="fas fa-chevron-right"></i>
                   </div>
-                </div>
+                </Link>
               ))}
             </div>
           </div>
