@@ -35,7 +35,7 @@ function addToWatchlist(item: {
   category?: string;
   lotSize?: number;
 }, userId?: string) {
-  const WATCHLIST_KEY = 'rupeeFX_watchlist';
+  const WATCHLIST_KEY = 'marginApex_watchlist';
   try {
     const key = userId ? `${WATCHLIST_KEY}_${userId}` : WATCHLIST_KEY;
     const raw = localStorage.getItem(key);
@@ -62,18 +62,25 @@ declare global {
   }
 }
 
-// Read/write optimistic local cache for instant zero-latency rendering
-function getLocalCache(key: string) {
+// Read/write optimistic local cache for instant zero-latency rendering (30s TTL + spot proximity)
+function getLocalCache(key: string, spot?: number) {
   try {
     const raw = typeof window !== 'undefined' ? sessionStorage.getItem(`oc_cache_${key}`) : null;
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (parsed._savedAt && Date.now() - parsed._savedAt > 30000) return null;
+    if (spot && spot > 0 && parsed.underlyingPrice && parsed.underlyingPrice > 0) {
+      if (Math.abs(spot - parsed.underlyingPrice) > 200) return null;
+    }
+    return parsed;
   } catch { return null; }
 }
 
 function setLocalCache(key: string, data: any) {
   try {
     if (typeof window !== 'undefined' && data) {
-      sessionStorage.setItem(`oc_cache_${key}`, JSON.stringify(data));
+      sessionStorage.setItem(`oc_cache_${key}`, JSON.stringify({ ...data, _savedAt: Date.now() }));
     }
   } catch { /* ignore */ }
 }
@@ -255,7 +262,7 @@ function OptionChainContent() {
 
   // Fetch initial option chain data
   useEffect(() => {
-    const cached = getLocalCache(cacheKey);
+    const cached = getLocalCache(cacheKey, lastSpotPriceRef.current);
     if (cached) {
       setData(cached);
       setLoading(false);
@@ -329,9 +336,10 @@ function OptionChainContent() {
     if (upper.includes('GOLD')) return 73450;
     if (upper.includes('SILVER')) return 85200;
     if (upper.includes('NATURALGAS') || upper.includes('NATGAS')) return 198.5;
-    if (upper.includes('SENSEX')) return 82890;
-    if (upper.includes('BANKNIFTY')) return 51780;
-    if (upper.includes('NIFTY')) return 25380;
+    if (upper.includes('SENSEX')) return 73800;
+    if (upper.includes('BANKNIFTY')) return 48200;
+    if (upper.includes('MIDCP')) return 11800;
+    if (upper.includes('NIFTY')) return 22420;
     return 0;
   }, [quotes, data, normalizedSymbol]);
 
@@ -342,34 +350,38 @@ function OptionChainContent() {
   }, [spotPrice]);
 
   // Reset selected expiry and refetch tracking whenever symbol changes
+  const lastRefetchedSpotRef = useRef<number>(0);
+  const lastRefetchTimeRef = useRef<number>(0);
   useEffect(() => {
     setSelectedExpiry(null);
-    hasRefetchedRef.current = false;
+    lastRefetchedSpotRef.current = 0;
   }, [normalizedSymbol]);
 
-  // Re-fetch only when live spot price diverges significantly beyond the 31-strike buffer
-  const hasRefetchedRef = useRef(false);
+  // Re-fetch dynamically when live spot price diverges significantly beyond the strike window
   useEffect(() => {
-    if (hasRefetchedRef.current || !data?.underlyingPrice || !spotPrice || spotPrice <= 0) return;
+    if (!data?.underlyingPrice || !spotPrice || spotPrice <= 0) return;
     const apiAtm = data.underlyingPrice;
     const absDiff = Math.abs(spotPrice - apiAtm);
     const strikeStep = normalizedSymbol.includes('MIDCP') ? 25 : (normalizedSymbol.includes('NIFTY') ? 50 : 100);
 
-    // Only trigger re-fetch if spot moves beyond 10 strike steps (outside the 31-strike window)
-    if (absDiff >= strikeStep * 10) {
-      hasRefetchedRef.current = true;
+    const now = Date.now();
+    // Trigger re-fetch if spot moves beyond 4 strike steps and at least 3s since last fetch
+    if (absDiff >= strikeStep * 4 && Math.abs(spotPrice - lastRefetchedSpotRef.current) >= strikeStep * 2 && (now - lastRefetchTimeRef.current > 3000)) {
+      lastRefetchedSpotRef.current = spotPrice;
+      lastRefetchTimeRef.current = now;
       lastSpotPriceRef.current = spotPrice;
       (async () => {
         try {
           const url = `/api/market/option-chain?symbol=${normalizedSymbol}${selectedExpiry ? `&expiry=${selectedExpiry}` : ''}&spotPrice=${spotPrice}&_t=${Date.now()}`;
           const json = await api.get<{ success: boolean; expiry: string; error?: string; strikes: any[]; expiries: string[]; underlyingPrice?: number; underlyingSymbol?: string; usedFallback?: boolean }>(url);
           if (json.success) {
+            setLocalCache(cacheKey, json);
             setData(json);
           }
         } catch { /* non-fatal — original data still displayed */ }
       })();
     }
-  }, [spotPrice, data, normalizedSymbol, selectedExpiry]);
+  }, [spotPrice, data, normalizedSymbol, selectedExpiry, cacheKey]);
 
   const handleTrade = (instrSymbol: string, side: 'BUY' | 'SELL') => {
     const strikeMatch = data?.strikes.find(s => s.ce?.symbol === instrSymbol || s.pe?.symbol === instrSymbol);

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient } from '@/lib/redis';
 import { getCurrentFuturesSymbol } from '@/lib/contractExpiry';
+import { getSharedKiteSession } from '@/lib/kiteSession';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,9 +17,9 @@ const OVERVIEW_SYMBOLS = [
 ];
 
 const FALLBACK_PRICES: Record<string, { last_price: number; close: number }> = {
-  'NSE:NIFTY 50': { last_price: 25380.75, close: 25320.50 },
-  'BSE:SENSEX': { last_price: 82890.20, close: 82700.00 },
-  'NSE:NIFTY BANK': { last_price: 51780.40, close: 51650.00 },
+  'NSE:NIFTY 50': { last_price: 22421.95, close: 22620.45 },
+  'BSE:SENSEX': { last_price: 73800.00, close: 74100.00 },
+  'NSE:NIFTY BANK': { last_price: 48200.00, close: 48350.00 },
   'CDS:USDINR': { last_price: 83.95, close: 83.92 },
   'MCX:CRUDEOIL': { last_price: 5740.00, close: 5710.00 },
   'MCX:GOLD': { last_price: 73450.00, close: 73200.00 },
@@ -150,6 +151,58 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         }
       } catch (err) {
         console.warn('[MarketOverview API] Ticker daemon query warning:', err);
+      }
+
+      // If still missing, query Kite REST API directly
+      const stillMissing = missingSymbols.filter(sym => !quotesMap[sym]);
+      if (stillMissing.length > 0) {
+        try {
+          const sharedSession = await getSharedKiteSession();
+          const apiKey = process.env.KITE_API_KEY;
+          if (sharedSession?.accessToken && apiKey) {
+            const params = new URLSearchParams();
+            stillMissing.forEach(s => params.append('i', s));
+            const kiteRes = await fetch(`https://api.kite.trade/quote?${params.toString()}`, {
+              headers: {
+                'X-Kite-Version': '3',
+                'Authorization': `token ${apiKey}:${sharedSession.accessToken}`,
+              },
+              cache: 'no-store',
+              signal: AbortSignal.timeout(2000),
+            });
+            if (kiteRes.ok) {
+              const kiteJson = await kiteRes.json();
+              if (kiteJson?.data) {
+                for (const [sym, q] of Object.entries(kiteJson.data as Record<string, any>)) {
+                  if (q && q.last_price > 0) {
+                    const close = q.ohlc?.close || q.close || q.last_price;
+                    const quoteObj = {
+                      timestamp: q.last_trade_time || q.timestamp || new Date().toISOString(),
+                      last_price: q.last_price,
+                      volume: q.volume || 0,
+                      ohlc: {
+                        open: q.ohlc?.open || q.open || q.last_price,
+                        high: q.ohlc?.high || q.high || q.last_price,
+                        low: q.ohlc?.low || q.low || q.last_price,
+                        close,
+                      },
+                      net_change: q.last_price - close,
+                      bid: q.bid ?? q.depth?.buy?.[0]?.price ?? q.last_price,
+                      ask: q.ask ?? q.depth?.sell?.[0]?.price ?? q.last_price,
+                    };
+                    quotesMap[sym] = quoteObj;
+                    const cleanName = sym.includes(':') ? sym.split(':')[1] : sym;
+                    quotesMap[cleanName] = quoteObj;
+                    redis.hset('market:quotes', sym, JSON.stringify(q)).catch(() => {});
+                    redis.hset('market:quotes', cleanName, JSON.stringify(q)).catch(() => {});
+                  }
+                }
+              }
+            }
+          }
+        } catch (kiteErr) {
+          console.warn('[MarketOverview API] Kite REST query warning:', kiteErr);
+        }
       }
 
       // Final safety guard: ensure every symbol has a non-zero quote from known realistic baselines

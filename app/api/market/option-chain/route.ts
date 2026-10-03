@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic';
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { getRedisClient, isRedisMock } from '@/lib/redis';
+import { getSharedKiteSession } from '@/lib/kiteSession';
 import {
   loadStrikeConfig,
   applyExpiryFilter,
@@ -59,11 +60,15 @@ export async function GET(request: Request) {
 
     const cacheKey = `optionChain:${symbol}_${expiry || 'default'}`;
     const nowMs = Date.now();
+    const spotNum = spotParam ? parseFloat(spotParam) : 0;
+    const strikeStep = symbol.includes('MIDCP') ? 25 : (symbol.includes('NIFTY') ? 50 : 100);
 
     // ── 1. In-Memory Process Response Cache (10s TTL — <1ms response) ────────
     const memCached = inMemoryResponseCache.get(cacheKey);
     if (memCached && memCached.exp > nowMs) {
-      return NextResponse.json(memCached.data);
+      if (!spotNum || !memCached.data?.underlyingPrice || Math.abs(spotNum - memCached.data.underlyingPrice) <= strikeStep * 2) {
+        return NextResponse.json(memCached.data);
+      }
     }
 
     const redis = getRedisClient();
@@ -73,8 +78,10 @@ export async function GET(request: Request) {
       const cached = await redis.get(cacheKey);
       if (cached) {
         const parsed = JSON.parse(cached);
-        inMemoryResponseCache.set(cacheKey, { data: parsed, exp: nowMs + 10000 });
-        return NextResponse.json(parsed);
+        if (!spotNum || !parsed.underlyingPrice || Math.abs(spotNum - parsed.underlyingPrice) <= strikeStep * 2) {
+          inMemoryResponseCache.set(cacheKey, { data: parsed, exp: nowMs + 10000 });
+          return NextResponse.json(parsed);
+        }
       }
     } catch { /* Redis not ready or key missing — proceed to live fetch */ }
 
@@ -316,6 +323,37 @@ export async function GET(request: Request) {
       } catch { /* non-fatal */ }
     }
 
+    // If still missing, query Kite REST API directly
+    if (!atmPrice) {
+      try {
+        const sharedSession = await getSharedKiteSession();
+        const apiKey = process.env.KITE_API_KEY;
+        if (sharedSession?.accessToken && apiKey) {
+          const kiteRes = await fetch(`https://api.kite.trade/quote?i=${encodeURIComponent(underlyingKiteId)}`, {
+            headers: {
+              'X-Kite-Version': '3',
+              'Authorization': `token ${apiKey}:${sharedSession.accessToken}`,
+            },
+            cache: 'no-store',
+            signal: AbortSignal.timeout(2000),
+          });
+          if (kiteRes.ok) {
+            const kiteJson = await kiteRes.json();
+            const q = kiteJson?.data?.[underlyingKiteId];
+            const lp = Number(q?.last_price || 0);
+            if (lp >= minStrike * 0.4 && lp <= maxStrike * 2.5) {
+              atmPrice = lp;
+              redis.hset('market:quotes', underlyingKiteId, JSON.stringify(q)).catch(() => {});
+              const clean = underlyingKiteId.includes(':') ? underlyingKiteId.split(':')[1] : underlyingKiteId;
+              redis.hset('market:quotes', clean, JSON.stringify(q)).catch(() => {});
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[option-chain] Direct Kite underlying fetch failed:', err);
+      }
+    }
+
     if (!atmPrice) {
       const upper = symbol.toUpperCase();
       let baseline = 0;
@@ -323,10 +361,10 @@ export async function GET(request: Request) {
       else if (upper.includes('GOLD')) baseline = 73450;
       else if (upper.includes('SILVER')) baseline = 85200;
       else if (upper.includes('NATURALGAS') || upper.includes('NATGAS')) baseline = 198.5;
-      else if (upper.includes('SENSEX')) baseline = 82890;
-      else if (upper.includes('BANKNIFTY') || upper.includes('BANK')) baseline = 51780;
-      else if (upper.includes('MIDCP')) baseline = 12850;
-      else if (upper.includes('NIFTY')) baseline = 25380;
+      else if (upper.includes('SENSEX')) baseline = 73800;
+      else if (upper.includes('BANKNIFTY') || upper.includes('BANK')) baseline = 48200;
+      else if (upper.includes('MIDCP')) baseline = 11800;
+      else if (upper.includes('NIFTY')) baseline = 22420;
 
       if (baseline > 0 && baseline >= minStrike * 0.4 && baseline <= maxStrike * 2.5) {
         atmPrice = baseline;
@@ -357,7 +395,7 @@ export async function GET(request: Request) {
     }
     const sortedStrikes = Object.values(strikeMap).sort((a: any, b: any) => a.strike - b.strike);
 
-    // ── 8. Backfill Redis prices (single hmget with freshness check) ─────────
+    // ── 8. Backfill Redis prices (single hmget with freshness check & Kite REST fallback) ─────────
     try {
       const allKiteIds: string[] = [];
       sortedStrikes.forEach((row: any) => {
@@ -382,6 +420,48 @@ export async function GET(request: Request) {
             }
           } catch { /* malformed entry */ }
         });
+
+        // If any option prices are missing from Redis, fetch them from Kite REST API
+        const missingOptionIds = allKiteIds.filter(id => !priceMap[id]);
+        if (missingOptionIds.length > 0) {
+          try {
+            const sharedSession = await getSharedKiteSession();
+            const apiKey = process.env.KITE_API_KEY;
+            if (sharedSession?.accessToken && apiKey) {
+              const batchSize = 100;
+              for (let i = 0; i < missingOptionIds.length; i += batchSize) {
+                const batch = missingOptionIds.slice(i, i + batchSize);
+                const params = new URLSearchParams();
+                batch.forEach(b => params.append('i', b));
+                const res = await fetch(`https://api.kite.trade/quote?${params.toString()}`, {
+                  headers: {
+                    'X-Kite-Version': '3',
+                    'Authorization': `token ${apiKey}:${sharedSession.accessToken}`,
+                  },
+                  cache: 'no-store',
+                  signal: AbortSignal.timeout(2500),
+                });
+                if (res.ok) {
+                  const json = await res.json();
+                  if (json?.data) {
+                    for (const [id, q] of Object.entries(json.data as Record<string, any>)) {
+                      const lp = Number(q.last_price ?? 0);
+                      if (lp > 0) {
+                        priceMap[id] = lp;
+                        redis.hset('market:quotes', id, JSON.stringify(q)).catch(() => {});
+                        const clean = id.includes(':') ? id.split(':')[1] : id;
+                        redis.hset('market:quotes', clean, JSON.stringify(q)).catch(() => {});
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          } catch (err) {
+            console.warn('[option-chain] Kite quote backfill warning:', err);
+          }
+        }
+
         sortedStrikes.forEach((row: any) => {
           if (row.ce?.id && priceMap[row.ce.id]) {
             row.ce.price = priceMap[row.ce.id];
