@@ -98,11 +98,12 @@ BEGIN
     -- STEP 4: Update Position
     UPDATE public.positions
     SET qty_open = qty_open - p_close_qty,
+        qty_total = CASE WHEN (qty_open - p_close_qty) <= 0 THEN p_close_qty ELSE GREATEST(qty_total - p_close_qty, qty_open - p_close_qty) END,
         pnl = pnl + v_pnl,
         brokerage = brokerage + p_expected_brokerage,
         exit_price = p_close_price,
         locked_margin = locked_margin - v_margin_released,
-        margin_required = CASE WHEN (qty_open - p_close_qty) <= 0 THEN margin_required ELSE margin_required - v_margin_released END,
+        margin_required = CASE WHEN (qty_open - p_close_qty) <= 0 THEN 0 ELSE margin_required - v_margin_released END,
         status = CASE WHEN (qty_open - p_close_qty) <= 0 THEN 'closed' ELSE status END,
         closed_by = p_closed_by,
         exit_time = CASE WHEN (qty_open - p_close_qty) <= 0 THEN now() ELSE exit_time END,
@@ -116,7 +117,12 @@ BEGIN
         SET status = 'CANCELLED', updated_at = now()
         WHERE user_id = v_user_id
           AND UPPER(status) IN ('PENDING', 'OPEN', 'TRIGGER_PENDING', 'VALIDATION_PENDING')
-          AND (info = p_position_id::text OR linked_position_id = p_position_id OR symbol = v_symbol);
+          AND (
+            info = p_position_id::text 
+            OR symbol = v_symbol
+            OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
+               UPPER(regexp_replace(regexp_replace(regexp_replace(v_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+          );
     END IF;
 
     -- Determine lot size to calculate lots

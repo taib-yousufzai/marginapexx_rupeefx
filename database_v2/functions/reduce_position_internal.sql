@@ -78,6 +78,7 @@ BEGIN
     -- Reduce original position
     UPDATE public.positions
     SET qty_open = qty_open - p_qty,
+        qty_total = GREATEST(qty_total - p_qty, qty_open - p_qty),
         locked_margin = locked_margin - v_margin_released,
         margin_required = margin_required - v_margin_released,
         updated_at = now()
