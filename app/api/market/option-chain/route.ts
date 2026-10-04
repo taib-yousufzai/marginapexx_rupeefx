@@ -162,6 +162,23 @@ export async function GET(request: Request) {
         }
       }
 
+      // Fallback: If gte('expiry', today) returned no records because table sync is pending,
+      // query available expiries without the gte filter so option chain never returns 0-strikes
+      if (!data || data.length === 0) {
+        const anyRes = await supabase
+          .from('instruments')
+          .select('expiry')
+          .eq('name', isMcx && MCX_BASE_MAP[symbol] ? MCX_BASE_MAP[symbol] : symbol)
+          .in('exchange', targetExchanges)
+          .not('expiry', 'is', null)
+          .in('option_type', ['CE', 'PE'])
+          .order('expiry', { ascending: false })
+          .limit(20);
+        if (anyRes.data && anyRes.data.length > 0) {
+          data = anyRes.data;
+        }
+      }
+
       const expiries = Array.from(new Set((data || []).map((e: any) => e.expiry))) as string[];
       if (expiries.length > 0) {
         inMemoryExpiriesCache.set(k, { expiries, exp: Date.now() + 600000 });
@@ -238,8 +255,14 @@ export async function GET(request: Request) {
 
     if (isMcx) underlyingKiteId = resolvedMcxId;
 
-    const activeExpiries  = applyExpiryFilter(allExpiries, today, isMcx);
-    const selectedExpiry  = (expiry && activeExpiries.includes(expiry) && !isExpiryDateExpired(expiry, isMcx)) ? expiry : activeExpiries[0];
+    let activeExpiries = applyExpiryFilter(allExpiries, today, isMcx);
+    if (activeExpiries.length === 0 && allExpiries.length > 0) {
+      activeExpiries = allExpiries;
+    }
+
+    const selectedExpiry = (expiry && activeExpiries.includes(expiry) && !isExpiryDateExpired(expiry, isMcx))
+      ? expiry
+      : (expiry && allExpiries.includes(expiry) ? expiry : activeExpiries[0]);
 
     if (!selectedExpiry) {
       return NextResponse.json({
@@ -277,7 +300,8 @@ export async function GET(request: Request) {
 
     if (!atmPrice && atmRedisRaw) {
       try {
-        const parsedLp = JSON.parse(atmRedisRaw as string).last_price || 0;
+        const parsedQuote = JSON.parse(atmRedisRaw as string);
+        const parsedLp = parsedQuote.last_price || parsedQuote.lastPrice || parsedQuote.close || 0;
         if (parsedLp >= minStrike * 0.4 && parsedLp <= maxStrike * 2.5) {
           atmPrice = parsedLp;
         }
@@ -296,7 +320,7 @@ export async function GET(request: Request) {
         for (const raw of altQuotes) {
           if (raw) {
             const parsed = JSON.parse(raw as string);
-            const lp = parsed.last_price || parsed.lastPrice || 0;
+            const lp = parsed.last_price || parsed.lastPrice || parsed.close || 0;
             if (lp >= minStrike * 0.4 && lp <= maxStrike * 2.5) {
               atmPrice = lp;
               break;
@@ -306,15 +330,15 @@ export async function GET(request: Request) {
       } catch { /* ignore */ }
     }
 
-    // If still missing, query live Ticker daemon directly
+    // If still missing, query live Ticker daemon directly (fast 800ms)
     if (!atmPrice) {
       try {
         const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
-        const res = await fetch(`${tickerUrl}/quotes?symbols=${underlyingKiteId}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) }).catch(() => null);
+        const res = await fetch(`${tickerUrl}/quotes?symbols=${underlyingKiteId}`, { cache: 'no-store', signal: AbortSignal.timeout(800) }).catch(() => null);
         if (res?.ok) {
           const json = await res.json();
           const tick = json?.data?.[underlyingKiteId];
-          const tickLtp = Number(tick?.last_price || tick?.lastPrice || 0);
+          const tickLtp = Number(tick?.last_price || tick?.lastPrice || tick?.close || 0);
           if (tickLtp >= minStrike * 0.4 && tickLtp <= maxStrike * 2.5) {
             atmPrice = tickLtp;
             redis.hset('market:quotes', underlyingKiteId, JSON.stringify(tick)).catch(() => {});
@@ -323,7 +347,7 @@ export async function GET(request: Request) {
       } catch { /* non-fatal */ }
     }
 
-    // If still missing, query Kite REST API directly
+    // If still missing, query Kite REST API directly (non-blocking 800ms)
     if (!atmPrice) {
       try {
         const sharedSession = await getSharedKiteSession();
@@ -335,12 +359,12 @@ export async function GET(request: Request) {
               'Authorization': `token ${apiKey}:${sharedSession.accessToken}`,
             },
             cache: 'no-store',
-            signal: AbortSignal.timeout(2000),
+            signal: AbortSignal.timeout(800),
           });
           if (kiteRes.ok) {
             const kiteJson = await kiteRes.json();
             const q = kiteJson?.data?.[underlyingKiteId];
-            const lp = Number(q?.last_price || 0);
+            const lp = Number(q?.last_price || q?.close || 0);
             if (lp >= minStrike * 0.4 && lp <= maxStrike * 2.5) {
               atmPrice = lp;
               redis.hset('market:quotes', underlyingKiteId, JSON.stringify(q)).catch(() => {});
@@ -350,7 +374,7 @@ export async function GET(request: Request) {
           }
         }
       } catch (err) {
-        console.warn('[option-chain] Direct Kite underlying fetch failed:', err);
+        // non-fatal
       }
     }
 
@@ -369,7 +393,6 @@ export async function GET(request: Request) {
       if (baseline > 0 && baseline >= minStrike * 0.4 && baseline <= maxStrike * 2.5) {
         atmPrice = baseline;
       } else {
-        console.warn(`[option-chain] No valid ATM price for ${symbol}, using median strike fallback (${medianStrike})`);
         atmPrice = medianStrike;
       }
       usedFallback = true;
@@ -395,7 +418,7 @@ export async function GET(request: Request) {
     }
     const sortedStrikes = Object.values(strikeMap).sort((a: any, b: any) => a.strike - b.strike);
 
-    // ── 8. Backfill Redis prices (single hmget with freshness check & Kite REST fallback) ─────────
+    // ── 8. Backfill Redis prices (single hmget — preserves last known prices off-market) ─────────
     try {
       const allKiteIds: string[] = [];
       sortedStrikes.forEach((row: any) => {
@@ -405,23 +428,18 @@ export async function GET(request: Request) {
       if (allKiteIds.length > 0) {
         const prices = await redis.hmget('market:quotes', ...allKiteIds);
         const priceMap: Record<string, number> = {};
-        const now = Date.now();
         allKiteIds.forEach((id, i) => {
           try {
             if (!prices[i]) return;
             const q = JSON.parse(prices[i] as string);
-            const rawTime = q.last_trade_time || q.timestamp || q.time || 0;
-            const qTime = new Date(rawTime).getTime();
-            // Strictly reject stale Redis cached ticks older than 60 seconds
-            const isFresh = qTime > 0 && !isNaN(qTime) && (now - qTime < 60000);
-            const ltp = Number(q.last_price ?? q.lastPrice ?? 0);
-            if (isFresh && ltp > 0) {
+            const ltp = Number(q.last_price ?? q.lastPrice ?? q.close ?? 0);
+            if (ltp > 0) {
               priceMap[id] = ltp;
             }
           } catch { /* malformed entry */ }
         });
 
-        // If any option prices are missing from Redis, fetch them from Kite REST API
+        // If any option prices are missing from Redis, attempt fast non-blocking Kite REST backfill
         const missingOptionIds = allKiteIds.filter(id => !priceMap[id]);
         if (missingOptionIds.length > 0) {
           try {
@@ -429,7 +447,7 @@ export async function GET(request: Request) {
             const apiKey = process.env.KITE_API_KEY;
             if (sharedSession?.accessToken && apiKey) {
               const batchSize = 100;
-              for (let i = 0; i < missingOptionIds.length; i += batchSize) {
+              for (let i = 0; i < Math.min(missingOptionIds.length, 200); i += batchSize) {
                 const batch = missingOptionIds.slice(i, i + batchSize);
                 const params = new URLSearchParams();
                 batch.forEach(b => params.append('i', b));
@@ -439,13 +457,13 @@ export async function GET(request: Request) {
                     'Authorization': `token ${apiKey}:${sharedSession.accessToken}`,
                   },
                   cache: 'no-store',
-                  signal: AbortSignal.timeout(2500),
+                  signal: AbortSignal.timeout(800),
                 });
                 if (res.ok) {
                   const json = await res.json();
                   if (json?.data) {
                     for (const [id, q] of Object.entries(json.data as Record<string, any>)) {
-                      const lp = Number(q.last_price ?? 0);
+                      const lp = Number(q.last_price ?? q.close ?? 0);
                       if (lp > 0) {
                         priceMap[id] = lp;
                         redis.hset('market:quotes', id, JSON.stringify(q)).catch(() => {});
@@ -457,8 +475,8 @@ export async function GET(request: Request) {
                 }
               }
             }
-          } catch (err) {
-            console.warn('[option-chain] Kite quote backfill warning:', err);
+          } catch {
+            // non-fatal
           }
         }
 
@@ -485,7 +503,6 @@ export async function GET(request: Request) {
     };
 
     if (!usedFallback) {
-      // 60s TTL — longer than before so cold starts always hit cache
       redis.setex(cacheKey, 60, JSON.stringify(responseData)).catch(() => {});
       redis.setex(`optionChain:${symbol}_${selectedExpiry}`, 60, JSON.stringify(responseData)).catch(() => {});
     }

@@ -114,9 +114,12 @@ export async function GET(request: Request) {
       }
     }
 
-    // c. Add Options (NFO, BFO, MCX-OPT, CDS-OPT)
+    // c. Add Active Options (NFO, BFO, MCX-OPT, CDS-OPT)
+    const today = new Date().toISOString().split('T')[0];
     const options = parsed.data.filter((row: any) => {
-      return row.instrument_type === 'CE' || row.instrument_type === 'PE';
+      if (row.instrument_type !== 'CE' && row.instrument_type !== 'PE') return false;
+      if (row.expiry && row.expiry < today) return false;
+      return true;
     });
 
     for (const row of options as any[]) {
@@ -185,7 +188,6 @@ export async function GET(request: Request) {
             underlying_symbol: pair.baseAsset,
             lot_size: 0
           });
-          // Add the short symbol as well for legacy UI matching
           finalInstruments.push({
             id: pair.baseAsset,
             instrument_token: 0,
@@ -206,20 +208,31 @@ export async function GET(request: Request) {
 
     console.log(`[Sync Instruments] Found ${nseEquities.length} EQ/Indices, ${Object.keys(groups).length} Futures, ${options.length} Options, and ${binanceCount} Crypto pairs.`);
 
-    // 5. Bulk Upsert to Supabase
+    // 5. Bulk Upsert to Supabase in parallel chunks of 300
     if (finalInstruments.length > 0) {
-      // Chunk upserts in case of Supabase limits
-      const chunkSize = 1000;
+      const chunkSize = 300;
+      const chunks: any[][] = [];
       for (let i = 0; i < finalInstruments.length; i += chunkSize) {
-        const chunk = finalInstruments.slice(i, i + chunkSize);
-        const { error } = await supabase
-          .from('instruments')
-          .upsert(chunk, { onConflict: 'id' });
-
-        if (error) {
-          throw new Error(`Supabase Upsert Error: ${error.message}`);
+        chunks.push(finalInstruments.slice(i, i + chunkSize));
+      }
+      const queue = [...chunks];
+      async function worker() {
+        while (queue.length > 0) {
+          const chunk = queue.shift();
+          if (!chunk) break;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              const { error } = await supabase.from('instruments').upsert(chunk, { onConflict: 'id' });
+              if (error) throw error;
+              break;
+            } catch (err) {
+              if (attempt === 2) console.error('[Sync Instruments] Chunk error:', err);
+              else await new Promise(r => setTimeout(r, 400));
+            }
+          }
         }
       }
+      await Promise.all([worker(), worker(), worker(), worker()]);
       console.log('[Sync Instruments] Successfully upserted all instruments.');
     }
 

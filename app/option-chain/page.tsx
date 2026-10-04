@@ -62,16 +62,16 @@ declare global {
   }
 }
 
-// Read/write optimistic local cache for instant zero-latency rendering (30s TTL + spot proximity)
+// Read/write optimistic local cache for instant zero-latency rendering (5 min TTL + spot proximity)
 function getLocalCache(key: string, spot?: number) {
   try {
     const raw = typeof window !== 'undefined' ? sessionStorage.getItem(`oc_cache_${key}`) : null;
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
-    if (parsed._savedAt && Date.now() - parsed._savedAt > 30000) return null;
+    if (parsed._savedAt && Date.now() - parsed._savedAt > 300000) return null;
     if (spot && spot > 0 && parsed.underlyingPrice && parsed.underlyingPrice > 0) {
-      if (Math.abs(spot - parsed.underlyingPrice) > 200) return null;
+      if (Math.abs(spot - parsed.underlyingPrice) > 500) return null;
     }
     return parsed;
   } catch { return null; }
@@ -273,26 +273,30 @@ function OptionChainContent() {
     }
 
     async function fetchData() {
-      setLoading(true);
+      if (!data) setLoading(true);
       setLoadingError(null);
       try {
         const spotPriceParam = lastSpotPriceRef.current > 0 ? `&spotPrice=${lastSpotPriceRef.current}` : '';
         const url = `/api/market/option-chain?symbol=${normalizedSymbol}${selectedExpiry ? `&expiry=${selectedExpiry}` : ''}${spotPriceParam}&_t=${Date.now()}`;
         const json = await api.get<{ success: boolean; expiry: string; error?: string; strikes: any[]; expiries: string[]; underlyingPrice?: number; underlyingSymbol?: string }>(url);
-        if (json.success) {
+        if (json.success && json.strikes && json.strikes.length > 0) {
           setLocalCache(cacheKey, json);
           setLocalCache(`${normalizedSymbol}_${json.expiry}`, json);
           setData(json);
           if (!selectedExpiry || (json.expiries && !json.expiries.includes(selectedExpiry))) setSelectedExpiry(json.expiry);
+        } else if (json.success && (!json.strikes || json.strikes.length === 0)) {
+          if (!data) {
+            setLoadingError(json.error || 'No active option strikes found for selected expiry');
+          }
         } else {
-          setLoadingError(json.error || 'Failed to fetch option chain');
+          if (!data) setLoadingError(json.error || 'Failed to fetch option chain');
         }
       } catch (err: any) {
         if (err instanceof ApiError && err.status === 403) {
           setLoadingError('locked');
         } else {
           console.error('Failed to fetch option chain', err);
-          setLoadingError('Failed to fetch option chain');
+          if (!data) setLoadingError('Failed to fetch option chain');
         }
       } finally {
         setLoading(false);
