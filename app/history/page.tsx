@@ -108,6 +108,10 @@ export default function HistoryPage() {
           }
           const exitTime = p.closed_at || p.exit_time || p.updated_at || p.created_at;
           const exitTs = exitTime ? new Date(exitTime).getTime() : Date.now();
+          const posBrk = Number(p.brokerage || p.total_brokerage || p.entry_brokerage || 0) ||
+            (Number(p.entry_intraday_brokerage || 0) + Number(p.exit_intraday_brokerage || 0) + Number(p.intraday_brokerage || 0) +
+             Number(p.entry_carry_brokerage || 0) + Number(p.exit_carry_brokerage || 0) + Number(p.carry_brokerage || 0) +
+             Number(p.entry_gtt_brokerage || 0) + Number(p.exit_gtt_brokerage || 0) + Number(p.gtt_brokerage || 0));
           return {
             id: p.id || `pos_${Math.random()}`,
             scriptName: p.symbol || 'UNKNOWN',
@@ -121,7 +125,7 @@ export default function HistoryPage() {
             date: fmtDateTime(p.created_at),
             exitDate: fmtDate(exitTime),
             status: 'closed',
-            brokerage: Number(p.brokerage || p.entry_brokerage || 0),
+            brokerage: posBrk,
             entry_intraday_brokerage: Number(p.entry_intraday_brokerage || 0),
             entry_carry_brokerage: Number(p.entry_carry_brokerage || 0),
             entry_gtt_brokerage: Number(p.entry_gtt_brokerage || 0),
@@ -132,7 +136,7 @@ export default function HistoryPage() {
             productType: p.product_type || 'INTRADAY',
             settlement,
             settlementAmount: Math.abs(Number(p.settlement_amount || 0)),
-            entry_brokerage: Number(p.entry_brokerage || p.brokerage || 0),
+            entry_brokerage: Number(p.entry_brokerage || p.brokerage || posBrk),
             timestamp: isNaN(exitTs) ? Date.now() : exitTs,
             entryTimestamp: p.entry_time || p.created_at ? new Date(p.entry_time || p.created_at).getTime() : 0,
           };
@@ -505,13 +509,18 @@ export default function HistoryPage() {
 
   const getItemBrokerage = useCallback((h: HistoryItem) => {
     const direct = Number(h.brokerage || 0);
-    if (direct > 0) return direct;
     const entryBrk = Number((h as any).entry_brokerage || 0);
-    if (entryBrk > 0) return entryBrk;
+    const exitBrk = Number((h as any).exit_brokerage || 0);
+    const totalBrk = Number((h as any).total_brokerage || 0);
     const intraday = Number(h.entry_intraday_brokerage || 0) + Number(h.exit_intraday_brokerage || 0) + Number(h.intraday_brokerage || 0);
     const carry = Number(h.entry_carry_brokerage || 0) + Number(h.exit_carry_brokerage || 0) + Number(h.carry_brokerage || 0);
     const gtt = Number(h.entry_gtt_brokerage || 0) + Number(h.exit_gtt_brokerage || 0) + Number(h.gtt_brokerage || 0);
-    return intraday + carry + gtt;
+    const subTotal = intraday + carry + gtt;
+    if (direct > 0) return direct;
+    if (totalBrk > 0) return totalBrk;
+    if (entryBrk + exitBrk > 0) return entryBrk + exitBrk;
+    if (subTotal > 0) return subTotal;
+    return 0;
   }, []);
 
   const summary = useMemo(() => {
@@ -744,7 +753,7 @@ export default function HistoryPage() {
                       </div>
                       <div className={currentTab === 'position' ? `pnl ${item.pnl >= 0 ? 'positive' : 'negative'}` : 'price-value'}>
                         {currentTab === 'position' ? (() => {
-                          const brokerage = item.brokerage || 0;
+                          const brokerage = getItemBrokerage(item);
                           const isPositive = item.pnl >= 0;
                           const pctBase = item.entryPrice ? (item.pnl / (item.entryPrice * item.qty)) * 100 : 0;
                           const pctStr = pctBase.toFixed(2);
