@@ -235,7 +235,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     ]);
 
     let positions = posResult?.data || [];
-    if (positions.length === 0 && positionIds.length > 0) {
+    if (positions.length === 0 && positionIdsList.length > 0) {
       // If positionIds had optimistic client IDs, fetch user's open positions
       const { data: userOpenPositions } = await admin
         .from('positions')

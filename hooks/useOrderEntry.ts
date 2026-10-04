@@ -751,26 +751,9 @@ export function useOrderEntry() {
     const ids = rawList.map((p: any) => (typeof p === 'string' ? p : p?.id)).filter(Boolean);
 
     try {
-      let result: any = null;
-
-      // 1. Try Fast-Pipe WebSocket Exit All (< 35ms)
-      try {
-        const session = await getSession();
-        const userId = session?.user?.id;
-        if (userId && wsManager.isConnectingOrOpen) {
-          const wsResp = await wsManager.closeAllPositionsFast(userId, undefined, 3000);
-          if (wsResp.success) {
-            result = { success: true, ...wsResp.result };
-          }
-        }
-      } catch (wsErr) {
-        // Fallback
-      }
-
-      // 2. Fallback to REST API route
-      if (!result) {
-        result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds: ids }, { timeout: 45000 });
-      }
+      // Batch close always routes through /api/positions/close with per-ID validation,
+      // accurate pricing, and structured results [{ positionId, success, pnl, exit_price }]
+      const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds: ids }, { timeout: 45000 });
 
       const confirmedHistoryItems: HistoryItem[] = [];
       const confirmedClosedPositions: any[] = [];
