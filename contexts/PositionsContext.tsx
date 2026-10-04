@@ -166,7 +166,7 @@ function getPersistedOptimisticPositions(): MyPosition[] {
 function savePersistedOptimisticPositions(positions: MyPosition[]) {
   if (typeof window === 'undefined') return;
   try {
-    const optList = positions.filter(p => p.id.startsWith('__optimistic__'));
+    const optList = positions.filter(p => p.id.startsWith('__optimistic__') || p.id.startsWith('opt_'));
     if (optList.length === 0) {
       localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
     } else {
@@ -298,13 +298,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         try {
           // Update main positions cache
           localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
-          // Also nuke the optimistic positions cache for this symbol — prevents ghost reappearance
+          // Also nuke the optimistic positions cache for this position / symbol — prevents ghost reappearance
           const storedOpt = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
           if (storedOpt) {
             const parsed: MyPosition[] = JSON.parse(storedOpt);
-            const filtered = parsed.filter(p =>
-              p.id !== posId
-            );
+            const targetSymbol = cleanSym(target?.symbol || positionObj?.symbol || '');
+            const filtered = parsed.filter(p => {
+              if (p.id === posId) return false;
+              if (targetSymbol && cleanSym(p.symbol || p.kite_instrument) === targetSymbol) return false;
+              return true;
+            });
             if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
             else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
           }
@@ -378,7 +381,17 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           const storedOpt = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
           if (storedOpt) {
             const parsed: MyPosition[] = JSON.parse(storedOpt);
-            const filtered = parsed.filter(p => !removedSet.has(p.id));
+            const removedSymbols = new Set(
+              reductions
+                .filter(r => r.isFullyClosed || r.qty_open <= 0)
+                .map(r => cleanSym(r.positionObj?.symbol || prev.find(p => p.id === r.posId)?.symbol || ''))
+                .filter(Boolean)
+            );
+            const filtered = parsed.filter(p => {
+              if (removedSet.has(p.id)) return false;
+              if (removedSymbols.has(cleanSym(p.symbol || p.kite_instrument))) return false;
+              return true;
+            });
             if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
             else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
           }
@@ -585,6 +598,10 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           } else {
             activeOptPositions.push(optPos);
           }
+        }
+
+        if (typeof window !== 'undefined') {
+          savePersistedOptimisticPositions(activeOptPositions);
         }
 
         const merged = [...activeOptPositions, ...basePositions];
