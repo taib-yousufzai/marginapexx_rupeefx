@@ -204,13 +204,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const { positionIds } = await request.json() as { positionIds?: string[] };
-    if (!positionIds || !Array.isArray(positionIds) || positionIds.length === 0) {
+    const body = await request.json() as any;
+    const rawInput = body?.positionIds ?? body?.position_ids ?? body?.ids ?? (Array.isArray(body) ? body : []);
+    const positionIdsList: string[] = (Array.isArray(rawInput) ? rawInput : [rawInput])
+      .map((p: any) => (typeof p === 'string' ? p : p?.id))
+      .filter((id): id is string => typeof id === 'string' && Boolean(id.trim()));
+
+    if (positionIdsList.length === 0) {
       return NextResponse.json({ error: 'Missing or empty positionIds array' }, { status: 400 });
     }
 
     const admin = getAdminClient();
-    const validUuids = positionIds.filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
+    const validUuids = positionIdsList.filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
 
     // 1. Parallel fetch positions, profile, and trading hours
     const [posResult, profileResult, tradingHoursResult] = await Promise.all([

@@ -769,7 +769,7 @@ export function useOrderEntry() {
 
       // 2. Fallback to REST API route
       if (!result) {
-        result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds }, { timeout: 45000 });
+        result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds: ids }, { timeout: 45000 });
       }
 
       const confirmedHistoryItems: HistoryItem[] = [];
