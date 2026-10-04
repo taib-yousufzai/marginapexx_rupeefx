@@ -18,6 +18,7 @@ import { useComexQuotes } from '@/hooks/useComexQuotes';
 
 import useSWR from 'swr';
 import { parseOptionSymbol } from '@/lib/parseOptionSymbol';
+import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
 import { mapSegmentToDbSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { formatShortName, isForexSymbol } from '@/lib/datafeed/symbolResolver';
@@ -3382,111 +3383,11 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   );
 }
 
-class ChartErrorBoundary extends React.Component<
-  { children: React.ReactNode; onClose?: () => void },
-  { hasError: boolean; error: Error | null }
-> {
-  state = { hasError: false, error: null as Error | null };
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, info: any) {
-    console.error('[TradingChart ErrorBoundary caught error]:', error, info);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          height: '100%',
-          width: '100%',
-          background: 'var(--container-bg, #0b1522)',
-          color: 'var(--text-primary, #ffffff)',
-          padding: '24px',
-          textAlign: 'center',
-          boxSizing: 'border-box'
-        }}>
-          <div style={{
-            background: 'var(--card-bg, #152238)',
-            border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
-            borderRadius: '12px',
-            padding: '24px',
-            maxWidth: '380px',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '12px'
-          }}>
-            <div style={{ fontSize: '28px', color: '#EF4444' }}>
-              <i className="fas fa-chart-line" />
-            </div>
-            <div style={{ fontSize: '15px', fontWeight: 600 }}>Chart Display Issue</div>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary, #94A3B8)', lineHeight: 1.4 }}>
-              Unable to load this chart view right now. You can retry loading or close the chart sheet.
-            </div>
-            <div style={{ display: 'flex', gap: '10px', width: '100%', marginTop: '8px' }}>
-              <button
-                onClick={() => this.setState({ hasError: false, error: null })}
-                style={{
-                  flex: 1,
-                  padding: '8px 14px',
-                  borderRadius: '6px',
-                  border: 'none',
-                  background: '#2962FF',
-                  color: '#fff',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                Retry Chart
-              </button>
-              {this.props.onClose && (
-                <button
-                  onClick={this.props.onClose}
-                  style={{
-                    flex: 1,
-                    padding: '8px 14px',
-                    borderRadius: '6px',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    background: 'transparent',
-                    color: '#fff',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    cursor: 'pointer'
-                  }}
-                >
-                  Close
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
-const MemoizedTradingChart = React.memo(TradingChartComponent, (prevProps, nextProps) => {
+export default React.memo(TradingChartComponent, (prevProps, nextProps) => {
   return (
     prevProps.symbol === nextProps.symbol &&
     prevProps.segment === nextProps.segment
   );
 });
-
-export default function TradingChart(props: TradingChartProps) {
-  return (
-    <ChartErrorBoundary onClose={props.onClose}>
-      <MemoizedTradingChart {...props} />
-    </ChartErrorBoundary>
-  );
-}
 
 

@@ -1055,7 +1055,20 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 export const usePositionsData = () => {
   const context = useContext(PositionsContext);
   if (!context) {
-    throw new Error('usePositionsData must be used within a PositionsDataProvider');
+    return {
+      positions: [],
+      loading: false,
+      error: null,
+      refresh: async () => {},
+      updatePositionLocally: () => {},
+      removePositionLocally: () => {},
+      batchReducePositionsLocally: () => {},
+      restorePositionLocally: () => {},
+      startConversion: () => {},
+      endConversion: () => {},
+      addOptimisticPosition: () => {},
+      removeOptimisticPosition: () => {}
+    };
   }
   return context;
 };

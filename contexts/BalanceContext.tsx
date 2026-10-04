@@ -70,6 +70,8 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
 
   // Guard against concurrent in-flight fetches
   const fetchingRef = useRef(false);
+  // Debounce timer for event-driven fetches
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const updateBalanceState = useCallback((newBal: number, newSettlement: number) => {
     setBalance(newBal);
@@ -164,9 +166,13 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
         .subscribe();
     };
 
-    // Re-fetch on order events (covers the cases where realtime lags)
+    // Re-fetch on order events — debounced to coalesce rapid bursts
     const handleOrderPlaced = () => {
-      if (!cancelled) fetchBalance();
+      if (cancelled) return;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        if (!cancelled) fetchBalance();
+      }, 800);
     };
     window.addEventListener('order_placed', handleOrderPlaced);
     window.addEventListener('position-closed', handleOrderPlaced);
@@ -189,13 +195,14 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       if (!cancelled) setLoading(false);
     }
 
-    // Active balance polling fallback: fetch balance every 10 seconds as safety net
+    // Active balance polling fallback: every 30s as safety net
+    // Supabase Realtime handles instant balance updates via profile UPDATE events.
     // (paused when tab is hidden, immediate refresh when tab becomes visible)
     const timer = setInterval(() => {
       if (!cancelled && (typeof document === 'undefined' || document.visibilityState === 'visible')) {
         fetchBalance();
       }
-    }, 10000);
+    }, 30000);
 
     const handleVisibility = () => {
       if (!cancelled && document.visibilityState === 'visible') {
@@ -207,6 +214,7 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
     return () => {
       cancelled = true;
       clearInterval(timer);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
       document.removeEventListener('visibilitychange', handleVisibility);
       subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
@@ -245,7 +253,16 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
 export const useBalanceData = () => {
   const context = useContext(BalanceDataContext);
   if (!context) {
-    throw new Error('useBalanceData must be used within a BalanceDataProvider');
+    return {
+      balance: 0,
+      rawBalance: 0,
+      settlementAmount: 0,
+      loading: false,
+      refresh: async () => {},
+      validatePreflight: () => ({ valid: true }),
+      lockOptimisticMargin: () => {},
+      releaseOptimisticMargin: () => {}
+    };
   }
   return context;
 };

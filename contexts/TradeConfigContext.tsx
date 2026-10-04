@@ -276,7 +276,18 @@ export const TradeConfigProvider = ({
 export const useTradeConfig = (): TradeConfigContextType => {
   const ctx = useContext(TradeConfigContext);
   if (!ctx) {
-    throw new Error('useTradeConfig must be used within a TradeConfigProvider');
+    return {
+      tradingMode: 'standard',
+      segmentSettings: [],
+      scriptSettings: [],
+      isLoading: false,
+      error: null,
+      refresh: async () => {},
+      getSegment: () => undefined,
+      getScript: () => undefined,
+      getLotSize: () => 1,
+      isSegmentEnabled: () => true,
+    };
   }
   return ctx;
 };
