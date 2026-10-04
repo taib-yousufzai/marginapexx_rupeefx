@@ -38,13 +38,12 @@ export default function HistoryPage() {
   const [loading, setLoading] = useState<boolean>(() => historyData.length === 0);
   const mainContentRef = useRef<HTMLDivElement>(null);
 
-  // Scroll reset - runs synchronously before browser paint via ref callback
-  const scrollResetRef = (node: HTMLDivElement | null) => {
-    if (node) {
-      node.scrollTop = 0;
+  // Reset scroll to top ONLY when user intentionally switches tabs or changes date filters
+  useEffect(() => {
+    if (mainContentRef.current) {
+      mainContentRef.current.scrollTop = 0;
     }
-    (mainContentRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-  };
+  }, [currentTab, appliedFromDate, appliedToDate]);
 
   useEffect(() => {
     const syncTheme = () => applyTheme(getSavedTheme());
@@ -710,7 +709,7 @@ export default function HistoryPage() {
           </div>
         </div>
 
-        <div className="main-content" ref={scrollResetRef}>
+        <div className="main-content" ref={mainContentRef}>
           <div className="history-list">
             {loading ? (
               <div style={{ padding: '60px 0', textAlign: 'center' }}>
