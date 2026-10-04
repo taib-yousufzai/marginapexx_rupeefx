@@ -506,7 +506,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       return;
     }
 
-    const currentKey = `${item.symbol || item.name || ''}_${side || ''}_${modifyingOrderId || ''}_${linkedPosId || ''}_${initialOrder ? (initialOrder.id || 'init') : 'none'}_${effectiveExitMode}`;
+    const currentKey = `${item.symbol || item.name || ''}_${side || ''}_${modifyingOrderId || ''}_${linkedPosId || ''}_${initialOrder ? (initialOrder.id || 'init') : 'none'}_${effectiveExitMode}_${propInitialExitQty || ''}`;
 
     // Only reset state if opening a different item/order/action
     if (lastOpenedKeyRef.current === currentKey) {
@@ -544,7 +544,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         setGttSubOption(isExitFlow ? 'TARGET' : 'LIMIT');
       }
     } else {
-      const defaultQty = lotSize > 0 ? lotSize : 1;
+      const initialExit = propInitialExitQty && propInitialExitQty > 0 ? propInitialExitQty : undefined;
+      const defaultQty = initialExit ?? (lotSize > 0 ? lotSize : 1);
       setOrderQty(defaultQty);
       setQtyInput(String(defaultQty));
       setOrderUnit('qty');
@@ -557,12 +558,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       setGttSubOption(effectiveExitMode ? 'TARGET' : 'LIMIT');
       userHasEditedQty.current = false;
     }
-  }, [item?.symbol, item?.name, side, propProductType, exitMode, isModify, initialOrder?.id, initialOrder?.order_type, modifyingOrderId, linkedPosId, effectiveExitMode, lotSize]);
+  }, [item?.symbol, item?.name, side, propProductType, exitMode, isModify, initialOrder?.id, initialOrder?.order_type, modifyingOrderId, linkedPosId, effectiveExitMode, lotSize, propInitialExitQty]);
 
   // Sync maximum position quantity when opening against an existing position
   useEffect(() => {
     if (isOpen && item && !initialOrder) {
-      const currentKey = `${item.symbol || ''}_${side || ''}_${linkedPosId || ''}`;
+      const currentKey = `${item.symbol || ''}_${side || ''}_${linkedPosId || ''}_${propInitialExitQty || ''}`;
       if (hasSyncedPosQtyRef.current === currentKey) return;
       hasSyncedPosQtyRef.current = currentKey;
 
@@ -578,7 +579,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           const matchingPositions = activePositionsRef.current?.filter(
             p => isMatchingSymbol(p.symbol) && ((p.status as string) === 'open' || (p.status as string) === 'active') && p.side === oppositeSide && p.product_type === targetPT
           ) || [];
-          initialExitQty = matchingPositions.reduce((sum, p) => sum + p.qty_open, 0);
+          initialExitQty = matchingPositions.reduce((sum, p) => sum + Number(p.qty_open || 0), 0);
         }
       }
 
