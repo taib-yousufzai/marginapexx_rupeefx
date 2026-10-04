@@ -63,29 +63,9 @@ export async function GET(request: Request) {
     const spotNum = spotParam ? parseFloat(spotParam) : 0;
     const strikeStep = symbol.includes('MIDCP') ? 25 : (symbol.includes('NIFTY') ? 50 : 100);
 
-    // ── 1. In-Memory Process Response Cache (10s TTL — <1ms response) ────────
-    const memCached = inMemoryResponseCache.get(cacheKey);
-    if (memCached && memCached.exp > nowMs) {
-      if (!spotNum || !memCached.data?.underlyingPrice || Math.abs(spotNum - memCached.data.underlyingPrice) <= strikeStep * 2) {
-        return NextResponse.json(memCached.data);
-      }
-    }
-
     const redis = getRedisClient();
 
-    // ── 2. Redis Shared Response Cache (20s TTL — <10ms response) ─────────────
-    try {
-      const cached = await redis.get(cacheKey);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (!spotNum || !parsed.underlyingPrice || Math.abs(spotNum - parsed.underlyingPrice) <= strikeStep * 2) {
-          inMemoryResponseCache.set(cacheKey, { data: parsed, exp: nowMs + 10000 });
-          return NextResponse.json(parsed);
-        }
-      }
-    } catch { /* Redis not ready or key missing — proceed to live fetch */ }
-
-    // ── 2. Helper functions ───────────────────────────────────────────────────
+    // ── 1. Helper functions ───────────────────────────────────────────────────
 
     // Resolve MCX underlying → the future with a live Redis price
     async function resolveMcxUnderlyingId(): Promise<string> {
@@ -122,9 +102,9 @@ export async function GET(request: Request) {
       } catch { return `MCX:${symbol}`; }
     }
 
-    // Fetch expiries (In-Memory 10m → Redis 5m → Supabase)
+    // Fetch expiries (In-Memory 10m → Redis 6h → Supabase)
     async function getExpiries(): Promise<string[]> {
-      const k = `optionChainExpiries:${symbol}`;
+      const k = `oc:expiries:${symbol}`;
       const mem = inMemoryExpiriesCache.get(k);
       if (mem && mem.exp > Date.now()) return mem.expiries;
 
@@ -182,14 +162,14 @@ export async function GET(request: Request) {
       const expiries = Array.from(new Set((data || []).map((e: any) => e.expiry))) as string[];
       if (expiries.length > 0) {
         inMemoryExpiriesCache.set(k, { expiries, exp: Date.now() + 600000 });
-        redis.setex(k, 300, JSON.stringify(expiries)).catch(() => {});
+        redis.setex(k, 21600, JSON.stringify(expiries)).catch(() => {});
       }
       return expiries;
     }
 
-    // Fetch options for a given expiry (In-Memory 30m → Redis 24h → Supabase)
+    // Fetch master option contracts for a given expiry (In-Memory 30m → Redis 24h → Supabase)
     async function getOptions(forExpiry: string): Promise<any[]> {
-      const k = `optionChainOptions:${symbol}_${forExpiry}`;
+      const k = `oc:strikes:${symbol}_${forExpiry}`;
       const mem = inMemoryOptionsCache.get(k);
       if (mem && mem.exp > Date.now()) return mem.options;
 
@@ -232,6 +212,8 @@ export async function GET(request: Request) {
       }
       return resOptions;
     }
+
+
 
     async function getStrikeConfig() {
       const k = 'strikeConfigCache';
