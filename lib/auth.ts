@@ -81,26 +81,24 @@ export async function signIn(email: string, password: string): Promise<SignInRes
       return { session: res.data.session, user: res.data.user };
     }
 
-    if (!res.timeout && res.error && !res.error.message.includes('FetchError') && !res.error.message.includes('timeout')) {
-      // Return invalid credentials error immediately if password was wrong
-      return { error: res.error.message };
+    // Supabase returned a definitive auth error (e.g. wrong password, user not found).
+    // Surface the real message so the user knows what went wrong.
+    // Only skip if it looks like a network/transport error — those should fall through to the server fallback.
+    if (!res.timeout && res.error) {
+      const errMsg = res.error.message || '';
+      const isNetworkErr = errMsg.includes('FetchError') || errMsg.includes('timeout') || errMsg.includes('fetch') || errMsg.includes('network');
+      if (!isNetworkErr) {
+        return { error: errMsg || 'Invalid credentials. Please try again.' };
+      }
     }
   } catch (e) {
     console.warn('Supabase Auth SDK call failed/timed out, attempting server auth fallback:', e);
   }
 
   // Fallback: Direct server auth via /api/auth/login
-  // Only useful for: (a) non-email identifiers (client_id/phone) needing email resolution,
-  //                  (b) demo credentials that work offline without Supabase.
-  // For all other email logins, hitting the route would just call Supabase again — same latency, no benefit.
-  const isEmailLogin = targetEmail.includes('@');
-  const isDemoCredentials = (
-    targetEmail.toLowerCase() === 'demo@gmail.com' && password === 'demo123'
-  );
-  if (isEmailLogin && !isDemoCredentials) {
-    return { error: 'Authentication failed. Please check credentials or network connection.' };
-  }
-
+  // Handles: (a) non-email identifiers (client_id/phone) needing email resolution,
+  //          (b) network issues where client SDK timed out but server can still reach Supabase,
+  //          (c) demo credentials.
   try {
     const response = await fetch('/api/auth/login', {
       method: 'POST',

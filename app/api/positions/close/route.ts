@@ -303,6 +303,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const cryptoSymbolsToFetch = new Set<string>();
     const comexSymbolsToFetch = new Set<string>();
 
+    // Sort positions by created_at ascending so that when processed sequentially,
+    // their exit_times will result in the newest bought position having the latest exit_time.
+    // This ensures they appear in the history page exactly matching their buy order (newest first).
+    positions.sort((a, b) => {
+      const aTime = new Date(a.created_at || 0).getTime();
+      const bTime = new Date(b.created_at || 0).getTime();
+      return aTime - bTime;
+    });
+
     const posSymbols = positions.map(pos => {
       const isComex = (pos.settlement || '').toUpperCase().includes('COMEX') ||
         ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].some(c => (pos.symbol || '').toUpperCase().includes(c));

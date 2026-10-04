@@ -23,6 +23,7 @@ export interface HistoryItem {
   entry_intraday_brokerage?: number;
   entry_carry_brokerage?: number;
   entry_gtt_brokerage?: number;
+  entryTimestamp?: number;
   exit_intraday_brokerage?: number;
   exit_carry_brokerage?: number;
   exit_gtt_brokerage?: number;
@@ -82,8 +83,12 @@ export function prependToClientHistoryCache(newItems: HistoryItem | HistoryItem[
   const incomingIds = new Set(incoming.map(i => i.id));
   const merged = [...incoming, ...current.filter(i => !incomingIds.has(i.id))];
   
-  // Sort newest first by timestamp
-  merged.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  // Sort newest first by timestamp, fallback to entryTimestamp for same-ms exits
+  merged.sort((a, b) => {
+    const diff = (b.timestamp || 0) - (a.timestamp || 0);
+    if (diff !== 0) return diff;
+    return (b.entryTimestamp || 0) - (a.entryTimestamp || 0);
+  });
   const capped = merged.length > 500 ? merged.slice(0, 500) : merged;
   saveClientHistoryCache(capped);
 

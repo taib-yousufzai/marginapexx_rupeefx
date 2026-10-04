@@ -135,6 +135,7 @@ export default function HistoryPage() {
             settlementAmount: Math.abs(Number(p.settlement_amount || 0)),
             entry_brokerage: Number(p.entry_brokerage || 0),
             timestamp: isNaN(exitTs) ? Date.now() : exitTs,
+            entryTimestamp: p.entry_time || p.created_at ? new Date(p.entry_time || p.created_at).getTime() : 0,
           };
         });
         for (const p of formattedPos) {
@@ -208,7 +209,11 @@ export default function HistoryPage() {
       const merged = [
         ...Array.from(posMap.values()),
         ...Array.from(orderMap.values())
-      ].filter(Boolean).sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      ].filter(Boolean).sort((a, b) => {
+        const diff = (b.timestamp || 0) - (a.timestamp || 0);
+        if (diff !== 0) return diff;
+        return (b.entryTimestamp || 0) - (a.entryTimestamp || 0);
+      });
 
       if (seq !== fetchSeqRef.current) return;
 
@@ -243,23 +248,13 @@ export default function HistoryPage() {
   useEffect(() => {
     // Always fetch fresh from DB on mount so navigating here after a trade
     // doesn't show stale Redis-cached data.
-    fetchHistory(historyDataRef.current.length > 0, true);
-
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
-    let followUpTimer: ReturnType<typeof setTimeout> | null = null;
 
-    const triggerRefresh = (delay = 0) => {
+    const triggerRefresh = (delay = 100) => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      // Fire immediately so the API refresh starts right away
       debounceTimer = setTimeout(() => {
         fetchHistory(true, true);
       }, delay);
-
-      // Follow-up fetch to ensure backend DB commits settle
-      if (followUpTimer) clearTimeout(followUpTimer);
-      followUpTimer = setTimeout(() => {
-        fetchHistory(true, true);
-      }, 300);
     };
 
     // Instant update when confirmed position closure event arrives
@@ -438,7 +433,6 @@ export default function HistoryPage() {
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      if (followUpTimer) clearTimeout(followUpTimer);
       clearInterval(pollInterval);
       if (bc) {
         try {
@@ -501,7 +495,11 @@ export default function HistoryPage() {
       }
     }
 
-    base.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    base.sort((a, b) => {
+      const diff = (b.timestamp || 0) - (a.timestamp || 0);
+      if (diff !== 0) return diff;
+      return (b.entryTimestamp || 0) - (a.entryTimestamp || 0);
+    });
 
     return base;
   }, [historyData, currentTab, appliedFromDate, appliedToDate, fromDate, toDate]);

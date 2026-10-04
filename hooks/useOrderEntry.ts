@@ -248,6 +248,32 @@ export function useOrderEntry() {
                 positionObj: p,
               });
             }
+
+            const posHistoryItem: HistoryItem = {
+              id: p.id,
+              scriptName: p.symbol || state.symbol,
+              type: posSide,
+              orderType: p.product_type || state.product_type || 'INTRADAY',
+              qty: closedQty,
+              price: exitPrice || entryPrice,
+              entryPrice,
+              exitPrice: exitPrice || entryPrice,
+              pnl,
+              date: fmtDateTime(p.entry_time || (p as any).created_at || new Date(now).toISOString()),
+              exitDate: fmtDate(new Date(now).toISOString()),
+              status: remainingQty <= 0 ? 'closed' : 'open',
+              brokerage: Number((p as any).brokerage || 0),
+              closedBy: 'USER_ACTION',
+              productType: p.product_type || state.product_type || 'INTRADAY',
+              settlement: derivedSettlement || state.segment || 'NSE',
+              settlementAmount: Math.abs(Number((p as any).settlement_amount || 0)),
+              timestamp: now,
+              entryTimestamp: p.entry_time || (p as any).created_at ? new Date(p.entry_time || (p as any).created_at).getTime() : now,
+            };
+
+            if (remainingQty <= 0) {
+              optimisticHistoryItems.push(posHistoryItem);
+            }
           }
 
           if (localReductions.length > 0) {
@@ -260,41 +286,13 @@ export function useOrderEntry() {
               });
             }
           }
-
-          const avgEntryPrice = totalClosedQty > 0 ? weightedEntrySum / totalClosedQty : 0;
-          const exitPrice = Number(state.client_price || 0);
-          const posSide = (sortedMatching[0]?.side || 'BUY') as 'BUY' | 'SELL';
-
-          const optimisticHistoryItem = {
-            id: sortedMatching.length === 1 ? sortedMatching[0].id : tempId,
-            scriptName: sortedMatching[0]?.symbol || state.symbol,
-            type: posSide,
-            orderType: sortedMatching[0]?.product_type || state.product_type || 'INTRADAY',
-            qty: totalClosedQty || state.qty || 1,
-            price: exitPrice || avgEntryPrice,
-            entryPrice: avgEntryPrice,
-            exitPrice: exitPrice || avgEntryPrice,
-            pnl: totalPnl,
-            date: fmtDateTime(sortedMatching[0]?.entry_time || (sortedMatching[0] as any)?.created_at || new Date(now).toISOString()),
-            exitDate: fmtDate(new Date(now).toISOString()),
-            status: 'closed',
-            brokerage: totalBrokerage,
-            closedBy: 'USER_ACTION',
-            productType: sortedMatching[0]?.product_type || state.product_type || 'INTRADAY',
-            settlement: derivedSettlement || state.segment || 'NSE',
-            settlementAmount: totalSettlementAmount,
-            timestamp: now,
-            trades_count: sortedMatching.length,
-          };
-
-          optimisticHistoryItems.push(optimisticHistoryItem);
         } else if (state.is_exit) {
           // Fallback for standalone exit orders
           const exitPrice = Number(state.client_price || 0);
           const posSide = state.side === 'BUY' ? 'SELL' : 'BUY';
           const closedQty = state.qty || 1;
           const fakeId = state.linked_position_id || tempId;
-          const optimisticHistoryItem = {
+          const optimisticHistoryItem: HistoryItem = {
             id: fakeId,
             scriptName: state.symbol,
             type: posSide,
@@ -313,6 +311,7 @@ export function useOrderEntry() {
             settlement: state.segment || 'NSE',
             settlementAmount: 0,
             timestamp: now,
+            entryTimestamp: now,
           };
           const optimisticClosedPos = {
             id: fakeId,
@@ -456,11 +455,19 @@ export function useOrderEntry() {
 
         if (effectiveIsExit) {
           if (optimisticHistoryItems.length > 0) {
-            const confirmedHistory = optimisticHistoryItems.map(h => ({
-              ...h,
-              price: result?.fill_price || h.price,
-              exitPrice: result?.fill_price || h.exitPrice,
-            }));
+            const confirmedHistory = optimisticHistoryItems.map(h => {
+              const fillPrice = result?.fill_price || h.price;
+              const isBuy = h.type === 'BUY';
+              const pnl = (h.entryPrice && h.entryPrice > 0)
+                ? (isBuy ? (fillPrice - h.entryPrice) * h.qty : (h.entryPrice - fillPrice) * h.qty)
+                : h.pnl;
+              return {
+                ...h,
+                price: fillPrice,
+                exitPrice: fillPrice,
+                pnl,
+              };
+            });
             prependToClientHistoryCache(confirmedHistory);
           }
           window.dispatchEvent(new CustomEvent('position_closed', {
@@ -784,6 +791,10 @@ export function useOrderEntry() {
         const isBuy = posSide === 'BUY';
         const pnl = entryPrice > 0 ? (isBuy ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty) : 0;
 
+        const entryTs = existingPos?.entry_time || existingPos?.created_at
+          ? new Date(existingPos.entry_time || existingPos.created_at).getTime()
+          : now;
+
         confirmedHistoryItems.push({
           id,
           scriptName: existingPos?.symbol || 'UNKNOWN',
@@ -803,6 +814,7 @@ export function useOrderEntry() {
           settlement: existingPos?.settlement || 'NSE',
           settlementAmount: 0,
           timestamp: now,
+          entryTimestamp: entryTs,
         });
 
         confirmedClosedPositions.push({
@@ -821,6 +833,22 @@ export function useOrderEntry() {
           updated_at: new Date(now).toISOString(),
         });
       });
+
+      // Synchronize exact server fill prices and PnL if returned
+      if (result && Array.isArray(result.results)) {
+        confirmedHistoryItems.forEach(h => {
+          const match = result.results.find((r: any) => r.positionId === h.id && r.success);
+          if (match) {
+            if (match.exit_price !== undefined) {
+              h.price = Number(match.exit_price);
+              h.exitPrice = Number(match.exit_price);
+            }
+            if (match.pnl !== undefined) {
+              h.pnl = Number(match.pnl);
+            }
+          }
+        });
+      }
 
       // Confirmed removal from positions in 0ms
       if (positionsContext?.removePositionLocally) {
