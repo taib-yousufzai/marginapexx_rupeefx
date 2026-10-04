@@ -1002,21 +1002,21 @@ function WatchlistContent() {
     if (deepLinkHandledRef.current) return;
     deepLinkHandledRef.current = true;
     // Recognized benchmark overview cards from Home/Dashboard
-    const rawQuery = deepLinkSymbol.toUpperCase().trim();
-    const rawClean = rawQuery.replace(/[\/\s\_]/g, '');
+    const normalize = (s: string) => s.toUpperCase().replace(/[\/\s\_:]/g, '').trim();
+    const cleanQuery = normalize(deepLinkSymbol);
 
     const benchmarkConfigs: { matchers: string[]; item: WatchlistItem }[] = [
       {
-        matchers: ['NIFTY50', 'NSE:NIFTY50', 'NIFTY_INDEX', 'NIFTY'],
+        matchers: ['BANKNIFTY', 'NSE:NIFTYBANK', 'BANKNIFTY_INDEX', 'NIFTYBANK', 'NSE:BANKNIFTY', 'BANK NIFTY', 'NSE:NIFTY BANK'],
+        item: { name: 'BANK NIFTY', symbol: 'BANKNIFTY_INDEX', kiteSymbol: 'NSE:NIFTY BANK', segment: 'NSE - Equity', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
+      },
+      {
+        matchers: ['NIFTY50', 'NSE:NIFTY50', 'NIFTY_INDEX', 'NIFTY', 'NSE:NIFTY 50', 'NIFTY 50'],
         item: { name: 'NIFTY 50', symbol: 'NIFTY_INDEX', kiteSymbol: 'NSE:NIFTY 50', segment: 'NSE - Equity', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
       },
       {
         matchers: ['SENSEX', 'BSE:SENSEX', 'SENSEX_INDEX'],
         item: { name: 'SENSEX', symbol: 'SENSEX_INDEX', kiteSymbol: 'BSE:SENSEX', segment: 'BSE - Equity', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
-      },
-      {
-        matchers: ['BANKNIFTY', 'NSE:NIFTYBANK', 'BANKNIFTY_INDEX', 'NIFTYBANK'],
-        item: { name: 'BANK NIFTY', symbol: 'BANKNIFTY_INDEX', kiteSymbol: 'NSE:NIFTY BANK', segment: 'NSE - Equity', price: 0, change: '0%', contractDate: '', open: 0, high: 0, low: 0, close: 0 }
       },
       {
         matchers: ['USDINR', 'CDS:USDINR'],
@@ -1041,7 +1041,12 @@ function WatchlistContent() {
     ];
 
     const benchmarkFound = benchmarkConfigs.find(b =>
-      b.matchers.some(m => m === rawClean || rawClean.includes(m.replace(/[\/\s\_:]/g, '')) || m.includes(rawClean))
+      b.matchers.some(m => normalize(m) === cleanQuery)
+    ) || benchmarkConfigs.find(b =>
+      b.matchers.some(m => {
+        const normM = normalize(m);
+        return normM.length >= 4 && cleanQuery.includes(normM);
+      })
     );
 
     if (benchmarkFound) {
@@ -1069,7 +1074,7 @@ function WatchlistContent() {
     if (aliasMap[query]) {
       query = aliasMap[query];
     }
-    const cleanQuery = query.includes(':') ? query.split(':')[1] : query;
+    const cleanFallbackQuery = query.includes(':') ? query.split(':')[1] : query;
 
     const tryOpen = (items: WatchlistItem[]) => {
       let item = items.find(i => {
@@ -1077,10 +1082,10 @@ function WatchlistContent() {
         const itemKite = (i.kiteSymbol || '').toUpperCase().replace(/\s/g, '');
         const itemKiteClean = itemKite.includes(':') ? itemKite.split(':')[1] : itemKite;
         return (
-          itemSym === cleanQuery.replace(/\s/g, '') ||
-          itemKiteClean === cleanQuery.replace(/\s/g, '') ||
+          itemSym === cleanFallbackQuery.replace(/\s/g, '') ||
+          itemKiteClean === cleanFallbackQuery.replace(/\s/g, '') ||
           itemKite === rawQuery.replace(/\s/g, '') ||
-          i.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === cleanQuery.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '')
+          i.name.toUpperCase().replace(/\s/g, '').replace('INDEX', '').replace('FUT', '') === cleanFallbackQuery.replace(/\s/g, '').replace('INDEX', '').replace('FUT', '')
         );
       });
 
