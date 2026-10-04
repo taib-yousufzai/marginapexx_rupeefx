@@ -28,6 +28,12 @@ import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { useBalance } from '@/hooks/useBalance';
 import './trading-chart.css';
 
+const safeNum = (v: any, fallback = 0): number => {
+  if (v === null || v === undefined) return fallback;
+  const n = typeof v === 'number' ? v : parseFloat(v);
+  return isNaN(n) ? fallback : n;
+};
+
 const fetcher = (url: string) => fetch(url).then(res => res.json());
 
 const getUnderlyingSymbol = (sym: string) => {
@@ -1335,7 +1341,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   // All open/active positions (not filtered by symbol)
   const currentSymbolPositions = positions.filter(p => (p.status === 'open' || p.status === 'active'));
   // Sum pre-computed unrealised P&L (uses correct per-symbol LTP from useMyPositions)
-  const pnlTotal = currentSymbolPositions.reduce((acc, pos) => acc + (pos.unrealised_pnl ?? 0), 0);
+  const pnlTotal = currentSymbolPositions.reduce((acc, pos) => acc + safeNum(pos.unrealised_pnl ?? pos.total_pnl ?? 0), 0);
 
   // Instrument-specific position: find open position matching the currently viewed chart symbol
   const currentInstrumentPosition = useMemo(() => {
@@ -2133,12 +2139,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                         ₹{(() => {
                           const type = (o.order_type || '').toUpperCase();
                           if (type === 'GTT') {
-                            if (o.stop_loss && o.target) return `SL ${o.stop_loss.toFixed(2)} / TP ${o.target.toFixed(2)}`;
-                            if (o.stop_loss) return `SL ₹${o.stop_loss.toFixed(2)}`;
-                            if (o.target) return `TP ₹${o.target.toFixed(2)}`;
+                            if (o.stop_loss && o.target) return `SL ${Number(o.stop_loss).toFixed(2)} / TP ${Number(o.target).toFixed(2)}`;
+                            if (o.stop_loss) return `SL ₹${Number(o.stop_loss).toFixed(2)}`;
+                            if (o.target) return `TP ₹${Number(o.target).toFixed(2)}`;
                           }
-                          if (type === 'SL' || type === 'SLM') return (o.trigger_price ?? o.client_price ?? 0).toFixed(2);
-                          return (o.client_price ?? o.fill_price ?? o.ltp_at_entry ?? 0).toFixed(2);
+                          if (type === 'SL' || type === 'SLM') return Number(o.trigger_price ?? o.client_price ?? 0).toFixed(2);
+                          return Number(o.client_price ?? o.fill_price ?? o.ltp_at_entry ?? 0).toFixed(2);
                         })()}
                       </span>
                       <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{timeStr}</span>
@@ -2173,13 +2179,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         groupedPositionsMap.set(key, { ...pos, symbol: pos.symbol || symKey, product_type: normProdType, _ids: [pos.id], _count: 1 });
       } else {
         const existing = groupedPositionsMap.get(key);
-        const entryA = existing.avg_price || existing.entry_price || 0;
-        const entryB = pos.avg_price || pos.entry_price || 0;
-        const totalQty = existing.qty_open + pos.qty_open;
+        const entryA = safeNum(existing.avg_price || existing.entry_price || 0);
+        const entryB = safeNum(pos.avg_price || pos.entry_price || 0);
+        const totalQty = safeNum(existing.qty_open || 0) + safeNum(pos.qty_open || 0);
         existing.qty_open = totalQty;
         existing.avg_price = totalQty > 0 ? (entryA * existing._ids.length + entryB) / (existing._ids.length + 1) : entryA;
         existing.entry_price = existing.avg_price;
-        existing.unrealised_pnl = (existing.unrealised_pnl || 0) + (pos.unrealised_pnl || 0);
+        existing.unrealised_pnl = safeNum(existing.unrealised_pnl || 0) + safeNum(pos.unrealised_pnl || 0);
         existing._ids.push(pos.id);
         existing._count += 1;
       }
@@ -2191,8 +2197,11 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       (a, b) => new Date(b.entry_time || 0).getTime() - new Date(a.entry_time || 0).getTime()
     );
 
-    const fmtPnl = (pnl: number) => `${pnl >= 0 ? '+' : '-'}₹${Math.abs(pnl).toFixed(2)}`;
-    const fmtPrice = (v: number) => `₹${v.toFixed(2)}`;
+    const fmtPnl = (pnl: any) => {
+      const n = safeNum(pnl);
+      return `${n >= 0 ? '+' : '-'}₹${Math.abs(n).toFixed(2)}`;
+    };
+    const fmtPrice = (v: any) => `₹${safeNum(v).toFixed(2)}`;
 
     const positionsToRender = positionViewMode === 'cumulative' ? groupedPositions : detailedPositions;
 
@@ -2748,8 +2757,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     </div>
                     <div>
                       <span className="pnl-text">P/L: </span>
-                      <span className={`pnl-amount ${pnlTotal >= 0 ? 'positive' : 'negative'}`}>
-                        {pnlTotal >= 0 ? '+' : ''}₹{pnlTotal.toFixed(2)}
+                      <span className={`pnl-amount ${safeNum(pnlTotal) >= 0 ? 'positive' : 'negative'}`}>
+                        {safeNum(pnlTotal) >= 0 ? '+' : ''}₹{safeNum(pnlTotal).toFixed(2)}
                       </span>
                     </div>
                   </div>
@@ -2803,8 +2812,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                 <>
                   <div>
                     <span className="pnl-text">P/L: </span>
-                    <span className={`pnl-amount ${pnlTotal >= 0 ? 'positive' : 'negative'}`}>
-                      {pnlTotal >= 0 ? '+' : ''}₹{pnlTotal.toFixed(2)}
+                    <span className={`pnl-amount ${safeNum(pnlTotal) >= 0 ? 'positive' : 'negative'}`}>
+                      {safeNum(pnlTotal) >= 0 ? '+' : ''}₹{safeNum(pnlTotal).toFixed(2)}
                     </span>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -3008,10 +3017,10 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                         fontWeight: '600',
                         fontSize: '11px'
                       }}>
-                        {orderSide === 'BUY' ? 'Ask' : 'Bid'}: ₹{Number(orderSide === 'BUY' ? liveAsk : liveBid).toFixed(2)}
+                        {orderSide === 'BUY' ? 'Ask' : 'Bid'}: ₹{safeNum(orderSide === 'BUY' ? liveAsk : liveBid).toFixed(2)}
                       </span>
                       <span style={{ color: '#8b949e', fontSize: '11px', fontWeight: '500' }}>
-                        LTP: <span style={{ color: 'var(--text-primary)', fontWeight: '700' }}>₹{Number(liveLTP).toFixed(2)}</span>
+                        LTP: <span style={{ color: 'var(--text-primary)', fontWeight: '700' }}>₹{safeNum(liveLTP).toFixed(2)}</span>
                       </span>
                       {chainContract && chainContract.expiry && (
                         <span style={{ background: '#F0F2F5', color: '#8B92A8', padding: '1px 5px', borderRadius: '4px', fontSize: '10px', whiteSpace: 'nowrap' }}>
@@ -3373,11 +3382,111 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   );
 }
 
-export default React.memo(TradingChartComponent, (prevProps, nextProps) => {
+class ChartErrorBoundary extends React.Component<
+  { children: React.ReactNode; onClose?: () => void },
+  { hasError: boolean; error: Error | null }
+> {
+  state = { hasError: false, error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: any) {
+    console.error('[TradingChart ErrorBoundary caught error]:', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          width: '100%',
+          background: 'var(--container-bg, #0b1522)',
+          color: 'var(--text-primary, #ffffff)',
+          padding: '24px',
+          textAlign: 'center',
+          boxSizing: 'border-box'
+        }}>
+          <div style={{
+            background: 'var(--card-bg, #152238)',
+            border: '1px solid var(--border-color, rgba(255,255,255,0.1))',
+            borderRadius: '12px',
+            padding: '24px',
+            maxWidth: '380px',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '12px'
+          }}>
+            <div style={{ fontSize: '28px', color: '#EF4444' }}>
+              <i className="fas fa-chart-line" />
+            </div>
+            <div style={{ fontSize: '15px', fontWeight: 600 }}>Chart Display Issue</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary, #94A3B8)', lineHeight: 1.4 }}>
+              Unable to load this chart view right now. You can retry loading or close the chart sheet.
+            </div>
+            <div style={{ display: 'flex', gap: '10px', width: '100%', marginTop: '8px' }}>
+              <button
+                onClick={() => this.setState({ hasError: false, error: null })}
+                style={{
+                  flex: 1,
+                  padding: '8px 14px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  background: '#2962FF',
+                  color: '#fff',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Retry Chart
+              </button>
+              {this.props.onClose && (
+                <button
+                  onClick={this.props.onClose}
+                  style={{
+                    flex: 1,
+                    padding: '8px 14px',
+                    borderRadius: '6px',
+                    border: '1px solid rgba(255,255,255,0.2)',
+                    background: 'transparent',
+                    color: '#fff',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  Close
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+const MemoizedTradingChart = React.memo(TradingChartComponent, (prevProps, nextProps) => {
   return (
     prevProps.symbol === nextProps.symbol &&
     prevProps.segment === nextProps.segment
   );
 });
+
+export default function TradingChart(props: TradingChartProps) {
+  return (
+    <ChartErrorBoundary onClose={props.onClose}>
+      <MemoizedTradingChart {...props} />
+    </ChartErrorBoundary>
+  );
+}
 
 

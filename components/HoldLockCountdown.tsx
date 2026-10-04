@@ -60,7 +60,10 @@ export default function HoldLockCountdown({ pos, className, style }: HoldLockCou
 
 function computeRemaining(pos: EnrichedPosition): number {
   if (!pos.hold_lock_active) return 0;
-  const elapsed = Math.floor((Date.now() - new Date(pos.entry_time).getTime()) / 1000);
+  const rawTime = pos.entry_time || (pos as any).created_at;
+  const entryMs = rawTime ? new Date(rawTime).getTime() : Date.now();
+  if (isNaN(entryMs)) return 0;
+  const elapsed = Math.floor((Date.now() - entryMs) / 1000);
   const remaining = pos.required_hold_seconds - elapsed;
   return remaining > 0 ? remaining : 0;
 }

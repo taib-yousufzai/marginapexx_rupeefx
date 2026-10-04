@@ -11,7 +11,7 @@ export interface WatchlistLikeItem {
  * Normalizes legacy Yahoo futures proxy tickers (CL=F, GC=F, SI=F, etc.) to clean COMEX spot symbols.
  */
 export function normalizeComexTicker(sym: string): string {
-  if (!sym) return sym;
+  if (!sym || typeof sym !== 'string') return String(sym || '');
   const upper = sym.toUpperCase().trim();
   if (upper === 'CL=F' || upper === 'CL') return 'XTIUSD';
   if (upper === 'GC=F' || upper === 'GC') return 'XAUUSD';
@@ -23,8 +23,8 @@ export function normalizeComexTicker(sym: string): string {
 
 /**
  * Robustly checks whether an instrument is already present in a given watchlist.
- * Handles symbol aliases, group keys for commodities (GOLD/XAUUSD, SILVER/XAGUSD),
- * kite/comex/binance cross-references, and name matches.
+ * Handles exact symbol matches, specific datafeed identifiers (kite, binance, comex),
+ * and segment-safe name matches without incorrectly collapsing MCX and COMEX commodities.
  */
 export function isInstrumentInWatchlist(
   inst: WatchlistLikeItem,
@@ -37,18 +37,10 @@ export function isInstrumentInWatchlist(
   const rawKite = (inst.kiteSymbol || '').toUpperCase().trim();
   const rawComex = (inst.comexSymbol || '').toUpperCase().trim();
   const rawBinance = (inst.binanceSymbol || '').toUpperCase().trim();
+  const rawSeg = (inst.segment || '').toUpperCase().trim();
 
-  const getGroupKey = (sym: string, name: string, comex: string, kite: string) => {
-    const combined = `${sym} ${name} ${comex} ${kite}`.toUpperCase();
-    if (combined.includes('GOLD') || combined.includes('XAUUSD') || combined.includes('GC=F')) return 'GOLD';
-    if (combined.includes('SILVER') || combined.includes('XAGUSD') || combined.includes('SI=F')) return 'SILVER';
-    if (combined.includes('CRUDE') || combined.includes('XTIUSD') || combined.includes('CL=F')) return 'CRUDE';
-    if (combined.includes('COPPER') || combined.includes('XCUUSD') || combined.includes('HG=F')) return 'COPPER';
-    if (combined.includes('NATURAL') || combined.includes('NATGAS') || combined.includes('XNGUSD') || combined.includes('NG=F')) return 'NATGAS';
-    return null;
-  };
-
-  const instGroupKey = getGroupKey(rawSym, rawName, rawComex, rawKite);
+  const isComexInst = rawSeg.includes('COMEX') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].includes(rawSym);
+  const isMcxInst = rawSeg.includes('MCX') || rawKite.startsWith('MCX:') || rawSym.endsWith('_FUT') || rawSym.endsWith('_OPT');
 
   return watchlistItems.some(i => {
     const iSym = (i.symbol || '').toUpperCase().trim();
@@ -56,17 +48,29 @@ export function isInstrumentInWatchlist(
     const iKite = (i.kiteSymbol || '').toUpperCase().trim();
     const iComex = (i.comexSymbol || '').toUpperCase().trim();
     const iBinance = (i.binanceSymbol || '').toUpperCase().trim();
+    const iSeg = (i.segment || '').toUpperCase().trim();
 
-    if (instGroupKey) {
-      const iGroupKey = getGroupKey(iSym, iName, iComex, iKite);
-      if (iGroupKey && iGroupKey === instGroupKey) return true;
+    const isComexI = iSeg.includes('COMEX') || ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD'].includes(iSym);
+    const isMcxI = iSeg.includes('MCX') || iKite.startsWith('MCX:') || iSym.endsWith('_FUT') || iSym.endsWith('_OPT');
+
+    // Never cross-match MCX and COMEX instruments
+    if (isMcxInst && isComexI) return false;
+    if (isComexInst && isMcxI) return false;
+
+    // 1. Direct symbol match
+    if (rawSym && iSym && rawSym === iSym) return true;
+
+    // 2. Specific data feed identifier matches
+    if (rawKite && iKite && rawKite === iKite) return true;
+    if (rawBinance && iBinance && rawBinance === iBinance) return true;
+    if (rawComex && iComex && rawComex === iComex && isComexInst && isComexI) return true;
+
+    // 3. Exact name match within compatible market segments
+    if (rawName && iName && rawName === iName) {
+      if (isComexInst === isComexI && isMcxInst === isMcxI) {
+        return true;
+      }
     }
-
-    if (rawSym && (iSym === rawSym || iComex === rawSym || iKite === rawSym || iBinance === rawSym)) return true;
-    if (rawName && iName === rawName) return true;
-    if (rawKite && (iKite === rawKite || iSym === rawKite)) return true;
-    if (rawComex && (iComex === rawComex || iSym === rawComex)) return true;
-    if (rawBinance && (iBinance === rawBinance || iSym === rawBinance)) return true;
 
     return false;
   });

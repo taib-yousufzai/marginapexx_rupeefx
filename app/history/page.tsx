@@ -121,7 +121,7 @@ export default function HistoryPage() {
             date: fmtDateTime(p.created_at),
             exitDate: fmtDate(exitTime),
             status: 'closed',
-            brokerage: Number(p.brokerage || 0),
+            brokerage: Number(p.brokerage || p.entry_brokerage || 0),
             entry_intraday_brokerage: Number(p.entry_intraday_brokerage || 0),
             entry_carry_brokerage: Number(p.entry_carry_brokerage || 0),
             entry_gtt_brokerage: Number(p.entry_gtt_brokerage || 0),
@@ -132,7 +132,7 @@ export default function HistoryPage() {
             productType: p.product_type || 'INTRADAY',
             settlement,
             settlementAmount: Math.abs(Number(p.settlement_amount || 0)),
-            entry_brokerage: Number(p.entry_brokerage || 0),
+            entry_brokerage: Number(p.entry_brokerage || p.brokerage || 0),
             timestamp: isNaN(exitTs) ? Date.now() : exitTs,
             entryTimestamp: p.entry_time || p.created_at ? new Date(p.entry_time || p.created_at).getTime() : 0,
           };

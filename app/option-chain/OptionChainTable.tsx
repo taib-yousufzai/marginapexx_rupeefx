@@ -94,6 +94,13 @@ function applyBidBuffer(ltp: number, rawBid: number | null, rawAsk: number | nul
   return { bid, ask };
 }
 
+function safeFormatPrice(val: any): string {
+  if (val === null || val === undefined || val === '') return '---';
+  const num = Number(val);
+  if (isNaN(num)) return '---';
+  return num.toFixed(2);
+}
+
 const StrikeRow = React.memo(function StrikeRow({
   strike, ceSymbol, ceStaticPrice, ceQuote, ceId,
   peSymbol, peStaticPrice, peQuote, peId,
@@ -107,22 +114,22 @@ const StrikeRow = React.memo(function StrikeRow({
   const forceSynthetic = useLtpMode || bidBuffer > 0;
   
   const { bid: ceBidFinal, ask: ceAskFinal } = forceSynthetic && ceLtpVal
-    ? applyBidBuffer(ceLtpVal, null, null, bidBuffer)
+    ? applyBidBuffer(Number(ceLtpVal), null, null, bidBuffer)
     : { bid: ceQuote?.bid && ceQuote.bid > 0 ? ceQuote.bid : null, ask: ceQuote?.ask && ceQuote.ask > 0 ? ceQuote.ask : null };
 
   const { bid: peBidFinal, ask: peAskFinal } = forceSynthetic && peLtpVal
-    ? applyBidBuffer(peLtpVal, null, null, bidBuffer)
+    ? applyBidBuffer(Number(peLtpVal), null, null, bidBuffer)
     : { bid: peQuote?.bid && peQuote.bid > 0 ? peQuote.bid : null, ask: peQuote?.ask && peQuote.ask > 0 ? peQuote.ask : null };
 
-  const ceHasSpread = !!(ceBidFinal && ceAskFinal && ceBidFinal < ceAskFinal);
-  const peHasSpread = !!(peBidFinal && peAskFinal && peBidFinal < peAskFinal);
+  const ceHasSpread = !!(ceBidFinal && ceAskFinal && Number(ceBidFinal) < Number(ceAskFinal));
+  const peHasSpread = !!(peBidFinal && peAskFinal && Number(peBidFinal) < Number(peAskFinal));
 
-  const ceBid = ceBidFinal != null ? ceBidFinal.toFixed(1) : (ceLtpVal ? ceLtpVal.toFixed(1) : '---');
-  const ceAsk = ceAskFinal != null ? ceAskFinal.toFixed(1) : (ceLtpVal ? ceLtpVal.toFixed(1) : '---');
-  const peBid = peBidFinal != null ? peBidFinal.toFixed(1) : (peLtpVal ? peLtpVal.toFixed(1) : '---');
-  const peAsk = peAskFinal != null ? peAskFinal.toFixed(1) : (peLtpVal ? peLtpVal.toFixed(1) : '---');
-  const ceLtp = ceLtpVal ? `₹${ceLtpVal.toFixed(1)}` : '---';
-  const peLtp = peLtpVal ? `₹${peLtpVal.toFixed(1)}` : '---';
+  const ceBid = ceBidFinal != null ? safeFormatPrice(ceBidFinal) : (ceLtpVal != null ? safeFormatPrice(ceLtpVal) : '---');
+  const ceAsk = ceAskFinal != null ? safeFormatPrice(ceAskFinal) : (ceLtpVal != null ? safeFormatPrice(ceLtpVal) : '---');
+  const peBid = peBidFinal != null ? safeFormatPrice(peBidFinal) : (peLtpVal != null ? safeFormatPrice(peLtpVal) : '---');
+  const peAsk = peAskFinal != null ? safeFormatPrice(peAskFinal) : (peLtpVal != null ? safeFormatPrice(peLtpVal) : '---');
+  const ceLtp = ceLtpVal != null && !isNaN(Number(ceLtpVal)) ? `₹${safeFormatPrice(ceLtpVal)}` : '---';
+  const peLtp = peLtpVal != null && !isNaN(Number(peLtpVal)) ? `₹${safeFormatPrice(peLtpVal)}` : '---';
 
   const click = (e: React.MouseEvent, sym?: string, side?: 'BUY' | 'SELL') => {
     e.stopPropagation();

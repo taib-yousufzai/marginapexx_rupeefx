@@ -50,7 +50,7 @@ export interface PositionsContextType {
 const PositionsContext = createContext<PositionsContextType | null>(null);
 
 export const cleanSym = (s?: string | null): string => {
-  if (!s) return '';
+  if (!s || typeof s !== 'string') return '';
   let str = s.replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '')
     .replace(/[\/\s\_\-]/g, '')
     .replace(/(PERP|\.P|FUT)$/i, '')
@@ -220,13 +220,11 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       try {
         const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
         const optPositions = getPersistedOptimisticPositions();
-        const removals = getPersistedOptimisticRemovals();
         let list: MyPosition[] = [];
         if (stored) {
           const parsed = JSON.parse(stored);
           if (Array.isArray(parsed)) list = parsed;
         }
-        list = list.filter(p => !removals.has(p.id));
         return [...optPositions, ...list];
       } catch { }
     }
@@ -509,28 +507,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       }
       savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
 
-      // Filter out any IDs that are in optimistic removal in the last 20s, and apply optimistic partial updates
-      let basePositions: MyPosition[] = rawPositionsFromServer
-        .filter(p => !optimisticallyRemovedIds.current.has(p.id))
-        .map(p => {
-          const optUpdate = optimisticallyUpdatedPositions.current.get(p.id);
-          if (optUpdate) {
-            if (now - optUpdate.time < 15000) {
-              if (Number(p.qty_open) > optUpdate.qty_open) {
-                return {
-                  ...p,
-                  qty_open: optUpdate.qty_open,
-                  qty_total: optUpdate.qty_total !== undefined ? optUpdate.qty_total : optUpdate.qty_open
-                };
-              } else {
-                optimisticallyUpdatedPositions.current.delete(p.id);
-              }
-            } else {
-              optimisticallyUpdatedPositions.current.delete(p.id);
-            }
-          }
-          return p;
-        });
+      // Positions from the database are authoritative and must ALWAYS be present at all times
+      let basePositions: MyPosition[] = rawPositionsFromServer;
 
       // Reconcile optimistic positions with server response
       const persistedOpt = getPersistedOptimisticPositions();
@@ -703,27 +681,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
             optimisticallyRemovedTimes.current.delete(id);
           }
         }
-        let basePositions: MyPosition[] = rawPositionsFromServer
-          .filter(p => !optimisticallyRemovedIds.current.has(p.id))
-          .map(p => {
-            const optUpdate = optimisticallyUpdatedPositions.current.get(p.id);
-            if (optUpdate) {
-              if (now - optUpdate.time < 15000) {
-                if (Number(p.qty_open) > optUpdate.qty_open) {
-                  return {
-                    ...p,
-                    qty_open: optUpdate.qty_open,
-                    qty_total: optUpdate.qty_total !== undefined ? optUpdate.qty_total : optUpdate.qty_open
-                  };
-                } else {
-                  optimisticallyUpdatedPositions.current.delete(p.id);
-                }
-              } else {
-                optimisticallyUpdatedPositions.current.delete(p.id);
-              }
-            }
-            return p;
-          });
+        // Positions from the server / database are authoritative and must ALWAYS be present
+        let basePositions: MyPosition[] = rawPositionsFromServer;
         const persistedOpt = getPersistedOptimisticPositions();
         setRawPositions(prev => {
           const existingOptMap = new Map<string, MyPosition>();

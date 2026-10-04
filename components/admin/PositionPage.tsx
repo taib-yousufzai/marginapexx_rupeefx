@@ -1,7 +1,7 @@
 'use client';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { signOut } from '@/lib/auth';
-import { apiCall, Toast, ToastState, ConfirmDialog, SkeletonLine, Position, PositionItem, positionItemToPosition } from './AdminUtils';
+import { apiCall, Toast, ToastState, ConfirmDialog, SkeletonLine, Position, PositionItem, positionItemToPosition, downloadCSV } from './AdminUtils';
 import { useMarketQuotes } from '@/hooks/useMarketQuotes';
 import { useComexQuotes } from '@/hooks/useComexQuotes';
 
@@ -261,6 +261,34 @@ export default function PositionPage({ selectedUser, onOpenUserPanel, isDemoMode
   const displayed = filtered.slice((page - 1) * rowsNum, page * rowsNum);
 
   const switchTab = (t: 'open' | 'closed') => { setTab(t); setSearch(''); setPage(1); };
+
+  const handleDownloadExcel = () => {
+    if (filtered.length === 0) {
+      setToast({ message: 'No positions to export', type: 'error' });
+      return;
+    }
+    const exportData = filtered.map(p => ({
+      ID: p.id,
+      User: p.user_name || p.client_id || p.user_id,
+      Client_ID: p.client_id || '',
+      Symbol: p.symbol,
+      Side: p.side,
+      Status: p.status,
+      Quantity: p.qty,
+      Avg_Price: p.avgPrice,
+      Entry_Price: p.entry,
+      Exit_Price: p.exit !== undefined ? p.exit : '',
+      LTP: p.ltp !== undefined ? p.ltp : '',
+      PnL: p.pnl,
+      Brokerage: p.brokerage,
+      Duration: p.duration,
+      Entry_Time: p.entryTime,
+      Exit_Time: p.exitTime || '',
+      Settlement: p.settlement || '',
+      Closed_By: p.closed_by || '',
+    }));
+    downloadCSV(exportData, `positions_${tab}_${new Date().toISOString().slice(0, 10)}.csv`);
+  };
 
   const handleSqoff = (posId: string) => {
     apiCall(`/api/admin/positions/${posId}/sqoff`, { method: 'POST' })
@@ -965,7 +993,7 @@ export default function PositionPage({ selectedUser, onOpenUserPanel, isDemoMode
           </select>
         </div>
       </div>
-      <button className="adm-ord-download"><i className="fas fa-download" /> Download Excel</button>
+      <button className="adm-ord-download" onClick={handleDownloadExcel}><i className="fas fa-download" /> Download Excel</button>
 
       <div className="adm-ord-list" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
         {posLoading ? (

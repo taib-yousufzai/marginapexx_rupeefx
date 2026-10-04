@@ -9,6 +9,7 @@
 
 import { requireAdmin } from '../../../_auth';
 import { getRole } from '../../../../../../lib/auth';
+import { getDescendantUserIds, isUserInHierarchy } from '../../../../../../lib/hierarchy';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -84,75 +85,29 @@ export async function GET(
     const callerId = authResult.callerUser.id;
 
     if (id !== 'all') {
-      // Role hierarchy check for specific target user id:
-      if (callerRole === 'broker') {
-        // Broker can only access their own user or themselves
-        if (id !== callerId) {
-          const { data: targetProfile } = await adminClient
-            .from('profiles')
-            .select('parent_id')
-            .eq('id', id)
-            .maybeSingle();
-
-          if (!targetProfile || targetProfile.parent_id !== callerId) {
-            return Response.json({ error: 'Forbidden: User does not belong to this broker' }, { status: 403 });
-          }
-        }
-      } else if (callerRole === 'admin') {
-        // Admin can access themselves, users directly assigned to admin (parent_id = admin.id),
-        // or users assigned to brokers under this admin (broker.parent_id = admin.id).
-        if (id !== callerId) {
-          const { data: targetProfile } = await adminClient
-            .from('profiles')
-            .select('parent_id')
-            .eq('id', id)
-            .maybeSingle();
-
-          if (!targetProfile) {
-            return Response.json({ error: 'User not found' }, { status: 404 });
-          }
-
-          if (targetProfile.parent_id !== callerId) {
-            // Check if target's parent is a broker under this admin
-            let isAllowed = false;
-            if (targetProfile.parent_id) {
-              const { data: parentProfile } = await adminClient
-                .from('profiles')
-                .select('parent_id')
-                .eq('id', targetProfile.parent_id)
-                .maybeSingle();
-
-              if (parentProfile && parentProfile.parent_id === callerId) {
-                isAllowed = true;
-              }
-            }
-
-            if (!isAllowed) {
-              return Response.json({ error: 'Forbidden: User does not belong to this admin or their brokers' }, { status: 403 });
-            }
-          }
-        }
+      const allowed = await isUserInHierarchy(adminClient, callerId, id);
+      if (!allowed && callerRole !== 'super_admin') {
+        return Response.json({ error: 'Forbidden: User does not belong to this admin or broker' }, { status: 403 });
       }
-      // super_admin has global access
-
       query = query.eq('user_id', id);
     } else {
-      let pQuery = adminClient.from('profiles').select('id').eq('demo_user', isDemo);
+      let pQuery = adminClient.from('profiles').select('id');
+      if (isDemo) {
+        pQuery = pQuery.eq('demo_user', true);
+      } else {
+        pQuery = pQuery.or('demo_user.eq.false,demo_user.is.null');
+      }
 
       if (callerRole === 'broker') {
         pQuery = pQuery.eq('parent_id', callerId);
       } else if (callerRole === 'admin') {
-        // Find brokers under this admin
-        const { data: brokerProfiles } = await adminClient
-          .from('profiles')
-          .select('id')
-          .eq('parent_id', callerId)
-          .eq('role', 'broker');
-
-        const brokerIds = brokerProfiles?.map(b => b.id) || [];
-        const allowedParentIds = [callerId, ...brokerIds];
-
-        pQuery = pQuery.in('parent_id', allowedParentIds);
+        const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
+        if (descendantIds !== null) {
+          if (descendantIds.length === 0) {
+            return Response.json([], { status: 200 });
+          }
+          pQuery = pQuery.in('id', descendantIds);
+        }
       }
 
       const { data: matchedUsers } = await pQuery;

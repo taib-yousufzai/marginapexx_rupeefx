@@ -19,10 +19,10 @@ export async function isUserInHierarchy(
     return true;
   }
 
-  // Fetch actor's role
+  // Fetch actor's role and parent_id
   const { data: actorData, error: actorError } = await supabase
     .from('profiles')
-    .select('role')
+    .select('role, parent_id')
     .eq('id', actorId)
     .single();
 
@@ -33,8 +33,8 @@ export async function isUserInHierarchy(
 
   const role = actorData.role;
 
-  // Super admins see everyone
-  if (role === 'super_admin') {
+  // Super admins and top-level admins (parent_id is null) see everyone
+  if (role === 'super_admin' || (role === 'admin' && !actorData.parent_id)) {
     return true;
   }
 
@@ -43,13 +43,10 @@ export async function isUserInHierarchy(
     return false;
   }
 
-  // Fetch the target user's ancestry using a recursive CTE via RPC or multiple queries.
-  // Since we might not have a recursive RPC deployed, we can walk up the tree manually
-  // or query parent_id. The tree depth is at most 3 (User -> Broker -> Admin).
-  
+  // Fetch the target user's ancestry
   let currentTargetId: string | null = targetUserId;
   let depth = 0;
-  const MAX_DEPTH = 3;
+  const MAX_DEPTH = 5;
 
   while (currentTargetId && depth < MAX_DEPTH) {
     const { data: targetData, error: targetError } = await supabase
@@ -75,7 +72,7 @@ export async function isUserInHierarchy(
 
 /**
  * Returns the list of accessible descendant user/profile IDs for a given actor according to hierarchy.
- * Returns null if the actor is super_admin (meaning unrestricted access to all users).
+ * Returns null if the actor is super_admin or top-level admin (meaning unrestricted access to all users).
  */
 export async function getDescendantUserIds(
   supabase: SupabaseClient,
@@ -84,6 +81,18 @@ export async function getDescendantUserIds(
 ): Promise<string[] | null> {
   if (actorRole === 'super_admin') {
     return null; // Unrestricted access across system
+  }
+
+  if (actorRole === 'admin') {
+    const { data: actorProfile } = await supabase
+      .from('profiles')
+      .select('parent_id')
+      .eq('id', actorId)
+      .maybeSingle();
+
+    if (!actorProfile?.parent_id) {
+      return null; // Top-level admin has unrestricted platform-wide access
+    }
   }
 
   const { data: allProfiles, error } = await supabase
