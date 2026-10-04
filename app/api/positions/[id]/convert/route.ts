@@ -174,15 +174,10 @@ export async function POST(
       return NextResponse.json({ error: rpcErr?.message || 'Failed to convert position' }, { status: 500 });
     }
 
-    // Log action asynchronously
-    if (carryBrokerageToCharge > 0) {
-      (async () => admin.from('act_logs').insert({
-        user_id: user.id,
-        action: 'BROKERAGE_DEDUCTION',
-        reason: `Carry Brokerage charged on conversion to CARRY for ${pos.symbol} (Qty: ${pos.qty_open}) | Amount: ₹${carryBrokerageToCharge.toFixed(2)}`,
-        ip_address: request.headers.get('x-forwarded-for') || '127.0.0.1'
-      }))().catch(err => console.error('[Positions Convert API] Failed to log act_log:', err));
-    }
+    try {
+      const { invalidateUserPositionsCache } = await import('@/lib/redisSettingsCache');
+      await invalidateUserPositionsCache(user.id);
+    } catch (_) {}
 
     return NextResponse.json({ success: true, product_type }, { status: 200 });
   } catch (err: any) {

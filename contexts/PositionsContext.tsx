@@ -142,9 +142,9 @@ const resolveKitePrefix = (key: string, settlement: string) => {
   return `${prefix}${baseKey}`;
 };
 
-const POSITIONS_PERSIST_KEY = 'rupeeFX_open_positions_persisted';
-const OPTIMISTIC_POSITIONS_PERSIST_KEY = 'rupeeFX_optimistic_positions_persisted';
-const OPTIMISTIC_REMOVALS_PERSIST_KEY = 'rupeeFX_optimistic_removals_persisted';
+const POSITIONS_PERSIST_KEY = 'marginApex_open_positions_persisted';
+const OPTIMISTIC_POSITIONS_PERSIST_KEY = 'marginApex_optimistic_positions_persisted';
+const OPTIMISTIC_REMOVALS_PERSIST_KEY = 'marginApex_optimistic_removals_persisted';
 
 function getPersistedOptimisticPositions(): MyPosition[] {
   if (typeof window === 'undefined') return [];
@@ -210,7 +210,7 @@ function savePersistedOptimisticRemovals(removals: Map<string, number>) {
 
 const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD', 'XPTUSD', 'XPDUSD', 'GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF'];
 
-export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { children: React.ReactNode; refreshInterval?: number }) => {
+export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { children: React.ReactNode; refreshInterval?: number }) => {
   const [rawPositions, setRawPositions] = useState<MyPosition[]>(() => {
     const cachedBoot = getCachedBootstrapData();
     if (cachedBoot && Array.isArray(cachedBoot.positions)) {
@@ -218,7 +218,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     }
     if (typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY) || localStorage.getItem('marginApex_open_positions_persisted');
+        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
         const optPositions = getPersistedOptimisticPositions();
         const removals = getPersistedOptimisticRemovals();
         let list: MyPosition[] = [];
@@ -237,7 +237,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     if (cachedBoot && Array.isArray(cachedBoot.positions)) return false;
     if (typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY) || localStorage.getItem('marginApex_open_positions_persisted');
+        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
         const optPositions = getPersistedOptimisticPositions();
         if (stored || optPositions.length > 0) return false;
       } catch { }
@@ -394,18 +394,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     const cleanSymbol = (partialPos.symbol || '').trim();
     if (!cleanSymbol) return;
 
-    // Guard: If this symbol was recently exited (within last 30s), don't add it back as optimistic
-    const symbolClean = cleanSym(cleanSymbol);
-    const wasRecentlyExited = Array.from(optimisticallyRemovedIds.current).some(removedId => {
-      const removedPos = recentlyRemovedPositionsRef.current.get(removedId);
-      if (removedPos && cleanSym(removedPos.symbol) === symbolClean) {
-        const removedAt = optimisticallyRemovedTimes.current.get(removedId) || 0;
-        return (now - removedAt) < 30000;
-      }
-      return false;
-    });
-    if (wasRecentlyExited) return;
-
     const newPos: MyPosition = {
       id: tempId,
       user_id: '',
@@ -481,15 +469,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
       abortControllerRef.current = controller;
 
       let rawPositionsFromServer: MyPosition[] = [];
-      if (!options?.fresh) {
+      const isFresh = options?.fresh !== false;
+      if (!isFresh) {
         const boot = await fetchUserBootstrap(false);
         if (boot && Array.isArray(boot.positions)) {
           rawPositionsFromServer = boot.positions;
         }
       }
 
-      if (rawPositionsFromServer.length === 0 && (options?.fresh || rawPositionsFromServer.length === 0)) {
-        const queryUrl = options?.fresh ? `/api/positions?fresh=true&_t=${Date.now()}` : '/api/positions';
+      if (rawPositionsFromServer.length === 0) {
+        const queryUrl = isFresh ? `/api/positions?fresh=true&_t=${Date.now()}` : '/api/positions';
         const data = await api.get<{ positions: MyPosition[] }>(queryUrl, {
           signal: controller.signal,
         });
@@ -539,8 +528,19 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
           existingOptMap.set(p.id, p);
         });
 
+        // Track consumed quantities per server position lot so 1 server position lot does NOT consume/delete all optimistic positions
+        const consumedServerQty = new Map<string, number>();
+
+        // Sort optimistic positions chronologically (oldest first) so earlier orders match first
+        const sortedOptPositions = Array.from(existingOptMap.values()).sort((a, b) => {
+          const tA = (a as any).created_time_ms || (a.entry_time ? new Date(a.entry_time).getTime() : 0);
+          const tB = (b as any).created_time_ms || (b.entry_time ? new Date(b.entry_time).getTime() : 0);
+          return tA - tB;
+        });
+
         const activeOptPositions: MyPosition[] = [];
-        for (const [optId, optPos] of existingOptMap.entries()) {
+        for (const optPos of sortedOptPositions) {
+          const optId = optPos.id;
           const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
 
           // If this optimistic position was already explicitly removed/closed, discard it
@@ -553,15 +553,34 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
             optimisticPositionIds.current.delete(optId);
             continue;
           }
-          // Check if server already has a matching position for this symbol & side
-          const hasMatchingServerPos = basePositions.some(sp => {
-            const sameSym = cleanSym(sp.symbol || sp.kite_instrument) === cleanSym(optPos.symbol || optPos.kite_instrument);
-            const sameSide = (sp.side || '').toUpperCase() === (optPos.side || '').toUpperCase();
-            const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
-            return sameSym && sameSide && (spTime >= createdTime - 5000);
-          });
 
-          if (hasMatchingServerPos) {
+          const optQty = Number(optPos.qty_open || optPos.qty_total || 1);
+          const optSym = cleanSym(optPos.symbol || optPos.kite_instrument);
+          const optSide = (optPos.side || '').toUpperCase();
+
+          // Check if server already has a matching unconsumed position for this symbol & side
+          let matched = false;
+          for (const sp of basePositions) {
+            const spSym = cleanSym(sp.symbol || sp.kite_instrument);
+            const spSide = (sp.side || '').toUpperCase();
+            if (spSym !== optSym || spSide !== optSide) continue;
+
+            const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
+            // Match server position created near or after this optimistic position
+            if (spTime < createdTime - 5000) continue;
+
+            const spTotalQty = Number(sp.qty_open || sp.qty_total || 0);
+            const alreadyConsumed = consumedServerQty.get(sp.id) || 0;
+            const remainingAvailable = spTotalQty - alreadyConsumed;
+
+            if (remainingAvailable >= optQty || (remainingAvailable > 0 && spTotalQty <= optQty)) {
+              consumedServerQty.set(sp.id, alreadyConsumed + Math.min(remainingAvailable, optQty));
+              matched = true;
+              break;
+            }
+          }
+
+          if (matched) {
             optimisticPositionIds.current.delete(optId);
           } else {
             activeOptPositions.push(optPos);
@@ -702,16 +721,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
               optimisticPositionIds.current.delete(optId);
               continue;
             }
-            // Also discard if the symbol was recently exited
-            const optClean = cleanSym(optPos.symbol || optPos.kite_instrument);
-            const symbolWasExited = Array.from(optimisticallyRemovedIds.current).some(removedId => {
-              const removedPos = recentlyRemovedPositionsRef.current.get(removedId);
-              return removedPos && cleanSym(removedPos.symbol) === optClean;
-            });
-            if (symbolWasExited) {
-              optimisticPositionIds.current.delete(optId);
-              continue;
-            }
             if (now - createdTime > 20000) {
               optimisticPositionIds.current.delete(optId);
               continue;
@@ -842,7 +851,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 5000 }: { ch
     const pollTime = refreshInterval || 5000;
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        fetchPositions();
+        fetchPositions({ fresh: true });
       }
     }, pollTime);
 

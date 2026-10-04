@@ -101,7 +101,9 @@ export async function setCachedUserPositions(userId: string, positions: any[], k
 }
 
 /**
- * Prepend or update a closed position directly in the user's Redis closed positions cache
+ * Prepend or update a closed position directly in the user's Redis closed positions cache.
+ * All reads are fanned out in parallel, then all writes are fanned out in parallel —
+ * replacing the previous 6 sequential round-trips with 2 parallel batches.
  */
 export async function appendClosedPositionToCache(userId: string, closedPosition: any): Promise<void> {
   try {
@@ -113,17 +115,23 @@ export async function appendClosedPositionToCache(userId: string, closedPosition
       brokerage: Number(closedPosition.brokerage || 0),
       locked_margin: 0,
     };
-    for (const suffix of ['closed:all:', 'closed:default:', 'closed_all']) {
-      const existing = await getCachedUserPositions(userId, suffix);
-      let updated: any[] = [];
+    const suffixes = ['closed:all:', 'closed:default:', 'closed_all'] as const;
+
+    // 1. Read all three keys in parallel
+    const existingAll = await Promise.all(suffixes.map(s => getCachedUserPositions(userId, s)));
+
+    // 2. Merge locally, then write all three keys in parallel
+    await Promise.all(suffixes.map((suffix, i) => {
+      const existing = existingAll[i];
+      let updated: any[];
       if (Array.isArray(existing) && existing.length > 0) {
         updated = [formatted, ...existing.filter((p: any) => p && p.id !== formatted.id)];
       } else {
         updated = [formatted];
       }
       if (updated.length > 500) updated = updated.slice(0, 500);
-      await setCachedUserPositions(userId, updated, suffix);
-    }
+      return setCachedUserPositions(userId, updated, suffix);
+    }));
   } catch (err) {
     console.warn('[appendClosedPositionToCache] Error:', err);
   }
@@ -140,9 +148,18 @@ export async function invalidateUserOpenPositionsCache(userId: string): Promise<
       `api:positions:${userId}:open:default:`,
       `api:positions:${userId}:open:all:`,
       `api:positions:${userId}:active:default:`,
-      `api:positions:${userId}:active:all:`
+      `api:positions:${userId}:active:all:`,
+      `api:positions:${userId}:closed:default:`,
+      `api:positions:${userId}:closed:all:`,
+      `api:positions:${userId}:closed_all`
     ];
     await redis.del(...keysToDelete);
+    if (typeof (redis as any).keys === 'function') {
+      const dynamicKeys = await redis.keys(`api:positions:${userId}:*`);
+      if (dynamicKeys && dynamicKeys.length > 0) {
+        await redis.del(...dynamicKeys);
+      }
+    }
   } catch (err) {
     console.warn('[invalidateUserOpenPositionsCache] Redis delete error:', err);
   }

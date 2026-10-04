@@ -234,30 +234,46 @@ export async function getCachedTemplateScripts(
 
 /**
  * Invalidate user positions API response cache in Redis.
- * Preserves closed position history keys so history remains hot in Redis.
  */
 export async function invalidateUserPositionsCache(userId: string): Promise<void> {
   const redis = getRedisClient();
   try {
-    const keys = await redis.keys(`api:positions:${userId}:*`);
-    const keysToDelete = keys.filter(k => !k.includes(':closed'));
-    if (keysToDelete.length > 0) {
-      await redis.del(...keysToDelete);
+    const explicitKeys = [
+      `api:positions:${userId}:open:default:`,
+      `api:positions:${userId}:open:all:`,
+      `api:positions:${userId}:active:default:`,
+      `api:positions:${userId}:active:all:`,
+      `api:positions:${userId}:closed:default:`,
+      `api:positions:${userId}:closed:all:`,
+      `api:positions:${userId}:closed_all`
+    ];
+    await redis.del(...explicitKeys);
+    if (typeof (redis as any).keys === 'function') {
+      const dynamicKeys = await redis.keys(`api:positions:${userId}:*`);
+      if (dynamicKeys && dynamicKeys.length > 0) {
+        await redis.del(...dynamicKeys);
+      }
     }
   } catch (_) {}
 }
 
 /**
  * Invalidate user orders API response cache in Redis.
- * Preserves full_history keys so history remains hot in Redis.
  */
 export async function invalidateUserOrdersCache(userId: string): Promise<void> {
   const redis = getRedisClient();
   try {
-    const keys = await redis.keys(`api:orders:${userId}:*`);
-    const keysToDelete = keys.filter(k => !k.includes('full_history'));
-    if (keysToDelete.length > 0) {
-      await redis.del(...keysToDelete);
+    const explicitKeys = [
+      `api:orders:${userId}:active`,
+      `api:orders:${userId}:open`,
+      `api:orders:${userId}:history`
+    ];
+    await redis.del(...explicitKeys);
+    if (typeof (redis as any).keys === 'function') {
+      const dynamicKeys = await redis.keys(`api:orders:${userId}:*`);
+      if (dynamicKeys && dynamicKeys.length > 0) {
+        await redis.del(...dynamicKeys);
+      }
     }
   } catch (_) {}
 }
