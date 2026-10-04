@@ -18,11 +18,12 @@ import { useComexQuotes } from '@/hooks/useComexQuotes';
 
 import useSWR from 'swr';
 import { parseOptionSymbol } from '@/lib/parseOptionSymbol';
-import { calculateMarginPortion } from '@/lib/trading/MarginCalculator';
 import { mapSegmentToDbSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
+import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { formatShortName, isForexSymbol } from '@/lib/datafeed/symbolResolver';
 import { normalizeComexTicker } from '@/lib/watchlistUtils';
 import AnimatedLoader from '@/components/AnimatedLoader';
+import { fmtTime } from '@/lib/format';
 import { useTradeConfig } from '@/contexts/TradeConfigContext';
 import { useBalance } from '@/hooks/useBalance';
 import './trading-chart.css';
@@ -81,8 +82,8 @@ function CandleCountdown({ timeframe }: { timeframe: Timeframe }) {
     if (timeframe === 'day') return;
     const resMs =
       timeframe === '1m' ? 60000 : timeframe === '2m' ? 120000 : timeframe === '3m' ? 180000 :
-      timeframe === '5m' ? 300000 : timeframe === '10m' ? 600000 : timeframe === '15m' ? 900000 :
-      timeframe === '30m' ? 1800000 : timeframe === '60m' ? 3600000 : 0;
+        timeframe === '5m' ? 300000 : timeframe === '10m' ? 600000 : timeframe === '15m' ? 900000 :
+          timeframe === '30m' ? 1800000 : timeframe === '60m' ? 3600000 : 0;
     if (!resMs) return;
     const update = () => {
       const nowMs = Date.now();
@@ -203,15 +204,15 @@ function getStoredWatchlistItems() {
     return (window as any).__watchlistItems;
   }
   try {
-    let bestKey = 'rupeeFX_watchlist';
+    let bestKey = 'niveshX_watchlist';
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key && (key.startsWith('rupeeFX_watchlist_') || key.startsWith('niveshX_watchlist_') || key.startsWith('marginApex_watchlist_'))) {
+      if (key && (key.startsWith('niveshX_watchlist_') || key.startsWith('marginApex_watchlist_'))) {
         bestKey = key;
         break;
       }
     }
-    const rawUser = localStorage.getItem('rupeeFX_watchlist') || localStorage.getItem(bestKey) || localStorage.getItem('marginApex_watchlist');
+    const rawUser = localStorage.getItem('marginApex_watchlist') || localStorage.getItem(bestKey);
     if (rawUser && rawUser !== 'null') {
       const parsed = JSON.parse(rawUser);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -567,11 +568,11 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   useEffect(() => {
     if (typeof screen !== 'undefined' && screen.orientation && screen.orientation.unlock) {
-      try { screen.orientation.unlock(); } catch (e) {}
+      try { screen.orientation.unlock(); } catch (e) { }
     }
     return () => {
       if (typeof screen !== 'undefined' && screen.orientation && (screen.orientation as any).lock) {
-        (screen.orientation as any).lock('portrait').catch(() => {});
+        (screen.orientation as any).lock('portrait').catch(() => { });
       }
     };
   }, []);
@@ -623,7 +624,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   useEffect(() => {
     try {
-      const stored = localStorage.getItem('rupeeFX_starred_instruments') || localStorage.getItem('niveshX_starred_instruments') || localStorage.getItem('marginApex_starred_instruments');
+      const stored = localStorage.getItem('niveshX_starred_instruments') || localStorage.getItem('marginApex_starred_instruments');
       if (stored) setStarredInstruments(JSON.parse(stored));
     } catch (e) { }
   }, []);
@@ -668,7 +669,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const absBeta = Math.abs(beta);
 
       let detected: 'portrait' | 'landscape' | null = null;
-      
+
       // Phone is tilted sideways (landscape)
       if (absGamma > 50 && absBeta < 40) {
         detected = 'landscape';
@@ -680,11 +681,11 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
       if (detected && detected !== targetOrientation.current) {
         targetOrientation.current = detected;
-        
+
         if (orientationTimeout.current) {
           clearTimeout(orientationTimeout.current);
         }
-        
+
         // Add a 350ms delay so the rotation feels natural and doesn't flicker
         orientationTimeout.current = setTimeout(() => {
           if (lastPhysicalOrientation.current !== detected) {
@@ -713,7 +714,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const next = isStarred
         ? prev.filter(p => (p.kiteSymbol || p.symbol) !== itemKey)
         : [...prev, item];
-      try { localStorage.setItem('rupeeFX_starred_instruments', JSON.stringify(next)); } catch (e) { }
+      try { localStorage.setItem('niveshX_starred_instruments', JSON.stringify(next)); } catch (e) { }
       return next;
     });
   };
@@ -841,6 +842,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const activeLiveQuote = marketQuotes[symbol] || (symbol === propSymbol ? propLiveQuote : null);
 
   const openChainOrder = (defaultAction: 'BUY' | 'SELL', contractName: string, expiry: string, ltp: number, iv: number, kiteId?: string) => {
+    const chainDbSeg = mapSegmentWithSymbol('INDEX-OPT', contractName);
+    const chainSegId = RiskValidation.resolveTradingHoursSegmentId(contractName, chainDbSeg);
+    if (!RiskValidation.isMarketOpenForSegment(chainSegId)) {
+      showToast('Market is closed for this segment', true);
+      return;
+    }
     if (isLandscape || isCssLandscape) setIsInfoPanelCollapsed(true);
     else setIsPanelExpanded(false);
     const bid = ltp;
@@ -957,8 +964,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     } else {
       setIsTradeOnChartActive(tradingMode === 'scalper');
     }
-  // Only run once when tradingMode first becomes available
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Only run once when tradingMode first becomes available
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tradingMode]);
 
   // Ensure default quantity is reset to 1 when the symbol changes
@@ -1145,24 +1152,79 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       }
     }
 
-    if (modifyOrderId) {
-      showToast('Modifying order...');
-      const cancelRes = await cancelOrder(modifyOrderId);
-      if (!cancelRes.success) {
-        showToast(cancelRes.error || 'Failed to modify order (cancel failed)', true);
+    const targetIsExit = isExitFlow;
+    if (!targetIsExit) {
+      const segId = RiskValidation.resolveTradingHoursSegmentId(orderSymbol, submitDbSeg);
+      if (!RiskValidation.isMarketOpenForSegment(segId)) {
+        showToast('Market is closed for this segment', true);
         return;
       }
-    } else {
-      showToast('Placing order...');
+    }
+    const orderPayload = {
+      symbol: orderSymbol,
+      kite_instrument: orderKiteInstrument,
+      segment: orderSegment,
+      side: orderSide,
+      qty: finalQty,
+      lots: finalLots,
+      order_type: orderType.toUpperCase() as any,
+      product_type: orderCarry === 'carry' ? 'CARRY' : 'INTRADAY',
+      client_price: finalPrice,
+      price: finalPrice,
+      trigger_price: (orderType === 'sl' || orderType === 'slm') ? parseFloat(triggerPrice) : undefined,
+      stop_loss: gttSlPrice ? parseFloat(gttSlPrice) : undefined,
+      target: gttTargetPrice ? parseFloat(gttTargetPrice) : undefined,
+      is_exit: targetIsExit
+    };
+
+    if (modifyOrderId) {
+      showToast('Modifying order...');
+      setIsSubmitting(true);
+      positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
+      
+      try {
+        const res = await api.put<{ success: boolean; error?: string }>(`/api/orders/${modifyOrderId}`, orderPayload);
+        if (res && res.success === false) {
+           throw new Error(res.error || 'Failed to modify order');
+        }
+        showToast('Order Modified Successfully!');
+        notifyOrderEvent();
+        
+        setModifyOrderId(null);
+        setIsOrderBlockVisible(false);
+        setChainContract(null);
+        setIsExitFlow(false);
+        setIsAddMoreFlow(false);
+        setAddMoreSymbol(null);
+        setAddMoreSegment(null);
+        setAddMoreLtp(null);
+        setAddMoreKiteInst(null);
+        setExitPositionId(null);
+        setOrderBlockTitle(symbol);
+        
+        const returnTo = postOrderSegment;
+        setPostOrderSegment(null);
+        if (returnTo && returnTo !== 'main') {
+          setActiveSegment(returnTo as 'chain' | 'orders' | 'positions');
+          setIsPanelExpanded(true);
+        }
+      } catch (err: any) {
+        let msg = 'Failed to modify order';
+        if (err?.details) msg = typeof err.details === 'string' ? err.details : (err.details.error || msg);
+        else if (err?.message) msg = err.message;
+        showToast(msg, true);
+      } finally {
+        setIsSubmitting(false);
+        positionSnapshotRef.current = null;
+      }
+      return;
     }
 
-    // Optimistic UI: Immediately close panel and show processing state
+    showToast('Placing order...');
+    // Optimistic UI: Immediately show processing state
     setIsSubmitting(true);
     positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
-    if (modifyOrderId) {
-      setModifyOrderId(null);
-    }
-    const targetIsExit = isExitFlow;
+    
     setIsOrderBlockVisible(false);
     setChainContract(null);
     setIsExitFlow(false);
@@ -1181,21 +1243,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setIsPanelExpanded(true);
     }
 
-    placeOrder({
-      symbol: orderSymbol,
-      kite_instrument: orderKiteInstrument,
-      segment: orderSegment,
-      side: orderSide,
-      qty: finalQty,
-      lots: finalLots,
-      order_type: orderType.toUpperCase() as any,
-      product_type: orderCarry === 'carry' ? 'CARRY' : 'INTRADAY',
-      client_price: finalPrice,
-      trigger_price: (orderType === 'sl' || orderType === 'slm') ? parseFloat(triggerPrice) : undefined,
-      stop_loss: gttSlPrice ? parseFloat(gttSlPrice) : undefined,
-      target: gttTargetPrice ? parseFloat(gttTargetPrice) : undefined,
-      is_exit: targetIsExit
-    }).then(res => {
+    placeOrder(orderPayload).then(res => {
       if (res.success) {
         showToast(modifyOrderId ? 'Order Modified Successfully!' : `${orderSide} Order Placed Successfully!`);
         notifyOrderEvent();
@@ -1382,28 +1430,28 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       // Execute close position API call asynchronously in background
       const exitPromise = (finalQty >= pos.qty_open)
         ? (idsToRemove.length > 1 && closePositionsBatch
-            ? closePositionsBatch(idsToRemove)
-            : closePosition(
-                pos.id,
-                pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
-                pos.symbol,
-                pos.settlement || segment,
-                pos.side
-              )
+          ? closePositionsBatch(idsToRemove)
+          : closePosition(
+            pos.id,
+            pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
+            pos.symbol,
+            pos.settlement || segment,
+            pos.side
           )
+        )
         : placeOrder({
-            symbol: pos.symbol,
-            kite_instrument: pos.kite_instrument || pos.symbol,
-            segment: pos.settlement || segment,
-            side: pos.side === 'BUY' ? 'SELL' : 'BUY',
-            qty: finalQty,
-            lots: finalQty / posLotSize,
-            order_type: 'MARKET',
-            product_type: pos.product_type || 'INTRADAY',
-            client_price: pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
-            is_exit: true,
-            linked_position_id: pos.id || ((pos as any)._ids && (pos as any)._ids[0])
-          });
+          symbol: pos.symbol,
+          kite_instrument: pos.kite_instrument || pos.symbol,
+          segment: pos.settlement || segment,
+          side: pos.side === 'BUY' ? 'SELL' : 'BUY',
+          qty: finalQty,
+          lots: finalQty / posLotSize,
+          order_type: 'MARKET',
+          product_type: pos.product_type || 'INTRADAY',
+          client_price: pos.current_ltp || pos.avg_price || pos.entry_price || currentPrice,
+          is_exit: true,
+          linked_position_id: pos.id || ((pos as any)._ids && (pos as any)._ids[0])
+        });
 
       exitPromise.then(res => {
         if (res.success) {
@@ -1429,6 +1477,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   // Add more to a position (may be a different symbol from the current chart)
   const handleAddMorePosition = async (pos: EnrichedPosition) => {
     if (isSubmitting) return;
+    const addDbSeg = mapSegmentWithSymbol(pos.settlement || segment, pos.symbol);
+    const addSegId = RiskValidation.resolveTradingHoursSegmentId(pos.symbol, addDbSeg);
+    if (!RiskValidation.isMarketOpenForSegment(addSegId)) {
+      showToast('Market is closed for this segment', true);
+      return;
+    }
     if (!isTradeOnChartActive) {
       if (isLandscape || isCssLandscape) setIsInfoPanelCollapsed(true);
       else setIsPanelExpanded(false);
@@ -1445,7 +1499,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     setUseLots(false);
     setOrderCarry(pos.product_type === 'CARRY' ? 'carry' : 'normal');
     setOrderType('market');
-    
+
     // Direct Execution for Scalping Mode (directly placing order, showing bm-loader)
     if (isTradeOnChartActive) {
       const posLotSize = getLotSize(pos.symbol);
@@ -1512,6 +1566,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   const handleQuickMarketOrder = async (side: 'BUY' | 'SELL') => {
     if (quickEntryLock.current) return;
+    const quickDbSeg = mapSegmentWithSymbol(segment, symbol);
+    const quickSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, quickDbSeg);
+    if (!RiskValidation.isMarketOpenForSegment(quickSegId)) {
+      showToast('Market is closed for this segment', true);
+      return;
+    }
     quickEntryLock.current = true;
     setOrderSide(side);
 
@@ -1655,7 +1715,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       }
 
       showToast(`Adding ${addQty} to ${pos.side} position...`);
-      
+
       const targetSymbol = pos.symbol || symbol;
       const kiteInst = pos.kite_instrument || (() => {
         const s = targetSymbol;
@@ -2052,7 +2112,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               const label = o.side;
               const labelBg = isBuy ? 'var(--green-bg)' : 'var(--red-bg)';
               const labelClr = isBuy ? 'var(--green-text)' : 'var(--red-text)';
-              const timeStr = o.created_at ? new Date(o.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+              const timeStr = fmtTime(o.created_at);
               return (
                 <div key={o.id} className="order-row">
                   <div className="order-info-row" style={{ alignItems: 'flex-start' }}>
@@ -2189,9 +2249,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           const sideClr = pos.side === 'BUY' ? 'var(--green-text)' : 'var(--red-text)';
           const isExiting = exitingPosIds.current.has(pos.id);
           // entry time for detailed view
-          const timeStr = pos.entry_time
-            ? new Date(pos.entry_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            : '';
+          const timeStr = fmtTime(pos.entry_time);
           const tradeCount = pos._count || 1;
 
           return (
@@ -2234,9 +2292,9 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                 </div>
               </div>
               <div className="position-actions">
-                <button 
-                  className={`position-action-btn add-position-btn${(isSubmitting && addingPosId !== pos.id) || exitingPosIds.current.size > 0 ? ' submitting-inactive' : ''}`} 
-                  onClick={() => handleAddMorePosition(pos)} 
+                <button
+                  className={`position-action-btn add-position-btn${(isSubmitting && addingPosId !== pos.id) || exitingPosIds.current.size > 0 ? ' submitting-inactive' : ''}`}
+                  onClick={() => handleAddMorePosition(pos)}
                   disabled={isSubmitting || exitingPosIds.current.size > 0}
                 >
                   {isSubmitting && addingPosId === pos.id && <AnimatedLoader size="small" />}
@@ -2246,8 +2304,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                   className={`position-action-btn exit-position-btn${isSubmitting || (exitingPosIds.current.size > 0 && !isExiting) ? ' submitting-inactive' : ''}`}
                   onClick={() => handleExitPosition(pos)}
                   disabled={isSubmitting || isExiting || (exitingPosIds.current.size > 0 && !isExiting)}
-                  style={{ 
-                    opacity: (isSubmitting || isExiting || (exitingPosIds.current.size > 0 && !isExiting)) ? 0.5 : 1, 
+                  style={{
+                    opacity: (isSubmitting || isExiting || (exitingPosIds.current.size > 0 && !isExiting)) ? 0.5 : 1,
                     cursor: (isSubmitting || isExiting || (exitingPosIds.current.size > 0 && !isExiting)) ? 'not-allowed' : 'pointer',
                     pointerEvents: (isSubmitting || exitingPosIds.current.size > 0) ? 'none' : 'auto'
                   }}
@@ -2439,7 +2497,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                 <span style={{ fontWeight: 700, fontSize: '13px' }}>{current.label}</span>
                 <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor"><path d="M1 2l3 4 3-4z" /></svg>
               </div>
-              
+
               {/* Native React Countdown - Bypasses TradingView entirely */}
               <CandleCountdown timeframe={timeframe} />
 
@@ -2533,7 +2591,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
         {/* ── Compare ── HIDDEN */}
         {/* ── Snapshot ── HIDDEN */}
-        
+
         <div className="tc-divider"></div>
 
         {/* ── Mobile Rotate Screen (Moved next to tools) ── */}
@@ -2680,8 +2738,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           {(isLandscape || isCssLandscape) && isInfoPanelCollapsed && <div style={{ flex: 1 }} />}
 
           {/* P&L Card */}
-        {!isOrderBlockVisible && (
-          <div className="pnl-card" id="pnlCard" style={(isLandscape || isCssLandscape) && !isInfoPanelCollapsed ? { display: 'none' } : {}}>
+          {!isOrderBlockVisible && (
+            <div className="pnl-card" id="pnlCard" style={(isLandscape || isCssLandscape) && !isInfoPanelCollapsed ? { display: 'none' } : {}}>
               {isTradeOnChartActive ? (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -2792,8 +2850,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                 <div className="trade-buttons" id="tradeButtons" style={(isLandscape || isCssLandscape) && !isInfoPanelCollapsed ? { display: 'none' } : {}}>
                   {currentInstrumentPosition.side === 'BUY' ? (
                     <>
-                      <button 
-                        className={`trade-btn exit-position-chart-btn${(isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id) ? ' submitting-inactive' : ''}`} 
+                      <button
+                        className={`trade-btn exit-position-chart-btn${(isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id) ? ' submitting-inactive' : ''}`}
                         onClick={() => handleExitPosition(currentInstrumentPosition)}
                         disabled={isSubmitting || exitingPosIds.current.size > 0}
                         style={{ opacity: ((isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id)) ? 0.5 : 1, pointerEvents: 'auto' }}
@@ -2806,6 +2864,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                         </span>
                       </button>
                       <button id="buyButton" className={`trade-btn buy${(isSubmitting || exitingPosIds.current.size > 0) && !(isSubmitting && !addingPosId && orderSide === 'BUY') ? ' submitting-inactive' : ''}`} disabled={isSubmitting || exitingPosIds.current.size > 0} style={{ opacity: ((isSubmitting || exitingPosIds.current.size > 0) && !(isSubmitting && !addingPosId && orderSide === 'BUY')) ? 0.5 : 1 }} onClick={() => {
+                        const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
+                        const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
+                        if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
+                          showToast('Market is closed for this segment', true);
+                          return;
+                        }
                         if (isTradeOnChartActive) {
                           handleQuickMarketOrder('BUY');
                         } else {
@@ -2829,6 +2893,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                   ) : (
                     <>
                       <button id="sellButton" className={`trade-btn sell${(isSubmitting || exitingPosIds.current.size > 0) && !(isSubmitting && !addingPosId && orderSide === 'SELL') ? ' submitting-inactive' : ''}`} disabled={isSubmitting || exitingPosIds.current.size > 0} style={{ opacity: ((isSubmitting || exitingPosIds.current.size > 0) && !(isSubmitting && !addingPosId && orderSide === 'SELL')) ? 0.5 : 1 }} onClick={() => {
+                        const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
+                        const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
+                        if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
+                          showToast('Market is closed for this segment', true);
+                          return;
+                        }
                         if (isTradeOnChartActive) {
                           handleQuickMarketOrder('SELL');
                         } else {
@@ -2848,8 +2918,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                           SELL
                         </span>
                       </button>
-                      <button 
-                        className={`trade-btn exit-position-chart-btn${(isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id) ? ' submitting-inactive' : ''}`} 
+                      <button
+                        className={`trade-btn exit-position-chart-btn${(isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id) ? ' submitting-inactive' : ''}`}
                         onClick={() => handleExitPosition(currentInstrumentPosition)}
                         disabled={isSubmitting || exitingPosIds.current.size > 0}
                         style={{ opacity: ((isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id)) ? 0.5 : 1, pointerEvents: 'auto' }}
@@ -2867,6 +2937,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               ) : (
                 <div className="trade-buttons" id="tradeButtons" style={(isLandscape || isCssLandscape) && !isInfoPanelCollapsed ? { display: 'none' } : {}}>
                   <button id="sellButton" className={`trade-btn sell${(isSubmitting || exitingPosIds.current.size > 0) && !(isSubmitting && !addingPosId && orderSide === 'SELL') ? ' submitting-inactive' : ''}`} disabled={isSubmitting || exitingPosIds.current.size > 0} style={{ opacity: ((isSubmitting || exitingPosIds.current.size > 0) && !(isSubmitting && !addingPosId && orderSide === 'SELL')) ? 0.5 : 1 }} onClick={() => {
+                    const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
+                    const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
+                    if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
+                      showToast('Market is closed for this segment', true);
+                      return;
+                    }
                     if (isTradeOnChartActive) {
                       handleQuickMarketOrder('SELL');
                     } else {
@@ -2887,6 +2963,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     </span>
                   </button>
                   <button id="buyButton" className={`trade-btn buy${(isSubmitting || exitingPosIds.current.size > 0) && !(isSubmitting && !addingPosId && orderSide === 'BUY') ? ' submitting-inactive' : ''}`} disabled={isSubmitting || exitingPosIds.current.size > 0} style={{ opacity: ((isSubmitting || exitingPosIds.current.size > 0) && !(isSubmitting && !addingPosId && orderSide === 'BUY')) ? 0.5 : 1 }} onClick={() => {
+                    const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
+                    const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
+                    if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
+                      showToast('Market is closed for this segment', true);
+                      return;
+                    }
                     if (isTradeOnChartActive) {
                       handleQuickMarketOrder('BUY');
                     } else {
@@ -2944,18 +3026,18 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                       style={{ marginRight: '8px', cursor: 'pointer', background: 'var(--pill-bg, #1a2432)', width: '26px', height: '26px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--green, #1db954)', border: '1.2px solid var(--green, #1db954)' }}
                       onClick={() => {
                         const targetSymbol = chainContract ? chainContract.name : orderBlockTitle.replace(/Add More · |Exit · |Modify · /g, '').trim();
-                        
+
                         // For exit/add-more flows on options and futures, ensure kite instrument has prefix
                         // Use the stored addMoreKiteInst if available, else derive from orderBlockTitle/chain
-                        const baseKiteInst = (isAddMoreFlow || isExitFlow) && addMoreKiteInst 
-                          ? addMoreKiteInst 
+                        const baseKiteInst = (isAddMoreFlow || isExitFlow) && addMoreKiteInst
+                          ? addMoreKiteInst
                           : (chainContract ? chainContract.name : ((isAddMoreFlow || isExitFlow || modifyOrderId) ? targetSymbol : symbol));
-                          
+
                         let kiteInstForOrder = baseKiteInst;
-                        
+
                         // Helper to detect if it's MCX
                         const isMcx = ['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD'].some(c => (chainContract?.name || targetSymbol).includes(c));
-                        
+
                         if (['OPTIDX', 'FUTIDX', 'OPTSTK', 'FUTSTK', 'OPTCOM', 'FUTCOM', 'OPTCUR', 'FUTCUR'].includes(dbSeg)) {
                           kiteInstForOrder = isMcx ? `MCX:${baseKiteInst}` : `NFO:${baseKiteInst}`;
                         }
@@ -3190,12 +3272,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     </div>
                   </div>
 
-                  <button 
-                    className={`submit-btn ${orderSide === 'BUY' ? 'submit-buy' : 'submit-sell'}`} 
-                    disabled={isSubmitting} 
+                  <button
+                    className={`submit-btn ${orderSide === 'BUY' ? 'submit-buy' : 'submit-sell'}`}
+                    disabled={isSubmitting}
                     onClick={handlePlaceOrder}
                   >
-                      {isSubmitting ? <AnimatedLoader size="small" /> : (modifyOrderId ? 'Update Order' : (isExitFlow ? 'Exit Position' : `${orderSide} ${useLots ? (Number(qtyValue) || 1) + ' Lot' : qtyValue + ' Qty'}`))}
+                    {isSubmitting ? <AnimatedLoader size="small" /> : (modifyOrderId ? 'Update Order' : (isExitFlow ? 'Exit Position' : `${orderSide} ${useLots ? (Number(qtyValue) || 1) + ' Lot' : qtyValue + ' Qty'}`))}
                   </button>
                 </div>
               </div>
