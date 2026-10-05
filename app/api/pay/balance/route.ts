@@ -21,22 +21,6 @@ export async function GET(request: Request): Promise<Response> {
     const adminClient = getAdminClient();
     const cacheKey = `user_balance:${user.id}`;
 
-    // Demo account fast-path: serve from Redis or initialize default demo balance
-    if (user.id === 'demo-user-id-0000-0000' || (user as any).email === 'demo@gmail.com') {
-      const demoCached = await redis.get(cacheKey);
-      if (demoCached) {
-        try {
-          const parsed = JSON.parse(demoCached);
-          if (typeof parsed?.balance === 'number') {
-            return Response.json({ balance: parsed.balance, settlementAmount: 0 }, { status: 200 });
-          }
-        } catch {}
-      }
-      const defaultDemoBal = 1000000;
-      await redis.set(cacheKey, JSON.stringify({ balance: defaultDemoBal, settlementAmount: 0 }), 'EX', 86400).catch(() => {});
-      return Response.json({ balance: defaultDemoBal, settlementAmount: 0 }, { status: 200 });
-    }
-
     // Fire Redis cache read and DB query IN PARALLEL — no more sequential wait
     const [cachedRaw, dbResult] = await Promise.allSettled([
       redis.get(cacheKey),
