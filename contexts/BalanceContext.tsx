@@ -15,6 +15,8 @@ export interface BalanceContextType {
   validatePreflight: (requiredMargin: number) => { valid: boolean; reason?: string };
   lockOptimisticMargin: (amount: number, lockId: string) => void;
   releaseOptimisticMargin: (lockId: string) => void;
+  deductOptimisticBrokerage: (amount: number, lockId: string) => void;
+  rollbackOptimisticBrokerage: (lockId: string) => void;
 }
 
 const BalanceDataContext = createContext<BalanceContextType | null>(null);
@@ -40,6 +42,40 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
   });
   const [loading, setLoading] = useState(true);
   const [optimisticLockedMargins, setOptimisticLockedMargins] = useState<Record<string, { amount: number; addedAt: number }>>({});
+  const [pendingBrokerages, setPendingBrokerages] = useState<Record<string, { amount: number; addedAt: number }>>({});
+
+  const deductOptimisticBrokerage = useCallback((amount: number, lockId: string) => {
+    if (amount <= 0 || !lockId) return;
+    setBalance(prev => {
+      const next = Math.max(0, prev - amount);
+      if (typeof window !== 'undefined') {
+        try { localStorage.setItem('last_user_balance', String(next)); } catch {}
+      }
+      return next;
+    });
+    setPendingBrokerages(prev => ({
+      ...prev,
+      [lockId]: { amount, addedAt: Date.now() }
+    }));
+  }, []);
+
+  const rollbackOptimisticBrokerage = useCallback((lockId: string) => {
+    if (!lockId) return;
+    setPendingBrokerages(prev => {
+      const entry = prev[lockId];
+      if (!entry) return prev;
+      setBalance(b => {
+        const next = b + entry.amount;
+        if (typeof window !== 'undefined') {
+          try { localStorage.setItem('last_user_balance', String(next)); } catch {}
+        }
+        return next;
+      });
+      const next = { ...prev };
+      delete next[lockId];
+      return next;
+    });
+  }, []);
 
   const lockOptimisticMargin = useCallback((amount: number, lockId: string) => {
     if (amount <= 0 || !lockId) return;
@@ -74,15 +110,29 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const updateBalanceState = useCallback((newBal: number, newSettlement: number) => {
-    setBalance(newBal);
+    const ts = Date.now();
+    let activePending = 0;
+    setPendingBrokerages(prev => {
+      const next: Record<string, { amount: number; addedAt: number }> = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (ts - v.addedAt < 4000) {
+          next[k] = v;
+          activePending += v.amount;
+        }
+      }
+      return next;
+    });
+
+    const finalBal = activePending > 0 && newBal > balance ? Math.max(0, newBal - activePending) : newBal;
+    setBalance(finalBal);
     setSettlementAmount(newSettlement);
     if (typeof window !== 'undefined') {
       try {
-        localStorage.setItem('last_user_balance', String(newBal));
+        localStorage.setItem('last_user_balance', String(finalBal));
         localStorage.setItem('last_user_settlement', String(newSettlement));
       } catch {}
     }
-  }, []);
+  }, [balance]);
 
   const fetchBalance = useCallback(async () => {
     if (fetchingRef.current) return;
@@ -172,7 +222,7 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         if (!cancelled) fetchBalance();
-      }, 100);
+      }, 1200);
     };
     window.addEventListener('order_placed', handleOrderPlaced);
     window.addEventListener('order_placed_optimistic', handleOrderPlaced);
@@ -223,10 +273,14 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       subscription.unsubscribe();
       if (channel) supabase.removeChannel(channel);
       window.removeEventListener('order_placed', handleOrderPlaced);
+      window.removeEventListener('order_placed_optimistic', handleOrderPlaced);
+      window.removeEventListener('order_executed', handleOrderPlaced);
       window.removeEventListener('position-closed', handleOrderPlaced);
       window.removeEventListener('position_closed', handleOrderPlaced);
+      window.removeEventListener('position_closed_optimistic', handleOrderPlaced);
+      window.removeEventListener('balance_updated', handleOrderPlaced);
     };
-  }, [fetchBalance]);
+  }, [fetchBalance, updateBalanceState]);
 
   const validatePreflight = useCallback((requiredMargin: number): { valid: boolean; reason?: string } => {
     if (effectiveBalance > 0 && requiredMargin > effectiveBalance) {
@@ -247,7 +301,9 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       refresh: fetchBalance,
       validatePreflight,
       lockOptimisticMargin,
-      releaseOptimisticMargin
+      releaseOptimisticMargin,
+      deductOptimisticBrokerage,
+      rollbackOptimisticBrokerage
     }}>
       {children}
     </BalanceDataContext.Provider>
@@ -265,7 +321,9 @@ export const useBalanceData = () => {
       refresh: async () => {},
       validatePreflight: () => ({ valid: true }),
       lockOptimisticMargin: () => {},
-      releaseOptimisticMargin: () => {}
+      releaseOptimisticMargin: () => {},
+      deductOptimisticBrokerage: () => {},
+      rollbackOptimisticBrokerage: () => {},
     };
   }
   return context;

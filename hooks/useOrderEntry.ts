@@ -172,6 +172,13 @@ export function useOrderEntry() {
         window.dispatchEvent(new CustomEvent('order_placed_optimistic', { detail: { order: optimisticOrder } }));
       }
 
+      // Optimistically deduct brokerage immediately (<1ms) from funds
+      if (!effectiveIsExit && calculatedExpectedBrokerage > 0) {
+        if (balanceContext?.deductOptimisticBrokerage) {
+          balanceContext.deductOptimisticBrokerage(calculatedExpectedBrokerage, tempId);
+        }
+      }
+
       // Optimistically add position if entry order, or remove/reduce if exit order
       if (!effectiveIsExit) {
         if (positionsContext?.addOptimisticPosition) {
@@ -595,6 +602,11 @@ export function useOrderEntry() {
       const isBackgroundProcessing = message.includes('processing in background') || message.includes('in progress') || (err instanceof ApiError && err.status === 409);
 
       if (!isBackgroundProcessing) {
+        if (!effectiveIsExit && calculatedExpectedBrokerage > 0) {
+          if (balanceContext?.rollbackOptimisticBrokerage) {
+            balanceContext.rollbackOptimisticBrokerage(tempId);
+          }
+        }
         // Rollback optimistic order on actual error
         if ((ordersContext as any)?.removeOptimisticOrder) {
           (ordersContext as any).removeOptimisticOrder(tempId);
