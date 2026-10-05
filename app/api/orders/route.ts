@@ -1597,16 +1597,19 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           invalidateUserHistoryCache(user.id),
           invalidateUserPositionsCache(user.id),
           invalidateUserOrdersCache(user.id),
+          redis.del(`user_balance:${user.id}`),
         ]);
       } catch { /* ignore */ }
     });
 
     try {
       const { invalidateUserHistoryCache } = await import('@/lib/redisHistoryCache');
+      const redis = getRedisClient();
       await Promise.all([
         invalidateUserHistoryCache(user.id),
         invalidateUserPositionsCache(user.id),
         invalidateUserOrdersCache(user.id),
+        redis.del(`user_balance:${user.id}`),
       ]);
     } catch { /* ignore */ }
 

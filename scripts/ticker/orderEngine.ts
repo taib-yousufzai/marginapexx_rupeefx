@@ -203,7 +203,10 @@ export class OrderEngine {
   private async enqueuePersistence(payload: any) {
     try {
       const queueKey = 'orders:write_queue';
-      await this.redis.lpush(queueKey, JSON.stringify(payload));
+      await Promise.all([
+        this.redis.lpush(queueKey, JSON.stringify(payload)),
+        this.redis.del(`user_balance:${payload.user_id}`),
+      ]);
     } catch (err) {
       logger.error({ err }, 'Failed to push order to persistence queue, attempting direct write fallback');
       this.directWriteFallback(payload);
@@ -240,6 +243,7 @@ export class OrderEngine {
         p_idempotency_key: payload.id,
         p_linked_position_id: payload.linked_position_id || null,
       });
+      await this.redis.del(`user_balance:${payload.user_id}`);
     } catch (dbErr) {
       logger.error({ err: dbErr }, 'Direct write fallback failed for order');
     }
@@ -316,6 +320,7 @@ export class OrderEngine {
           invalidateUserPositionsCache(userId),
           invalidateUserOrdersCache(userId),
           invalidateUserHistoryCache(userId),
+          this.redis.del(`user_balance:${userId}`),
         ]);
       } catch (cacheErr) {
         logger.warn({ cacheErr }, 'Cache invalidation warning on fast exit');

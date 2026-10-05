@@ -166,17 +166,21 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
         .subscribe();
     };
 
-    // Re-fetch on order events — debounced to coalesce rapid bursts
+    // Re-fetch on order and balance events — debounced to coalesce rapid bursts
     const handleOrderPlaced = () => {
       if (cancelled) return;
       if (debounceRef.current) clearTimeout(debounceRef.current);
       debounceRef.current = setTimeout(() => {
         if (!cancelled) fetchBalance();
-      }, 800);
+      }, 100);
     };
     window.addEventListener('order_placed', handleOrderPlaced);
+    window.addEventListener('order_placed_optimistic', handleOrderPlaced);
+    window.addEventListener('order_executed', handleOrderPlaced);
     window.addEventListener('position-closed', handleOrderPlaced);
     window.addEventListener('position_closed', handleOrderPlaced);
+    window.addEventListener('position_closed_optimistic', handleOrderPlaced);
+    window.addEventListener('balance_updated', handleOrderPlaced);
 
     // Auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
