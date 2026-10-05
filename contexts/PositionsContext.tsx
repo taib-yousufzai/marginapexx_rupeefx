@@ -423,7 +423,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       entry_time: new Date(now).toISOString(),
       updated_at: new Date(now).toISOString(),
       created_time_ms: now,
-      brokerage: 0,
+      brokerage: Number(partialPos.brokerage ?? (partialPos as any).entry_brokerage ?? (partialPos as any).expected_brokerage ?? 0),
+      entry_brokerage: Number((partialPos as any).entry_brokerage ?? partialPos.brokerage ?? (partialPos as any).expected_brokerage ?? 0),
       pnl: 0,
       locked_margin: (partialPos as any).locked_margin || 0,
     } as any;
@@ -823,11 +824,11 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     window.addEventListener('position_updated', handleOrderPlaced);
     window.addEventListener('order_executed', handleOrderPlaced);
 
-    // Responsive 5s polling fallback for open positions
+    // Responsive 5s polling fallback — serves from Redis cache (3s TTL), not DB directly
     const pollTime = refreshInterval || 5000;
     const timer = setInterval(() => {
       if (document.visibilityState === 'visible') {
-        fetchPositions({ fresh: true });
+        fetchPositions(); // No fresh=true: serve Redis cache to avoid hammering DB
       }
     }, pollTime);
 

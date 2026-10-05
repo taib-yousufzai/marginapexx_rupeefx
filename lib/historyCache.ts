@@ -17,6 +17,7 @@ export interface HistoryItem {
   exitDate?: string;
   status: string;
   brokerage: number;
+  entry_brokerage?: number;
   intraday_brokerage?: number;
   carry_brokerage?: number;
   gtt_brokerage?: number;
@@ -122,3 +123,4 @@ export function removeFromClientHistoryCache(ids: string[]): HistoryItem[] {
 
   return filtered;
 }
+

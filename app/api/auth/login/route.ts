@@ -1,10 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Client } from 'pg';
 import { getAdminClient } from '@/lib/adminClient';
-
-const DB_URL =
-  process.env.DATABASE_URL ||
-  'postgresql://postgres:9NGKXKwLoXHyUF2c@db.cpcvklekwwawgtgbyrmp.supabase.co:5432/postgres';
 
 function createSignedJwt(payload: Record<string, any>): string {
   const header = { alg: 'HS256', typ: 'JWT' };
@@ -35,87 +30,7 @@ export async function POST(req: Request) {
 
     const targetIdentifier = String(email).trim();
 
-    // ─── Strategy 1: Resolve non-email identifiers (client_id / phone) ───────
-    // We ONLY look up the email address here — no password verification in JS.
-    // bcrypt.compare() in pure-JS (bcryptjs) takes 30–60s on cost-10 hashes.
-    // All password verification is delegated to Supabase (Strategy 2) which
-    // runs bcrypt in native C on its servers in under 100ms.
-    let resolvedEmail = targetIdentifier;
-
-    if (!targetIdentifier.includes('@')) {
-      // Try fast TCP Postgres connection for email lookup
-      try {
-        const client = new Client({
-          connectionString: DB_URL,
-          connectionTimeoutMillis: 2000,
-        });
-        await client.connect();
-        try {
-          const profRes = await client.query(
-            `SELECT email FROM public.profiles WHERE UPPER(client_id) = UPPER($1) OR phone = $1 LIMIT 1`,
-            [targetIdentifier]
-          );
-          if (profRes.rows.length > 0 && profRes.rows[0].email) {
-            resolvedEmail = profRes.rows[0].email;
-          }
-        } finally {
-          await client.end().catch(() => {});
-        }
-      } catch {
-        // TCP unavailable — try Supabase REST for email lookup
-        try {
-          const admin = getAdminClient();
-          const { data: prof } = await admin
-            .from('profiles')
-            .select('email')
-            .or(`client_id.eq.${targetIdentifier},phone.eq.${targetIdentifier}`)
-            .maybeSingle();
-          if (prof?.email) {
-            resolvedEmail = prof.email;
-          }
-        } catch {
-          // Ignore — will attempt auth with the original identifier
-        }
-      }
-    }
-
-    // ─── Strategy 2: Supabase REST SDK — password verification happens here ──
-    // Supabase verifies bcrypt server-side in native C (<100ms).
-    try {
-      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-      if (supabaseUrl && anonKey) {
-        const { createClient } = await import('@supabase/supabase-js');
-        const supabase = createClient(supabaseUrl, anonKey);
-
-        const authPromise = supabase.auth.signInWithPassword({
-          email: resolvedEmail,
-          password,
-        });
-
-        const timeoutPromise = new Promise<any>((resolve) =>
-          setTimeout(() => resolve({ timeout: true }), 8000)
-        );
-
-        const res = await Promise.race([authPromise, timeoutPromise]);
-
-        if (!res.timeout && res.data?.session && res.data?.user) {
-          return NextResponse.json({
-            session: res.data.session,
-            user: res.data.user,
-          });
-        }
-
-        if (!res.timeout && res.error) {
-          return NextResponse.json({ error: 'Invalid credentials. Please try again.' }, { status: 401 });
-        }
-      }
-    } catch (sdkErr: any) {
-      console.warn('[DirectAuth] Supabase REST SDK failed/timed out:', sdkErr?.message || sdkErr);
-    }
-
-    // ─── Strategy 3: Resilience Demo Account Fallback ──────────────────────────
+    // ─── Strategy 1: Instant Demo Account Fast-Path ──────────────────────────
     if (
       (targetIdentifier.toLowerCase() === 'demo@gmail.com' || targetIdentifier.toUpperCase() === 'DEMO123') &&
       password === 'demo123'
@@ -153,6 +68,60 @@ export async function POST(req: Request) {
       };
 
       return NextResponse.json({ session: demoSession, user: demoUser });
+    }
+
+    // ─── Strategy 2: Resolve non-email identifiers (client_id / phone) ───────
+    let resolvedEmail = targetIdentifier;
+
+    if (!targetIdentifier.includes('@')) {
+      try {
+        const admin = getAdminClient();
+        const { data: prof } = await admin
+          .from('profiles')
+          .select('email')
+          .or(`client_id.eq.${targetIdentifier},phone.eq.${targetIdentifier}`)
+          .maybeSingle();
+        if (prof?.email) {
+          resolvedEmail = prof.email;
+        }
+      } catch (lookupErr) {
+        console.warn('[DirectAuth] Profile email lookup failed:', lookupErr);
+      }
+    }
+
+    // ─── Strategy 3: Supabase REST SDK — password verification ──────────────
+    try {
+      const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+
+      if (supabaseUrl && anonKey) {
+        const { createClient } = await import('@supabase/supabase-js');
+        const supabase = createClient(supabaseUrl, anonKey);
+
+        const authPromise = supabase.auth.signInWithPassword({
+          email: resolvedEmail,
+          password,
+        });
+
+        const timeoutPromise = new Promise<any>((resolve) =>
+          setTimeout(() => resolve({ timeout: true }), 4000)
+        );
+
+        const res = await Promise.race([authPromise, timeoutPromise]);
+
+        if (!res.timeout && res.data?.session && res.data?.user) {
+          return NextResponse.json({
+            session: res.data.session,
+            user: res.data.user,
+          });
+        }
+
+        if (!res.timeout && res.error) {
+          return NextResponse.json({ error: res.error.message || 'Invalid credentials. Please try again.' }, { status: 401 });
+        }
+      }
+    } catch (sdkErr: any) {
+      console.warn('[DirectAuth] Supabase REST SDK failed/timed out:', sdkErr?.message || sdkErr);
     }
 
     return NextResponse.json({ error: 'Invalid credentials. Please try again.' }, { status: 401 });

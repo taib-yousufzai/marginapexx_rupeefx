@@ -64,35 +64,38 @@ export function getRole(user: User | null): AppRole {
 export async function signIn(email: string, password: string): Promise<SignInResult> {
   let targetEmail = email.trim();
 
-  // Try standard Supabase Auth with an 8s timeout.
-  // On localhost → Supabase Cloud round-trips can take 2-6s; 8s gives enough headroom
-  // without blocking forever when the network is degraded.
-  try {
-    const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password });
-    const timeoutAuth = new Promise<any>((resolve) =>
-      setTimeout(() => resolve({ timeout: true }), 8000)
-    );
+  // Fast-path: non-email identifiers (client_id, phone) and demo account bypass
+  // browser Supabase SDK directly to /api/auth/login, avoiding invalid email format errors & timeouts.
+  const isNonEmailOrDemo =
+    !targetEmail.includes('@') ||
+    ((targetEmail.toLowerCase() === 'demo@gmail.com' || targetEmail.toUpperCase() === 'DEMO123') && password === 'demo123');
 
-    const res = await Promise.race([authPromise, timeoutAuth]);
+  if (!isNonEmailOrDemo) {
+    try {
+      const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password });
+      const timeoutAuth = new Promise<any>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), 3500)
+      );
 
-    if (!res.timeout && res.data?.session && res.data?.user && !res.error) {
-      _cachedSession = res.data.session;
-      _cacheTimestamp = Date.now();
-      return { session: res.data.session, user: res.data.user };
-    }
+      const res = await Promise.race([authPromise, timeoutAuth]);
 
-    // Supabase returned a definitive auth error (e.g. wrong password, user not found).
-    // Surface the real message so the user knows what went wrong.
-    // Only skip if it looks like a network/transport error — those should fall through to the server fallback.
-    if (!res.timeout && res.error) {
-      const errMsg = res.error.message || '';
-      const isNetworkErr = errMsg.includes('FetchError') || errMsg.includes('timeout') || errMsg.includes('fetch') || errMsg.includes('network');
-      if (!isNetworkErr) {
-        return { error: errMsg || 'Invalid credentials. Please try again.' };
+      if (!res.timeout && res.data?.session && res.data?.user && !res.error) {
+        _cachedSession = res.data.session;
+        _cacheTimestamp = Date.now();
+        return { session: res.data.session, user: res.data.user };
       }
+
+      // Supabase returned a definitive auth error (e.g. wrong password, user not found).
+      if (!res.timeout && res.error) {
+        const errMsg = res.error.message || '';
+        const isNetworkErr = errMsg.includes('FetchError') || errMsg.includes('timeout') || errMsg.includes('fetch') || errMsg.includes('network');
+        if (!isNetworkErr) {
+          return { error: errMsg || 'Invalid credentials. Please try again.' };
+        }
+      }
+    } catch (e) {
+      console.warn('Supabase Auth SDK call failed/timed out, attempting server auth fallback:', e);
     }
-  } catch (e) {
-    console.warn('Supabase Auth SDK call failed/timed out, attempting server auth fallback:', e);
   }
 
   // Fallback: Direct server auth via /api/auth/login

@@ -13,8 +13,8 @@ export interface FastOrderRequest {
   kite_instrument?: string;
   segment: string;
   side: 'BUY' | 'SELL';
-  order_type?: 'MARKET' | 'LIMIT' | 'SL' | 'SL-M' | 'GTT';
-  product_type?: 'NRML' | 'MIS' | 'CNC' | 'INTRADAY';
+  order_type?: 'MARKET' | 'LIMIT' | 'SL' | 'SL-M' | 'SLM' | 'GTT';
+  product_type?: 'NRML' | 'MIS' | 'CNC' | 'INTRADAY' | 'CARRY';
   qty: number;
   lots?: number;
   client_price?: number;
@@ -25,6 +25,10 @@ export interface FastOrderRequest {
   linked_position_id?: string;
   orderAttemptId?: string;
   client_click_time?: number;
+  expected_brokerage?: number;
+  brokerage?: number;
+  expected_margin?: number;
+  margin_required?: number;
 }
 
 export interface FastOrderResult {
@@ -149,6 +153,8 @@ export class OrderEngine {
         status,
         is_exit: order.is_exit || false,
         linked_position_id: order.linked_position_id || null,
+        expected_brokerage: order.expected_brokerage ?? order.brokerage ?? 0,
+        brokerage: order.expected_brokerage ?? order.brokerage ?? 0,
         created_at: new Date().toISOString(),
         execution_latency_ms: executionLatency,
       };

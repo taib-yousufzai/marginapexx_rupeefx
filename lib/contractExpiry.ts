@@ -78,8 +78,15 @@ export function isContractExpired(kiteSymbol: string): boolean {
   if (expiryYear < todayYear) return true;
   if (expiryYear === todayYear && expiryMonth < todayMonth) return true;
   if (expiryYear === todayYear && expiryMonth === todayMonth) {
-    if (kiteSymbol.includes('MCX:') || kiteSymbol.startsWith('GOLD') || kiteSymbol.startsWith('SILVER')) {
+    const symUpper = kiteSymbol.toUpperCase();
+    if (symUpper.includes('GOLD') || symUpper.includes('SILVER')) {
       if (todayDate >= 5) return true;
+    } else if (symUpper.includes('CRUDEOIL')) {
+      if (todayDate >= 18) return true;
+    } else if (symUpper.includes('NATURALGAS') || symUpper.includes('NATGAS')) {
+      if (todayDate >= 24) return true;
+    } else if (symUpper.includes('USDINR')) {
+      if (todayDate >= 26) return true;
     } else if (todayDate >= 20) {
       return true;
     }

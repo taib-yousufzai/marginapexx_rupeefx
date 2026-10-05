@@ -421,13 +421,15 @@ export default function Page() {
 
             if (data?.tradingsymbol) {
               const resolvedKey = `${base.prefix}:${data.tradingsymbol}`;
-              if (row1Idx !== -1 && newRow1[row1Idx] !== resolvedKey) {
-                newRow1[row1Idx] = resolvedKey;
-                changed = true;
-              }
-              if (row2Idx !== -1 && newRow2[row2Idx] !== resolvedKey) {
-                newRow2[row2Idx] = resolvedKey;
-                changed = true;
+              if (!isContractExpired(resolvedKey)) {
+                if (row1Idx !== -1 && newRow1[row1Idx] !== resolvedKey) {
+                  newRow1[row1Idx] = resolvedKey;
+                  changed = true;
+                }
+                if (row2Idx !== -1 && newRow2[row2Idx] !== resolvedKey) {
+                  newRow2[row2Idx] = resolvedKey;
+                  changed = true;
+                }
               }
             }
           }
@@ -460,8 +462,18 @@ export default function Page() {
   const kiteLoading = marketLoading;
 
   const buildRow = (instruments: string[]): (MarketItem & { expired?: boolean; key: string })[] => {
-    return instruments.map((key) => {
-      const q = quotes[key];
+    return instruments.map((rawKey) => {
+      let key = rawKey;
+      if (isContractExpired(key)) {
+        const parts = key.split(':');
+        const prefix = parts[0] || 'MCX';
+        const sym = parts[1] || key;
+        const baseMatch = sym.match(/^[A-Z]+/)?.[0];
+        if (baseMatch) {
+          key = getCurrentFuturesSymbol(prefix, baseMatch);
+        }
+      }
+      const q = quotes[key] || quotes[rawKey];
       const display = getDisplayInfo(key);
       const expired = !isResolvingContracts && isContractExpired(key);
       if (expired) {
