@@ -36,13 +36,13 @@ export async function POST(req: Request) {
       password === 'demo123'
     ) {
       const demoUser = {
-        id: 'demo-user-id-0000-0000',
+        id: 'dfa9b057-9187-4054-9ae6-9179c620666e',
         email: 'demo@gmail.com',
-        role: 'trader',
+        role: 'user',
         user_metadata: {
-          role: 'trader',
-          full_name: 'Demo Trader',
-          client_id: 'DEMO123',
+          role: 'user',
+          full_name: 'Demo account',
+          client_id: '481e58',
         },
       };
 
