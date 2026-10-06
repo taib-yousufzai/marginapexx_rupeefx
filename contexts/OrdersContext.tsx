@@ -37,6 +37,7 @@ function getPersistedOptimisticOrders(): MyOrder[] {
     if (!Array.isArray(list)) return [];
     const now = Date.now();
     return list.filter((o: any) => {
+      if (o.status === 'EXECUTED' || o.status === 'CANCELLED' || o.order_type === 'MARKET') return false;
       const createdTime = (o as any).created_time_ms || (o.created_at ? new Date(o.created_at).getTime() : 0);
       return createdTime > 0 && (now - createdTime < 25000);
     });
@@ -48,7 +49,12 @@ function getPersistedOptimisticOrders(): MyOrder[] {
 function savePersistedOptimisticOrders(orders: MyOrder[]) {
   if (typeof window === 'undefined') return;
   try {
-    const optList = orders.filter(o => o.id.startsWith('opt_') || o.id.startsWith('__optimistic__') || o.status === 'SUBMITTING');
+    const optList = orders.filter(o => 
+      (o.id.startsWith('opt_') || o.id.startsWith('__optimistic__')) &&
+      o.status !== 'EXECUTED' &&
+      o.status !== 'CANCELLED' &&
+      o.order_type !== 'MARKET'
+    );
     if (optList.length === 0) {
       localStorage.removeItem(OPTIMISTIC_ORDERS_PERSIST_KEY);
     } else {
