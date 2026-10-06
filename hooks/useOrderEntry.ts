@@ -86,7 +86,6 @@ export function useOrderEntry() {
 
     const matchingOppositePositions = allPositionsPool.filter(
       p => {
-        if (state.linked_position_id) return p.id === state.linked_position_id;
         const pStatus = (p.status || '').toLowerCase();
         const isOpen = !pStatus || pStatus === 'open' || pStatus === 'active';
         const pSide = (p.side || '').toUpperCase();
@@ -95,7 +94,7 @@ export function useOrderEntry() {
           isOpen;
       }
     );
-    const matchingOppositePos = matchingOppositePositions[0];
+    const matchingOppositePos = matchingOppositePositions.find(p => state.linked_position_id ? p.id === state.linked_position_id : true) || matchingOppositePositions[0];
     const effectiveIsExit = Boolean(state.is_exit || matchingOppositePositions.length > 0);
     const effectiveLinkedPosId = state.linked_position_id || (matchingOppositePositions.length === 1 && (Number(matchingOppositePos?.qty_open || matchingOppositePos?.qty_total || 0) >= (state.qty || 1)) ? matchingOppositePos.id : undefined);
 
