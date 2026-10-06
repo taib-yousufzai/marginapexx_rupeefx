@@ -96,7 +96,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
   const isSubmitting = orderState === 'processing';
   const orderError = orderState === 'error' ? orderErrorMsg : null;
   // isBusy gates the BUY/SELL footer buttons — checks local submit state of this sheet
-  const isBusy = isSubmitting;
+  const isBusy = isSubmitting || Boolean(placingOrder);
   const isExpired = useMemo(() => {
     if (!item?.expiry || effectiveExitMode || isModify) return false;
     const expiryDate = new Date(item.expiry);
@@ -1183,8 +1183,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             ...diagnosticFields,
           };
 
-          handleCloseAnimation();
-
           console.log('[DEBUG-TRADE] Executing exit order. linkedPosId:', currentLinkedPosId, 'qty:', finalQty, 'order_type:', resolvedOrderType);
 
           const executionPromise = placeOrder(orderPayload);
@@ -1203,20 +1201,23 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                   console.error('onSuccess refresh failed', e);
                 }
               }
-              setTimeout(() => {
-                window.dispatchEvent(new Event('order_placed'));
-                window.dispatchEvent(new Event('position-closed'));
-                window.dispatchEvent(new Event('history_updated'));
-              }, 1500);
+              handleCloseAnimation();
             } else {
               const errMsg = res.error || 'Exit failed. Please try again.';
+              setOrderErrorMsg(errMsg);
+              setOrderState('error');
               window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
               window.dispatchEvent(new Event('order_failed'));
             }
           }).catch(err => {
-            const errMsg = err.message || 'Exit failed. Please try again.';
+            const errMsg = err?.message || 'Exit failed. Please try again.';
+            setOrderErrorMsg(errMsg);
+            setOrderState('error');
             window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
             window.dispatchEvent(new Event('order_failed'));
+          }).finally(() => {
+            isExecutingRef.current = false;
+            setOrderState('idle');
           });
         } catch (err: any) {
           const errMsg = err.message || 'Order failed. Please try again.';
@@ -1224,9 +1225,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           setOrderState('error');
           window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
           window.dispatchEvent(new Event('order_failed'));
+          isExecutingRef.current = false;
+          setOrderState('idle');
         }
       } else {
-        // Buy/Sell flow: fire-and-forget — no loader overlay shown.
+        // Buy/Sell flow
         handedOffToOrderFlow = true;
 
         // Modify flow: update the pending order in place via PUT /api/orders/[id]
@@ -1262,6 +1265,8 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               }
             }
             handleCloseAnimation();
+            isExecutingRef.current = false;
+            setOrderState('idle');
             return;
           } catch (err: any) {
             const errMsg = (err instanceof ApiError ? (err.details as any)?.error : null) || err.message || 'Failed to modify order.';
@@ -1270,10 +1275,11 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
             window.dispatchEvent(new Event('order_failed'));
             window.dispatchEvent(new Event('global-loader-end'));
+            isExecutingRef.current = false;
+            setOrderState('idle');
             return;
           }
         }
-
 
         try {
           const activeQuoteObj = (isCrypto && bSymbol ? cryptoQuote : null) || (isComex && item?.comexSymbol ? comexQuotes[item.comexSymbol] : null) || activeKiteQuote || (fallbackQuoteObj ? {
@@ -1313,12 +1319,10 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
             ...diagnosticFields,
           };
 
-          showToast(`${placeSide} order sent for ${item.symbol}`);
-          handleCloseAnimation();
-
-          // Background execution for 0ms visual latency
+          // Await execution with active loader feedback
           placeOrder(orderPayload).then(res => {
             if (res.success) {
+              showToast(`${placeSide} order placed for ${item.symbol}`);
               window.dispatchEvent(new Event('order_placed'));
               if (onSuccess) {
                 try {
@@ -1327,20 +1331,31 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                   console.error('onSuccess refresh failed', e);
                 }
               }
+              handleCloseAnimation();
             } else {
               const errMsg = res.error || 'Order failed. Please try again.';
               if (!errMsg.includes('processing in background') && !errMsg.includes('in progress')) {
+                setOrderErrorMsg(errMsg);
+                setOrderState('error');
                 window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
                 window.dispatchEvent(new Event('order_failed'));
+              } else {
+                handleCloseAnimation();
               }
             }
           }).catch(err => {
             const errMsg = err?.message || 'Order failed. Please try again.';
             if (!errMsg.includes('processing in background') && !errMsg.includes('in progress')) {
+              setOrderErrorMsg(errMsg);
+              setOrderState('error');
               window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
               window.dispatchEvent(new Event('order_failed'));
+            } else {
+              handleCloseAnimation();
             }
           }).finally(() => {
+            isExecutingRef.current = false;
+            setOrderState('idle');
             window.dispatchEvent(new Event('global-loader-end'));
           });
         } catch (err: any) {
@@ -1350,11 +1365,12 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
           window.dispatchEvent(new Event('order_failed'));
           window.dispatchEvent(new Event('global-loader-end'));
+          isExecutingRef.current = false;
+          setOrderState('idle');
         }
       }
     } catch (e) {
       console.error('[TradeSheet handlePlace] Unexpected exception:', e);
-    } finally {
       isExecutingRef.current = false;
       setOrderState('idle');
     }
@@ -2098,26 +2114,59 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                 const buyPriceLabel = askPrice > 0 ? ` @ ${fmt(askPrice)}` : '';
                 const sellPriceLabel = bidPrice > 0 ? ` @ ${fmt(bidPrice)}` : '';
 
+                const renderButtonContent = (actionDefault: string) => {
+                  if (isBusy) {
+                    return (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                        <svg
+                          style={{
+                            width: '16px',
+                            height: '16px',
+                            animation: 'ts2Spin 0.8s linear infinite',
+                          }}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <circle style={{ opacity: 0.25 }} cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path style={{ opacity: 0.85 }} fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        <span>{isModify ? 'MODIFYING...' : effectiveExitMode ? 'EXITING...' : 'PLACING...'}</span>
+                      </span>
+                    );
+                  }
+                  return actionDefault;
+                };
+
                 return (
                   <div className="ts2-btn-row">
+                    <style>{`
+                      @keyframes ts2Spin {
+                        0% { transform: rotate(0deg); }
+                        100% { transform: rotate(360deg); }
+                      }
+                    `}</style>
                     {(side === 'SELL' || side === 'BOTH') && (
                       <button
                         className="ts2-btn ts2-btn-sell"
                         disabled={isBusy || isExpired}
-                        style={(isBusy || isExpired) ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+                        style={(isBusy || isExpired) ? { opacity: isBusy ? 0.85 : 0.5, cursor: 'not-allowed' } : {}}
                         onClick={() => handlePlace('SELL')}
                       >
-                        {isModify ? 'MODIFY' : effectiveExitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'SELL' : `SELL ${actionText}${sellPriceLabel}`}
+                        {renderButtonContent(
+                          isModify ? 'MODIFY' : effectiveExitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'SELL' : `SELL ${actionText}${sellPriceLabel}`
+                        )}
                       </button>
                     )}
                     {(side === 'BUY' || side === 'BOTH') && (
                       <button
                         className={`ts2-btn${effectiveExitMode ? ' ts2-btn-sell' : ' ts2-btn-buy'}`}
                         disabled={isBusy || isExpired}
-                        style={(isBusy || isExpired) ? { opacity: 0.5, cursor: 'not-allowed' } : {}}
+                        style={(isBusy || isExpired) ? { opacity: isBusy ? 0.85 : 0.5, cursor: 'not-allowed' } : {}}
                         onClick={() => handlePlace('BUY')}
                       >
-                        {isModify ? 'MODIFY' : effectiveExitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'BUY' : `BUY ${actionText}${buyPriceLabel}`}
+                        {renderButtonContent(
+                          isModify ? 'MODIFY' : effectiveExitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'BUY' : `BUY ${actionText}${buyPriceLabel}`
+                        )}
                       </button>
                     )}
                   </div>
