@@ -7,7 +7,6 @@
 import { useState, useCallback } from 'react';
 import { api, ApiError } from '@/lib/api';
 import { getSession } from '@/lib/auth';
-import { wsManager } from '@/contexts/MarketDataContext';
 import { soundEngine } from '@/lib/audio';
 import { useOrdersData } from '@/contexts/OrdersContext';
 import { useBalanceData } from '@/contexts/BalanceContext';
@@ -430,47 +429,11 @@ export function useOrderEntry() {
         brokerage: calculatedExpectedBrokerage,
       };
 
-      let result: { order_id: string; status: string; fill_price: number; message?: string } | null = null;
-
-      // ── Sub-Second Execution Pipeline: WebSocket Fast-Pipe (MARKET/SLM ONLY) ───────────────
-      // Fast-pipe is reserved exclusively for immediate market executions.
-      // Non-immediate orders (LIMIT, SL, GTT) are submitted directly to /api/orders.
-      if (isImmediate) {
-        try {
-          const session = await getSession();
-          const userId = session?.user?.id;
-          if (userId && wsManager.isConnectingOrOpen) {
-            const fastPayload = {
-              ...submitPayload,
-              id: tempId,
-              user_id: userId,
-              expected_brokerage: calculatedExpectedBrokerage,
-              brokerage: calculatedExpectedBrokerage,
-              client_click_time: state.client_click_time || Date.now(),
-            };
-            const wsResp = await wsManager.placeOrderFast(fastPayload, 2000);
-            if (wsResp.success && wsResp.result) {
-              result = {
-                order_id: wsResp.result.orderId || tempId,
-                status: wsResp.result.status || 'EXECUTED',
-                fill_price: wsResp.result.fill_price || state.client_price,
-                message: `Executed in ${wsResp.result.execution_latency_ms || 15}ms via FastEngine`,
-              };
-            }
-          }
-        } catch (wsErr) {
-          // Fast-pipe failed or timed out — fall through to standard API route
-        }
-      }
-
-      // Fallback: Standard API route
-      if (!result) {
-        result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>(
-          '/api/orders',
-          submitPayload,
-          { timeout: 25000 }
-        );
-      }
+      const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>(
+        '/api/orders',
+        submitPayload,
+        { timeout: 25000 }
+      );
 
       if (balanceContext?.releaseOptimisticMargin) {
         balanceContext.releaseOptimisticMargin(tempId);
@@ -684,34 +647,15 @@ export function useOrderEntry() {
     }
 
     try {
-      let result: any = null;
-
-      // 1. Try Fast-Pipe WebSocket Exit (< 20ms)
-      try {
-        const session = await getSession();
-        const userId = session?.user?.id;
-        if (userId && wsManager.isConnectingOrOpen) {
-          const wsResp = await wsManager.closePositionFast(userId, positionId, clientPrice, 2000);
-          if (wsResp.success) {
-            result = { success: true, ...wsResp.result };
-          }
-        }
-      } catch (wsErr) {
-        // Fast-pipe fallback
-      }
-
-      // 2. Fallback to REST API route
-      if (!result) {
-        result = await api.post<Record<string, unknown>>(`/api/positions/${positionId}/close`, {
-          client_price: resolvedExitPrice,
-          symbol: existingPos?.symbol || symbol,
-          settlement: existingPos?.settlement || settlement,
-          side: posSide,
-          qty,
-          entry_price: entryPrice,
-          product_type: existingPos?.product_type || 'INTRADAY'
-        }, { timeout: 45000 });
-      }
+      const result = await api.post<Record<string, unknown>>(`/api/positions/${positionId}/close`, {
+        client_price: resolvedExitPrice,
+        symbol: existingPos?.symbol || symbol,
+        settlement: existingPos?.settlement || settlement,
+        side: posSide,
+        qty,
+        entry_price: entryPrice,
+        product_type: existingPos?.product_type || 'INTRADAY'
+      }, { timeout: 45000 });
 
       const finalExitPrice = Number(result?.exit_price || result?.price || resolvedExitPrice);
       const finalPnl = entryPrice > 0 ? (isBuy ? (finalExitPrice - entryPrice) * qty : (entryPrice - finalExitPrice) * qty) : pnl;
