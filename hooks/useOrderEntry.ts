@@ -65,8 +65,7 @@ export function useOrderEntry() {
   const placeOrder = useCallback(async (state: OrderEntryState) => {
     setLoading(true);
     setError(null);
-
-    // 0. Client Pre-Flight Validation is delegated to server order engine with accurate leverage calculation
+    const orderStartTime = Date.now();
 
     const isImmediate = ['MARKET', 'SLM'].includes(state.order_type ?? '');
 
@@ -97,6 +96,14 @@ export function useOrderEntry() {
     const matchingOppositePos = matchingOppositePositions.find(p => state.linked_position_id ? p.id === state.linked_position_id : true) || matchingOppositePositions[0];
     const effectiveIsExit = Boolean(state.is_exit || matchingOppositePositions.length > 0);
     const effectiveLinkedPosId = state.linked_position_id || (matchingOppositePositions.length === 1 && (Number(matchingOppositePos?.qty_open || matchingOppositePos?.qty_total || 0) >= (state.qty || 1)) ? matchingOppositePos.id : undefined);
+
+    if (typeof window !== 'undefined') {
+      if (effectiveIsExit) {
+        window.dispatchEvent(new CustomEvent('exit-overlay-start', { detail: `Closing ${state.symbol || 'Position'}...` }));
+      } else {
+        window.dispatchEvent(new CustomEvent('global-loader-start', { detail: `Placing ${state.side || 'BUY'} Order for ${state.symbol || ''}...` }));
+      }
+    }
 
     const targetProductType = state.product_type ?? 'INTRADAY';
     let calculatedExpectedBrokerage = Number(state.expected_brokerage || 0);
@@ -607,6 +614,14 @@ export function useOrderEntry() {
 
       return { success: true, isProcessing: true };
     } finally {
+      const elapsed = Date.now() - orderStartTime;
+      if (elapsed < 350) {
+        await new Promise(r => setTimeout(r, 350 - elapsed));
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('global-loader-end'));
+        window.dispatchEvent(new Event('exit-overlay-end'));
+      }
       setLoading(false);
     }
   }, [ordersContext, balanceContext, positionsContext]);
@@ -621,6 +636,7 @@ export function useOrderEntry() {
   ) => {
     setLoading(true);
     setError(null);
+    const closeStartTime = Date.now();
 
     // Capture position before removing locally for optimistic history update
     let existingPos = positionObj || positionsContext?.positions?.find(p => p.id === positionId);
@@ -630,6 +646,11 @@ export function useOrderEntry() {
     if (!existingPos && symbol) {
       const cleanTarget = cleanSym(symbol);
       existingPos = positionsContext?.positions?.find(p => cleanSym(p.symbol || p.kite_instrument) === cleanTarget);
+    }
+
+    const posSymbol = existingPos?.symbol || symbol || 'Position';
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('exit-overlay-start', { detail: `Closing ${posSymbol}...` }));
     }
 
     const now = Date.now();
@@ -786,6 +807,14 @@ export function useOrderEntry() {
       setError(message);
       return { success: false, error: message };
     } finally {
+      const elapsed = Date.now() - closeStartTime;
+      if (elapsed < 350) {
+        await new Promise(r => setTimeout(r, 350 - elapsed));
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('exit-overlay-end'));
+        window.dispatchEvent(new Event('global-loader-end'));
+      }
       setLoading(false);
     }
   }, [positionsContext]);
@@ -793,10 +822,15 @@ export function useOrderEntry() {
   const closePositionsBatch = useCallback(async (positionIds: (string | any)[]) => {
     setLoading(true);
     setError(null);
+    const batchStartTime = Date.now();
 
     const now = Date.now();
     const rawList = Array.isArray(positionIds) ? positionIds : [positionIds];
     const ids = rawList.map((p: any) => (typeof p === 'string' ? p : p?.id)).filter(Boolean);
+
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('exit-overlay-start', { detail: `Closing ${ids.length} Position(s)...` }));
+    }
 
     // Optimistically remove positions immediately (<1ms) for snappy UI
     if (positionsContext?.removePositionLocally) {
@@ -980,6 +1014,14 @@ export function useOrderEntry() {
       setError(message);
       return { success: false, error: message };
     } finally {
+      const elapsed = Date.now() - batchStartTime;
+      if (elapsed < 350) {
+        await new Promise(r => setTimeout(r, 350 - elapsed));
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('exit-overlay-end'));
+        window.dispatchEvent(new Event('global-loader-end'));
+      }
       setLoading(false);
     }
   }, [positionsContext]);
