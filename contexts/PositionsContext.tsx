@@ -142,72 +142,6 @@ const resolveKitePrefix = (key: string, settlement: string) => {
   return `${prefix}${baseKey}`;
 };
 
-const POSITIONS_PERSIST_KEY = 'marginApex_open_positions_persisted';
-const OPTIMISTIC_POSITIONS_PERSIST_KEY = 'marginApex_optimistic_positions_persisted';
-const OPTIMISTIC_REMOVALS_PERSIST_KEY = 'marginApex_optimistic_removals_persisted';
-
-function getPersistedOptimisticPositions(): MyPosition[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
-    if (!raw) return [];
-    const list = JSON.parse(raw);
-    if (!Array.isArray(list)) return [];
-    const now = Date.now();
-    return list.filter((p: any) => {
-      const createdTime = p.created_time_ms || (p.entry_time ? new Date(p.entry_time).getTime() : 0);
-      return createdTime > 0 && (now - createdTime < 4000);
-    });
-  } catch {
-    return [];
-  }
-}
-
-function savePersistedOptimisticPositions(positions: MyPosition[]) {
-  if (typeof window === 'undefined') return;
-  try {
-    const optList = positions.filter(p => p.id.startsWith('__optimistic__') || p.id.startsWith('opt_'));
-    if (optList.length === 0) {
-      localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
-    } else {
-      localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(optList));
-    }
-  } catch { }
-}
-
-function getPersistedOptimisticRemovals(): Map<string, number> {
-  const map = new Map<string, number>();
-  if (typeof window === 'undefined') return map;
-  try {
-    const raw = localStorage.getItem(OPTIMISTIC_REMOVALS_PERSIST_KEY);
-    if (!raw) return map;
-    const obj = JSON.parse(raw);
-    const now = Date.now();
-    for (const [id, ts] of Object.entries(obj)) {
-      const timeMs = Number(ts);
-      if (now - timeMs < 25000) {
-        map.set(id, timeMs);
-      }
-    }
-  } catch { }
-  return map;
-}
-
-function savePersistedOptimisticRemovals(removals: Map<string, number>) {
-  if (typeof window === 'undefined') return;
-  try {
-    if (removals.size === 0) {
-      localStorage.removeItem(OPTIMISTIC_REMOVALS_PERSIST_KEY);
-    } else {
-      const obj: Record<string, number> = {};
-      for (const [id, ts] of removals.entries()) {
-        obj[id] = ts;
-      }
-      localStorage.setItem(OPTIMISTIC_REMOVALS_PERSIST_KEY, JSON.stringify(obj));
-    }
-  } catch { }
-}
-
 const NON_CRYPTO_USD_SYMBOLS = ['XAUUSD', 'XAGUSD', 'XTIUSD', 'XCUUSD', 'XNGUSD', 'XPTUSD', 'XPDUSD', 'GBPUSD', 'EURUSD', 'AUDUSD', 'NZDUSD', 'USDCAD', 'USDJPY', 'USDCHF'];
 
 export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { children: React.ReactNode; refreshInterval?: number }) => {
@@ -216,55 +150,30 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     if (cachedBoot && Array.isArray(cachedBoot.positions)) {
       return cachedBoot.positions;
     }
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
-        const optPositions = getPersistedOptimisticPositions();
-        let list: MyPosition[] = [];
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (Array.isArray(parsed)) list = parsed;
-        }
-        return [...optPositions, ...list];
-      } catch { }
-    }
     return [];
   });
   const [loading, setLoading] = useState(() => {
     const cachedBoot = getCachedBootstrapData();
     if (cachedBoot && Array.isArray(cachedBoot.positions)) return false;
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(POSITIONS_PERSIST_KEY);
-        const optPositions = getPersistedOptimisticPositions();
-        if (stored || optPositions.length > 0) return false;
-      } catch { }
-    }
     return true;
   });
   const [error, setError] = useState<string | null>(null);
   const [inFlightConversions, setInFlightConversions] = useState<Record<string, string>>({});
-  // segmentSettings now comes from TradeConfigProvider — no local fetch needed
   const { segmentSettings } = useTradeConfig();
-  const optimisticallyRemovedTimes = useRef<Map<string, number>>(getPersistedOptimisticRemovals());
-  const optimisticallyRemovedIds = useRef<Set<string>>(new Set(optimisticallyRemovedTimes.current.keys()));
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
-  // Tracks IDs of positions that were added optimistically (not yet confirmed by DB)
-  const optimisticPositionIds = useRef<Set<string>>(new Set(getPersistedOptimisticPositions().map(p => p.id)));
-  const lastOptimisticAddRef = useRef<{ signature: string; time: number }>({ signature: '', time: 0 });
-  const processedOptIdsRef = useRef<Set<string>>(new Set());
 
-  // Static properties map to cache computations that never change per position lifecycle
+  // In-memory tracking for optimistic state
+  const recentlyClosedTimesRef = useRef<Map<string, number>>(new Map());
+  const optimisticPositionsRef = useRef<Map<string, MyPosition>>(new Map());
+  const optimisticallyUpdatedPositionsRef = useRef<Map<string, { qty_open: number; qty_total?: number; time: number }>>(new Map());
+  const recentlyRemovedPositionsRef = useRef<Map<string, MyPosition>>(new Map());
   const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({});
 
-
-  const recentlyRemovedPositionsRef = useRef<Map<string, MyPosition>>(new Map());
-  const optimisticallyUpdatedPositions = useRef<Map<string, { qty_open: number; qty_total?: number; time: number }>>(new Map());
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const updatePositionLocally = useCallback((posId: string, updatedFields: Partial<MyPosition>) => {
     if (updatedFields.qty_open !== undefined) {
-      optimisticallyUpdatedPositions.current.set(posId, {
+      optimisticallyUpdatedPositionsRef.current.set(posId, {
         qty_open: Number(updatedFields.qty_open),
         qty_total: updatedFields.qty_total !== undefined ? Number(updatedFields.qty_total) : undefined,
         time: Date.now()
@@ -277,11 +186,11 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
   const removePositionLocally = useCallback((posId: string, positionObj?: Partial<MyPosition>) => {
     invalidateBootstrapCache();
-    optimisticallyRemovedIds.current.add(posId);
-    optimisticallyRemovedTimes.current.set(posId, Date.now());
-    optimisticallyUpdatedPositions.current.delete(posId);
-    optimisticPositionIds.current.delete(posId);
-    savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
+    const now = Date.now();
+    recentlyClosedTimesRef.current.set(posId, now);
+    optimisticallyUpdatedPositionsRef.current.delete(posId);
+    optimisticPositionsRef.current.delete(posId);
+
     setRawPositions(prev => {
       const target = prev.find(p => p.id === posId);
       const targetSymbol = cleanSym(target?.symbol || positionObj?.symbol || '');
@@ -290,15 +199,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       } else if (positionObj && positionObj.symbol) {
         recentlyRemovedPositionsRef.current.set(posId, { id: posId, ...positionObj } as MyPosition);
       }
-      // Also purge any optimistic positions for this symbol
+
       if (targetSymbol) {
         prev.forEach(p => {
           if ((p.id.startsWith('__optimistic__') || p.id.startsWith('opt_')) && cleanSym(p.symbol || p.kite_instrument) === targetSymbol) {
-            optimisticallyRemovedIds.current.add(p.id);
-            optimisticPositionIds.current.delete(p.id);
+            recentlyClosedTimesRef.current.set(p.id, now);
+            optimisticPositionsRef.current.delete(p.id);
           }
         });
       }
+
       const next = prev.filter(p => {
         if (p.id === posId) return false;
         if (targetSymbol && (p.id.startsWith('__optimistic__') || p.id.startsWith('opt_')) && cleanSym(p.symbol || p.kite_instrument) === targetSymbol) {
@@ -306,27 +216,12 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         }
         return true;
       });
+
       if (typeof window !== 'undefined') {
         const lastMap = (window as any).__lastPositionsMap || new Map();
         if (target) lastMap.set(posId, target);
         else if (positionObj && positionObj.symbol) lastMap.set(posId, { id: posId, ...positionObj });
         (window as any).__lastPositionsMap = lastMap;
-        try {
-          // Update main positions cache
-          localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
-          // Also nuke the optimistic positions cache for this position / symbol — prevents ghost reappearance
-          const storedOpt = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
-          if (storedOpt) {
-            const parsed: MyPosition[] = JSON.parse(storedOpt);
-            const filtered = parsed.filter(p => {
-              if (p.id === posId) return false;
-              if (targetSymbol && cleanSym(p.symbol || p.kite_instrument) === targetSymbol) return false;
-              return true;
-            });
-            if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
-            else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
-          }
-        } catch { }
       }
       return next;
     });
@@ -342,21 +237,19 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     reductions.forEach(r => {
       if (r.isFullyClosed || r.qty_open <= 0) {
         removedSet.add(r.posId);
-        optimisticallyRemovedIds.current.add(r.posId);
-        optimisticallyRemovedTimes.current.set(r.posId, now);
-        optimisticallyUpdatedPositions.current.delete(r.posId);
-        optimisticPositionIds.current.delete(r.posId);
+        recentlyClosedTimesRef.current.set(r.posId, now);
+        optimisticallyUpdatedPositionsRef.current.delete(r.posId);
+        optimisticPositionsRef.current.delete(r.posId);
         const sym = cleanSym(r.positionObj?.symbol || '');
         if (sym) removedSymbols.add(sym);
       } else {
-        optimisticallyUpdatedPositions.current.set(r.posId, {
+        optimisticallyUpdatedPositionsRef.current.set(r.posId, {
           qty_open: r.qty_open,
           qty_total: r.qty_total,
           time: now
         });
       }
     });
-    savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
 
     setRawPositions(prev => {
       const reductionMap = new Map(reductions.map(r => [r.posId, r]));
@@ -365,7 +258,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         const pSym = cleanSym(p.symbol || p.kite_instrument || '');
         if (removedSet.has(p.id) || ((p.id.startsWith('__optimistic__') || p.id.startsWith('opt_')) && removedSymbols.has(pSym))) {
           recentlyRemovedPositionsRef.current.set(p.id, p);
-          optimisticPositionIds.current.delete(p.id);
+          optimisticPositionsRef.current.delete(p.id);
           continue;
         }
         const red = reductionMap.get(p.id);
@@ -397,27 +290,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           }
         });
         (window as any).__lastPositionsMap = lastMap;
-
-        try {
-          localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(next.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
-          const storedOpt = localStorage.getItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
-          if (storedOpt) {
-            const parsed: MyPosition[] = JSON.parse(storedOpt);
-            const removedSymbols = new Set(
-              reductions
-                .filter(r => r.isFullyClosed || r.qty_open <= 0)
-                .map(r => cleanSym(r.positionObj?.symbol || prev.find(p => p.id === r.posId)?.symbol || ''))
-                .filter(Boolean)
-            );
-            const filtered = parsed.filter(p => {
-              if (removedSet.has(p.id)) return false;
-              if (removedSymbols.has(cleanSym(p.symbol || p.kite_instrument))) return false;
-              return true;
-            });
-            if (filtered.length === 0) localStorage.removeItem(OPTIMISTIC_POSITIONS_PERSIST_KEY);
-            else localStorage.setItem(OPTIMISTIC_POSITIONS_PERSIST_KEY, JSON.stringify(filtered));
-          }
-        } catch { }
       }
       return next;
     });
@@ -429,7 +301,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     const cleanSymbol = (partialPos.symbol || '').trim();
     if (!cleanSymbol) return;
 
-    // Clear recently removed guard for this symbol so new re-entry trades appear immediately
+    // Clear recently removed guard for this symbol so re-entry trades appear immediately
     const cleanSymUpper = cleanSym(cleanSymbol);
     for (const [id, rp] of Array.from(recentlyRemovedPositionsRef.current.entries())) {
       if (cleanSym(rp.symbol || rp.kite_instrument) === cleanSymUpper) {
@@ -461,27 +333,17 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       locked_margin: (partialPos as any).locked_margin || 0,
     } as any;
 
-    optimisticPositionIds.current.add(tempId);
+    optimisticPositionsRef.current.set(tempId, newPos);
 
     setRawPositions(prev => {
       if (prev.some(p => p.id === tempId)) return prev;
-      const next = [newPos, ...prev];
-      if (typeof window !== 'undefined') {
-        savePersistedOptimisticPositions(next);
-      }
-      return next;
+      return [newPos, ...prev];
     });
   }, []);
 
   const removeOptimisticPosition = useCallback((optIdOrTempId: string) => {
-    optimisticPositionIds.current.delete(optIdOrTempId);
-    setRawPositions(prev => {
-      const next = prev.filter(p => p.id !== optIdOrTempId);
-      if (typeof window !== 'undefined') {
-        savePersistedOptimisticPositions(next);
-      }
-      return next;
-    });
+    optimisticPositionsRef.current.delete(optIdOrTempId);
+    setRawPositions(prev => prev.filter(p => p.id !== optIdOrTempId));
   }, []);
 
   const startConversion = useCallback((posId: string, newType: string) => {
@@ -498,7 +360,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
   const fetchPositions = useCallback(async (options?: { fresh?: boolean }) => {
     try {
-      // Ensure we have an active session token before fetching
       let { token } = getSharedSessionSync();
       if (!token) {
         const session = await getSharedSession();
@@ -529,23 +390,20 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         rawPositionsFromServer = data.positions || [];
       }
 
-      // Clean up optimisticallyRemovedIds strictly based on 20s TTL
       const now = Date.now();
-      for (const id of Array.from(optimisticallyRemovedIds.current)) {
-        const removedAt = optimisticallyRemovedTimes.current.get(id) || 0;
-        if (now - removedAt > 20000) {
-          optimisticallyRemovedIds.current.delete(id);
-          optimisticallyRemovedTimes.current.delete(id);
+      // Clean up closed IDs older than 5 seconds
+      for (const [id, closedAt] of Array.from(recentlyClosedTimesRef.current.entries())) {
+        if (now - closedAt > 5000) {
+          recentlyClosedTimesRef.current.delete(id);
         }
       }
-      savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
 
-      // Positions from the database are authoritative, but we MUST exclude positions that were optimistically removed within the 20s window
+      // Positions from the database are authoritative, excluding IDs closed within the last 5s
       const basePositions: MyPosition[] = rawPositionsFromServer
-        .filter(p => !optimisticallyRemovedIds.current.has(p.id))
+        .filter(p => !recentlyClosedTimesRef.current.has(p.id))
         .map(p => {
-          const updated = optimisticallyUpdatedPositions.current.get(p.id);
-          if (updated && now - updated.time < 20000) {
+          const updated = optimisticallyUpdatedPositionsRef.current.get(p.id);
+          if (updated && now - updated.time < 5000) {
             return {
               ...p,
               qty_open: updated.qty_open,
@@ -555,38 +413,24 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           return p;
         });
 
-      // Reconcile optimistic positions with server response
-      const persistedOpt = getPersistedOptimisticPositions();
-
       setRawPositions(prev => {
-        const existingOptMap = new Map<string, MyPosition>();
-        [...persistedOpt, ...prev.filter(p => p.id.startsWith('__optimistic__') || p.id.startsWith('opt_'))].forEach(p => {
-          existingOptMap.set(p.id, p);
-        });
-
-        // Track consumed quantities per server position lot so 1 server position lot does NOT consume/delete all optimistic positions
+        // Collect active optimistic positions (< 4 seconds old and not closed)
+        const activeOptPositions: MyPosition[] = [];
         const consumedServerQty = new Map<string, number>();
 
-        // Sort optimistic positions chronologically (oldest first) so earlier orders match first
-        const sortedOptPositions = Array.from(existingOptMap.values()).sort((a, b) => {
+        // Sort optimistic positions chronologically
+        const sortedOptPositions = Array.from(optimisticPositionsRef.current.values()).sort((a, b) => {
           const tA = (a as any).created_time_ms || (a.entry_time ? new Date(a.entry_time).getTime() : 0);
           const tB = (b as any).created_time_ms || (b.entry_time ? new Date(b.entry_time).getTime() : 0);
           return tA - tB;
         });
 
-        const activeOptPositions: MyPosition[] = [];
         for (const optPos of sortedOptPositions) {
           const optId = optPos.id;
           const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
 
-          // If this optimistic position was already explicitly removed/closed, discard it
-          if (optimisticallyRemovedIds.current.has(optId)) {
-            optimisticPositionIds.current.delete(optId);
-            continue;
-          }
-
-          if (now - createdTime > 4000) {
-            optimisticPositionIds.current.delete(optId);
+          if (recentlyClosedTimesRef.current.has(optId) || (now - createdTime > 4000)) {
+            optimisticPositionsRef.current.delete(optId);
             continue;
           }
 
@@ -594,21 +438,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           const optSym = cleanSym(optPos.symbol || optPos.kite_instrument);
           const optSide = (optPos.side || '').toUpperCase();
 
-          // Check if this symbol was removed BEFORE this optimistic position was created
-          const symbolRecentlyRemoved = Array.from(recentlyRemovedPositionsRef.current.values()).some(
-            rp => {
-              const removedTime = optimisticallyRemovedTimes.current.get(rp.id) || 0;
-              return cleanSym(rp.symbol || rp.kite_instrument) === optSym &&
-                     (now - removedTime < 20000) &&
-                     (createdTime < removedTime);
-            }
-          );
-          if (symbolRecentlyRemoved) {
-            optimisticPositionIds.current.delete(optId);
-            continue;
-          }
-
-          // Check if server already has a matching unconsumed position for this symbol & side
+          // Check if server already has a matching unconsumed position
           let matched = false;
           for (const sp of basePositions) {
             const spSym = cleanSym(sp.symbol || sp.kite_instrument);
@@ -616,7 +446,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
             if (spSym !== optSym || spSide !== optSide) continue;
 
             const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
-            // Match server position created near or after this optimistic position
             if (spTime < createdTime - 5000) continue;
 
             const spTotalQty = Number(sp.qty_open || sp.qty_total || 0);
@@ -631,20 +460,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           }
 
           if (matched) {
-            optimisticPositionIds.current.delete(optId);
-            existingOptMap.delete(optId);
+            optimisticPositionsRef.current.delete(optId);
           } else {
             activeOptPositions.push(optPos);
           }
         }
 
-        if (typeof window !== 'undefined') {
-          savePersistedOptimisticPositions(activeOptPositions);
-        }
-
         const merged = [...activeOptPositions, ...basePositions];
 
-        // Precompute static properties for any newly loaded positions
+        // Precompute static properties for newly loaded positions
         const staticProps = staticPositionPropsRef.current;
         merged.forEach(p => {
           if (!staticProps[p.id]) {
@@ -677,13 +501,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           }
         });
 
-        if (typeof window !== 'undefined') {
-          try {
-            localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(merged.filter(p => !p.id.startsWith('__optimistic__') && !p.id.startsWith('opt_'))));
-            savePersistedOptimisticPositions(merged);
-          } catch { }
-        }
-
         return merged;
       });
     } catch (err: any) {
@@ -699,29 +516,20 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
   const restorePositionLocally = useCallback((posId?: string, fallbackPos?: Partial<MyPosition>) => {
     if (posId) {
-      optimisticallyRemovedIds.current.delete(posId);
-      optimisticallyRemovedTimes.current.delete(posId);
+      recentlyClosedTimesRef.current.delete(posId);
       const stashed = (fallbackPos && fallbackPos.symbol ? fallbackPos : null) || recentlyRemovedPositionsRef.current.get(posId);
       if (stashed && (stashed as MyPosition).symbol) {
         setRawPositions(prev => {
           if (prev.some(p => p.id === posId || (cleanSym(p.symbol) === cleanSym(stashed.symbol) && p.side === stashed.side))) {
             return prev;
           }
-          const restored = [{ id: posId, ...stashed } as MyPosition, ...prev];
-          if (typeof window !== 'undefined') {
-            try {
-              localStorage.setItem(POSITIONS_PERSIST_KEY, JSON.stringify(restored));
-            } catch { }
-          }
-          return restored;
+          return [{ id: posId, ...stashed } as MyPosition, ...prev];
         });
       }
     } else {
-      optimisticallyRemovedIds.current.clear();
-      optimisticallyRemovedTimes.current.clear();
+      recentlyClosedTimesRef.current.clear();
       recentlyRemovedPositionsRef.current.clear();
     }
-    savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
     fetchPositions({ fresh: true });
   }, [fetchPositions]);
 
@@ -732,76 +540,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     const handleBootstrapUpdated = (evt: Event) => {
       const detail = (evt as CustomEvent).detail;
       if (detail && Array.isArray(detail.positions)) {
-        const rawPositionsFromServer: MyPosition[] = detail.positions;
-        const now = Date.now();
-        for (const id of Array.from(optimisticallyRemovedIds.current)) {
-          const removedAt = optimisticallyRemovedTimes.current.get(id) || 0;
-          if (now - removedAt > 20000) {
-            optimisticallyRemovedIds.current.delete(id);
-            optimisticallyRemovedTimes.current.delete(id);
-          }
-        }
-        // Positions from the server / database are authoritative, excluding optimistically removed
-        const basePositions: MyPosition[] = rawPositionsFromServer
-          .filter(p => !optimisticallyRemovedIds.current.has(p.id))
-          .map(p => {
-            const updated = optimisticallyUpdatedPositions.current.get(p.id);
-            if (updated && now - updated.time < 20000) {
-              return {
-                ...p,
-                qty_open: updated.qty_open,
-                qty_total: updated.qty_total !== undefined ? updated.qty_total : updated.qty_open,
-              };
-            }
-            return p;
-          });
-        const persistedOpt = getPersistedOptimisticPositions();
-        setRawPositions(prev => {
-          const existingOptMap = new Map<string, MyPosition>();
-          [...persistedOpt, ...prev.filter(p => p.id.startsWith('__optimistic__') || p.id.startsWith('opt_'))].forEach(p => {
-            existingOptMap.set(p.id, p);
-          });
-          const activeOptPositions: MyPosition[] = [];
-          for (const [optId, optPos] of existingOptMap.entries()) {
-            const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
-            // If this optimistic position was already explicitly closed/removed, discard it
-            if (optimisticallyRemovedIds.current.has(optId)) {
-              optimisticPositionIds.current.delete(optId);
-              continue;
-            }
-            if (now - createdTime > 4000) {
-              optimisticPositionIds.current.delete(optId);
-              continue;
-            }
-            const optSym = cleanSym(optPos.symbol || optPos.kite_instrument);
-            const symbolRecentlyRemoved = Array.from(recentlyRemovedPositionsRef.current.values()).some(
-              rp => {
-                const removedTime = optimisticallyRemovedTimes.current.get(rp.id) || 0;
-                return cleanSym(rp.symbol || rp.kite_instrument) === optSym &&
-                       (now - removedTime < 20000) &&
-                       (createdTime < removedTime);
-              }
-            );
-            if (symbolRecentlyRemoved) {
-              optimisticPositionIds.current.delete(optId);
-              continue;
-            }
-            const hasMatchingServerPos = basePositions.some(sp => {
-              const sameSym = cleanSym(sp.symbol || sp.kite_instrument) === optSym;
-              const sameSide = (sp.side || '').toUpperCase() === (optPos.side || '').toUpperCase();
-              const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
-              return sameSym && sameSide && (spTime >= createdTime - 5000);
-            });
-            if (hasMatchingServerPos) {
-              optimisticPositionIds.current.delete(optId);
-            } else {
-              activeOptPositions.push(optPos);
-            }
-          }
-          const merged = [...activeOptPositions, ...basePositions];
-          return merged;
-        });
-        setLoading(false);
+        fetchPositions({ fresh: false });
       }
     };
     window.addEventListener('user_bootstrap_updated', handleBootstrapUpdated);
@@ -836,9 +575,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       if (detail && !detail.is_exit) {
         addOptimisticPosition(detail);
       }
-      // Immediate fetch with fresh cache buster
       fetchPositions({ fresh: true });
-      // Follow-up fetch in 800ms
       debouncedFetch(800, true);
     };
 
@@ -848,9 +585,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     };
 
     const handleOrderFailed = () => {
-      optimisticallyRemovedIds.current.clear();
-      optimisticallyRemovedTimes.current.clear();
-      savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
+      recentlyClosedTimesRef.current.clear();
+      recentlyRemovedPositionsRef.current.clear();
       fetchPositions({ fresh: true });
     };
 
@@ -863,21 +599,20 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
       fullyClosedPositions.forEach((p: any) => {
         if (p?.id) {
-          optimisticallyRemovedIds.current.add(p.id);
-          optimisticallyRemovedTimes.current.set(p.id, now);
-          optimisticallyUpdatedPositions.current.delete(p.id);
+          recentlyClosedTimesRef.current.set(p.id, now);
+          optimisticallyUpdatedPositionsRef.current.delete(p.id);
+          optimisticPositionsRef.current.delete(p.id);
         }
       });
       partialPositions.forEach((p: any) => {
         if (p?.id) {
-          optimisticallyUpdatedPositions.current.set(p.id, {
+          optimisticallyUpdatedPositionsRef.current.set(p.id, {
             qty_open: Number(p.qty_open),
             qty_total: p.qty_total !== undefined ? Number(p.qty_total) : Number(p.qty_open),
             time: now
           });
         }
       });
-      savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
       setRawPositions(prev => {
         const closedIdSet = new Set(fullyClosedPositions.map((p: any) => p?.id).filter(Boolean));
         const partialMap = new Map(partialPositions.map((p: any) => [p.id, p]));
@@ -894,7 +629,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
             }
             return p;
           });
-        savePersistedOptimisticPositions(next);
         return next;
       });
     };
@@ -994,7 +728,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     const props = staticPositionPropsRef.current;
 
     return rawPositions
-      .filter(p => !optimisticallyRemovedIds.current.has(p.id))
+      .filter(p => !recentlyClosedTimesRef.current.has(p.id))
       .map(p => {
       const product_type = inFlightConversions[p.id] || p.product_type;
       let ltp = p.ltp || p.entry_price;
