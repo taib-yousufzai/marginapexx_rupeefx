@@ -21,6 +21,7 @@ import HoldLockCountdown from '@/components/HoldLockCountdown';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
 import { fmtSymbolName, isUsdInstrument, fmtTime, fmtDate, fmtDateTime, fmtTimestamp } from '@/lib/format';
 import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
+import { invalidateBootstrapCache } from '@/lib/bootstrapService';
 import TickFlash from '@/components/TickFlash';
 import './page.css';
 
@@ -627,6 +628,7 @@ export default function PositionPage() {
     const posToClose = positions.find(p => p.id === posId);
 
     // Optimistically remove position immediately (<1ms) for instantaneous UI responsiveness
+    invalidateBootstrapCache();
     if (posToClose && removePositionLocally) {
       removePositionLocally(posId, posToClose);
     }
@@ -644,6 +646,7 @@ export default function PositionPage() {
     ).then(res => {
       if (res.success) {
         showToast('Position closed successfully');
+        invalidateBootstrapCache();
         refresh();
         window.dispatchEvent(new CustomEvent('position-closed'));
       } else {
@@ -666,7 +669,12 @@ export default function PositionPage() {
   };
 
   const openPositions = useMemo(() => {
-    return positions.filter(p => !p.status || p.status.toLowerCase() === 'open' || p.status.toLowerCase() === 'active');
+    return positions.filter(p => {
+      const st = (p.status || '').toLowerCase();
+      const isOpen = !st || st === 'open' || st === 'active';
+      const hasQty = Number(p.qty_open ?? p.qty_total ?? 1) > 0;
+      return isOpen && hasQty;
+    });
   }, [positions]);
 
   // closedPositions comes from the separate fetch above (positions hook only returns open/active)
@@ -927,6 +935,7 @@ export default function PositionPage() {
     }
 
     const posIds = exitablePositions.map(p => p.id);
+    invalidateBootstrapCache();
     if (removePositionLocally) {
       exitablePositions.forEach(p => removePositionLocally(p.id, p));
     }
@@ -934,6 +943,7 @@ export default function PositionPage() {
     showToast(`Closing ${posIds.length} position(s)...`);
 
     closePositionsBatch(exitablePositions).then(result => {
+      invalidateBootstrapCache();
       if (result.success && result.results) {
         let firstError = '';
         const successfulIds = new Set(result.results.filter((r: any) => r.success).map((r: any) => r.positionId));
@@ -982,6 +992,7 @@ export default function PositionPage() {
 
     const posIds = group.ids;
     const groupPositions = positions.filter(p => group.ids.includes(p.id));
+    invalidateBootstrapCache();
     if (removePositionLocally) {
       if (groupPositions.length > 0) {
         groupPositions.forEach(p => removePositionLocally(p.id, p));
@@ -993,6 +1004,7 @@ export default function PositionPage() {
     showToast(`Closing ${group.symbol} position(s)...`);
 
     closePositionsBatch(groupPositions.length > 0 ? groupPositions : posIds).then(result => {
+      invalidateBootstrapCache();
       if (result.success) {
         const successfulIds = new Set((result.results || []).filter((r: any) => r.success).map((r: any) => r.positionId));
         let hadFailures = false;

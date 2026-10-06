@@ -68,3 +68,9 @@ export async function fetchUserBootstrap(force = false): Promise<BootstrapData |
 export function getCachedBootstrapData(): BootstrapData | null {
   return cachedBootstrapData;
 }
+
+export function invalidateBootstrapCache(): void {
+  cachedBootstrapData = null;
+  lastFetchTime = 0;
+  pendingFetchPromise = null;
+}
