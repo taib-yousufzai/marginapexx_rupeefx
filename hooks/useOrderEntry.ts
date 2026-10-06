@@ -130,7 +130,7 @@ export function useOrderEntry() {
       kite_instrument: state.kite_instrument,
       segment: state.segment || 'NSE',
       side: state.side,
-      status: isImmediate ? 'SUBMITTING' : 'PENDING',
+      status: isImmediate ? 'EXECUTED' : 'PENDING',
       qty: state.qty,
       lots: state.lots || 1,
       fill_price: state.client_price,

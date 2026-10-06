@@ -222,9 +222,29 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       soundEngine.playOrderExecuted();
       fetchOrders({ fresh: true });
     };
+    const handlePositionClosed = (e: any) => {
+      const posList = e?.detail?.positions || (e?.detail?.position ? [e.detail.position] : []);
+      const posIds = new Set(posList.map((p: any) => p.id));
+      if (posIds.size > 0) {
+        setOrders(prev => {
+          const filtered = prev.filter(o => {
+            if (o.id.startsWith('pos-')) {
+              const linkedId = o.id.replace('pos-sl-', '').replace('pos-target-', '').replace('pos-gtt-', '');
+              if (posIds.has(linkedId) || (o.linked_position_id && posIds.has(o.linked_position_id))) return false;
+            }
+            return true;
+          });
+          saveOrdersToCache(filtered);
+          return filtered;
+        });
+      }
+      fetchOrders({ fresh: true });
+    };
+
     window.addEventListener('order_placed', handleOrderPlaced);
-    window.addEventListener('position-closed', handleOrderPlaced);
-    window.addEventListener('position_closed', handleOrderPlaced);
+    window.addEventListener('position-closed', handlePositionClosed);
+    window.addEventListener('position_closed', handlePositionClosed);
+    window.addEventListener('position_closed_optimistic', handlePositionClosed);
     window.addEventListener('order_executed', handleOrderExecuted);
 
     async function init() {
@@ -306,6 +326,9 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       const newOrders = prev.map(o => (o.id === tempId ? realOrder : o));
       saveOrdersToCache(newOrders);
       savePersistedOptimisticOrders(newOrders);
+      const removals = getPersistedOptimisticRemovals();
+      removals.set(tempId, Date.now());
+      savePersistedOptimisticRemovals(removals);
       return newOrders;
     });
   }, [saveOrdersToCache]);
