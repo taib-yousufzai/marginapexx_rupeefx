@@ -1329,13 +1329,17 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
               }
             } else {
               const errMsg = res.error || 'Order failed. Please try again.';
+              if (!errMsg.includes('processing in background') && !errMsg.includes('in progress')) {
+                window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
+                window.dispatchEvent(new Event('order_failed'));
+              }
+            }
+          }).catch(err => {
+            const errMsg = err?.message || 'Order failed. Please try again.';
+            if (!errMsg.includes('processing in background') && !errMsg.includes('in progress')) {
               window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
               window.dispatchEvent(new Event('order_failed'));
             }
-          }).catch(err => {
-            const errMsg = err.message || 'Order failed. Please try again.';
-            window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
-            window.dispatchEvent(new Event('order_failed'));
           }).finally(() => {
             window.dispatchEvent(new Event('global-loader-end'));
           });

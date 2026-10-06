@@ -638,11 +638,12 @@ export function useOrderEntry() {
           }
         }
         soundEngine.playOrderRejected();
+        console.warn('[useOrderEntry] Order placement rejected:', message);
+        setError(message);
+        return { success: false, isProcessing: false, error: message };
       }
 
-      console.warn('[useOrderEntry] Order placement status:', message);
-      setError(message);
-      return { success: !isBackgroundProcessing, isProcessing: isBackgroundProcessing, error: message };
+      return { success: true, isProcessing: true };
     } finally {
       setLoading(false);
     }

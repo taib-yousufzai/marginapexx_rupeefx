@@ -1,14 +1,21 @@
 'use client';
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import Footer from '@/components/Footer';
 import AnimatedLoader from '@/components/AnimatedLoader';
 import { ErrorModal } from '@/components/ErrorModal';
+import ErrorBoundary from '@/components/ErrorBoundary';
+import { getSavedTheme, applyTheme } from '@/lib/theme';
 
 export default function ClientShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() || '/';
+
+  // Immediately synchronize theme on client mount/hydration
+  useEffect(() => {
+    applyTheme(getSavedTheme());
+  }, []);
 
   const noShellRoutes = [
     '/login',
@@ -32,6 +39,30 @@ export default function ClientShell({ children }: { children: React.ReactNode })
 
   const [isGlobalLoading, setIsGlobalLoading] = React.useState(false);
   const [loadingText, setLoadingText] = React.useState('Processing Order...');
+  const [isOffline, setIsOffline] = React.useState(false);
+  const [showReconnected, setShowReconnected] = React.useState(false);
+
+  React.useEffect(() => {
+    const handleOnline = () => {
+      setIsOffline(false);
+      setShowReconnected(true);
+      setTimeout(() => setShowReconnected(false), 3000);
+    };
+    const handleOffline = () => {
+      setIsOffline(true);
+    };
+
+    if (typeof window !== 'undefined') {
+      setIsOffline(!navigator.onLine);
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // ── Centralised order error modal ────────────────────────────────────
   // Single listener for the 'order_error' custom event fired by TradeSheet
@@ -73,13 +104,11 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       const msg = (e as CustomEvent).detail || 'Order failed.';
       const msgStr = String(msg);
 
-      // In-flight background processing / timeout messages should never block the user with a modal
+      // In-flight background processing / timeout messages should be completely silent (no toast, no modal)
       if (
         msgStr.includes('processing in background') ||
         msgStr.includes('in progress')
       ) {
-        setToastMsg(msgStr);
-        setToastVisible(true);
         return;
       }
 
@@ -111,10 +140,39 @@ export default function ClientShell({ children }: { children: React.ReactNode })
       {isGlobalLoading && (
         <AnimatedLoader fullScreen={true} text={loadingText} />
       )}
+      {/* Network connectivity banner */}
+      {(isOffline || showReconnected) && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: isOffline ? '#ef4444' : '#10b981',
+            color: '#ffffff',
+            padding: '6px 16px',
+            borderRadius: '20px',
+            fontSize: '0.8rem',
+            fontWeight: 600,
+            zIndex: 999999,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
+            animation: 'fadeIn 0.2s ease-in-out',
+          }}
+        >
+          <i className={isOffline ? 'fas fa-wifi-slash' : 'fas fa-wifi'} />
+          <span>{isOffline ? 'No Internet Connection (Offline)' : 'Online — Connected to live feed'}</span>
+        </div>
+      )}
+
       <Sidebar />
       <main className="main-viewport">
         <div className="app-container">
-          {children}
+          <ErrorBoundary>
+            {children}
+          </ErrorBoundary>
         </div>
         <Footer activeTab={activeTab as any} />
       </main>
