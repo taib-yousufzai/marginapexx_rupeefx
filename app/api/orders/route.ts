@@ -1433,36 +1433,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
 
       if (resV2.error) {
-        console.warn('[POST /api/orders] place_order_v2 error, falling back to v1:', resV2.error);
-        const resV1 = await admin.rpc('place_order', {
-          p_user_id: user.id,
-          p_symbol: finalSymbol,
-          p_kite_inst: kiteInst,
-          p_segment: dbSegment,
-          p_side: finalSide,
-          p_order_type: rpcOrderType,
-          p_product_type: finalProductType,
-          p_qty: qty,
-          p_lots: lots ?? 0,
-          p_ltp: baseLtp,
-          p_fill_price: fillPrice,
-          p_info: resolvedLinkedPositionId,
-          p_trigger_price: resolvedTriggerPrice,
-          p_stop_loss: resolvedStopLoss,
-          p_target: target ? parseFloat(target.toString()) : null,
-          p_is_exit: resolvedIsExit,
-        });
-        oId = resV1.data;
-        rpcErr = resV1.error;
-      } else {
-        oId = resV2.data;
-        rpcErr = resV2.error;
+        console.error('[POST /api/orders] place_order_v2 error:', resV2.error);
+        throw new Error(resV2.error.message || 'Order execution failed. Please try again.');
       }
-
-      if (rpcErr) {
-        throw new Error(rpcErr.message || 'Order execution failed. Please try again.');
-      }
-      return oId as string;
+      return resV2.data as string;
     };
 
     let orderId: string;
