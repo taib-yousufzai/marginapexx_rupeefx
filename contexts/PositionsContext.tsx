@@ -429,6 +429,14 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     const cleanSymbol = (partialPos.symbol || '').trim();
     if (!cleanSymbol) return;
 
+    // Clear recently removed guard for this symbol so new re-entry trades appear immediately
+    const cleanSymUpper = cleanSym(cleanSymbol);
+    for (const [id, rp] of Array.from(recentlyRemovedPositionsRef.current.entries())) {
+      if (cleanSym(rp.symbol || rp.kite_instrument) === cleanSymUpper) {
+        recentlyRemovedPositionsRef.current.delete(id);
+      }
+    }
+
     const newPos: MyPosition = {
       id: tempId,
       user_id: '',
@@ -586,9 +594,14 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           const optSym = cleanSym(optPos.symbol || optPos.kite_instrument);
           const optSide = (optPos.side || '').toUpperCase();
 
-          // Check if this symbol was recently removed/closed in this session
+          // Check if this symbol was removed BEFORE this optimistic position was created
           const symbolRecentlyRemoved = Array.from(recentlyRemovedPositionsRef.current.values()).some(
-            rp => cleanSym(rp.symbol || rp.kite_instrument) === optSym && (now - (optimisticallyRemovedTimes.current.get(rp.id) || 0) < 20000)
+            rp => {
+              const removedTime = optimisticallyRemovedTimes.current.get(rp.id) || 0;
+              return cleanSym(rp.symbol || rp.kite_instrument) === optSym &&
+                     (now - removedTime < 20000) &&
+                     (createdTime < removedTime);
+            }
           );
           if (symbolRecentlyRemoved) {
             optimisticPositionIds.current.delete(optId);
@@ -762,7 +775,12 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
             }
             const optSym = cleanSym(optPos.symbol || optPos.kite_instrument);
             const symbolRecentlyRemoved = Array.from(recentlyRemovedPositionsRef.current.values()).some(
-              rp => cleanSym(rp.symbol || rp.kite_instrument) === optSym && (now - (optimisticallyRemovedTimes.current.get(rp.id) || 0) < 20000)
+              rp => {
+                const removedTime = optimisticallyRemovedTimes.current.get(rp.id) || 0;
+                return cleanSym(rp.symbol || rp.kite_instrument) === optSym &&
+                       (now - removedTime < 20000) &&
+                       (createdTime < removedTime);
+              }
             );
             if (symbolRecentlyRemoved) {
               optimisticPositionIds.current.delete(optId);
