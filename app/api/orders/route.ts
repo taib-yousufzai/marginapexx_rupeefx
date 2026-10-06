@@ -1302,32 +1302,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // ── Fix 3.1a: Enforce is_exit + linked_position_id for SL/SLM orders ──────
     // If the caller placed an SL or SLM order without explicitly marking it as an
     // exit, check whether an open opposite-side position already exists for this
-    // symbol.  If one does, this order MUST be an exit — force the flag so that
-    // process_executed_position closes the position instead of creating a phantom
-    // entry.
-    let resolvedIsExit: boolean = is_exit ?? false;
+    let resolvedIsExit: boolean = Boolean(is_exit);
     let resolvedLinkedPositionId: string | null = linked_position_id ?? null;
 
-    if (!resolvedLinkedPositionId) {
-      const targetClean = cleanSymHelper(symbol);
-      const matchingPositions = openPositions.filter((p: any) =>
-        cleanSymHelper(p.symbol || p.kite_instrument) === targetClean &&
-        p.side !== side                                 // opposite side
-      );
-      if (matchingPositions.length > 0) {
-        resolvedIsExit = true;
-        // Only anchor to a single position ID if there is exactly 1 matching lot and exit qty <= that position's qty.
-        // For cumulative exits spanning multiple lots, keep resolvedLinkedPositionId = null so FIFO executes across all lots.
+    const targetClean = cleanSymHelper(symbol);
+    const matchingPositions = openPositions.filter((p: any) =>
+      cleanSymHelper(p.symbol || p.kite_instrument) === targetClean &&
+      p.side !== side // opposite side
+    );
+
+    // If an order claims to be an exit, but no matching opposite open position exists in DB:
+    // It cannot be an exit; treat it as a fresh new entry!
+    if (resolvedIsExit && matchingPositions.length === 0) {
+      console.log(`[POST /api/orders] is_exit was true but no open opposite position exists for ${symbol} (${side}). Treating as fresh entry.`);
+      resolvedIsExit = false;
+      resolvedLinkedPositionId = null;
+    } else if (matchingPositions.length > 0) {
+      resolvedIsExit = true;
+      if (resolvedLinkedPositionId) {
+        // Verify the linked position ID actually exists and is open
+        const linkedExists = matchingPositions.some((p: any) => p.id === resolvedLinkedPositionId);
+        if (!linkedExists) {
+          resolvedLinkedPositionId = (matchingPositions.length === 1 && Number(matchingPositions[0].qty_open) >= Number(qty))
+            ? matchingPositions[0].id
+            : null;
+        }
+      } else {
         if (matchingPositions.length === 1 && Number(matchingPositions[0].qty_open) >= Number(qty)) {
           resolvedLinkedPositionId = matchingPositions[0].id;
         } else {
           resolvedLinkedPositionId = null;
         }
-        console.log(
-          `[POST /api/orders] Auto-resolved is_exit=true & linkedPositionId=${resolvedLinkedPositionId} for ${targetOrderType} order ` +
-          `(symbol=${symbol}, side=${side}, matchingLots=${matchingPositions.length})`
-        );
       }
+      console.log(
+        `[POST /api/orders] Auto-resolved is_exit=true & linkedPositionId=${resolvedLinkedPositionId} for ${targetOrderType} order ` +
+        `(symbol=${symbol}, side=${side}, matchingLots=${matchingPositions.length})`
+      );
     }
 
     // ── Fix 3.1b: GTT pre-entry — do NOT insert SL/Target sub-order rows ──────
