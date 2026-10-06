@@ -426,204 +426,199 @@ export function useOrderEntry() {
       soundEngine.playOrderSubmitted();
     }
 
-    try {
-      const submitPayload = {
-        ...state,
-        is_exit: effectiveIsExit,
-        linked_position_id: effectiveLinkedPosId,
-        expected_brokerage: calculatedExpectedBrokerage,
-        brokerage: calculatedExpectedBrokerage,
-      };
+    // Launch background server submission
+    const submitPayload = {
+      ...state,
+      is_exit: effectiveIsExit,
+      linked_position_id: effectiveLinkedPosId,
+      expected_brokerage: calculatedExpectedBrokerage,
+      brokerage: calculatedExpectedBrokerage,
+    };
 
-      const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>(
-        '/api/orders',
-        submitPayload,
-        { timeout: 25000 }
-      );
+    const backgroundPromise = (async () => {
+      try {
+        const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>(
+          '/api/orders',
+          submitPayload,
+          { timeout: 25000 }
+        );
 
-      if (balanceContext?.releaseOptimisticMargin) {
-        balanceContext.releaseOptimisticMargin(tempId);
-      }
-
-      // Create confirmed order representation
-      const confirmedOrder: MyOrder = {
-        ...optimisticOrder,
-        id: result.order_id || tempId,
-        status: (result.status as any) || (isImmediate ? 'EXECUTED' : 'PENDING'),
-        fill_price: result.fill_price || state.client_price,
-      };
-
-      if ((ordersContext as any)?.swapOptimisticOrder) {
-        (ordersContext as any).swapOptimisticOrder(tempId, confirmedOrder);
-      }
-
-      if (typeof window !== 'undefined') {
-        if (isImmediate) {
-          try {
-            const existingHistory = getClientHistoryCache();
-            const updatedHistory = existingHistory.map((h: any) => {
-              if (h.id === tempId) {
-                return {
-                  ...h,
-                  id: result.order_id || tempId,
-                  status: (result.status as any) || 'EXECUTED',
-                  price: result.fill_price || h.price,
-                };
-              }
-              return h;
-            });
-            saveClientHistoryCache(updatedHistory);
-          } catch { }
+        if (balanceContext?.releaseOptimisticMargin) {
+          balanceContext.releaseOptimisticMargin(tempId);
         }
 
-        if (effectiveIsExit) {
-          if (optimisticHistoryItems.length > 0) {
-            const confirmedHistory = optimisticHistoryItems.map(h => {
-              const fillPrice = result?.fill_price || h.price;
-              const isBuy = h.type === 'BUY';
-              const pnl = (h.entryPrice && h.entryPrice > 0)
-                ? (isBuy ? (fillPrice - h.entryPrice) * h.qty : (h.entryPrice - fillPrice) * h.qty)
-                : h.pnl;
-              return {
-                ...h,
-                price: fillPrice,
-                exitPrice: fillPrice,
-                pnl,
-              };
-            });
-            prependToClientHistoryCache(confirmedHistory);
-          }
-          window.dispatchEvent(new CustomEvent('position_closed', {
-            detail: {
-              positions: optimisticClosedPositions,
-              historyItems: optimisticHistoryItems,
-              position: optimisticClosedPositions[0],
-              historyItem: optimisticHistoryItems[0],
-            }
-          }));
-          window.dispatchEvent(new Event('position-closed'));
-          window.dispatchEvent(new Event('history_updated'));
-          // Force a fresh DB fetch after 1.5s so history shows real brokerage (not optimistic 0)
-          setTimeout(() => {
-            window.dispatchEvent(new Event('force_history_db_refresh'));
-          }, 1500);
-        }
+        // Create confirmed order representation
+        const confirmedOrder: MyOrder = {
+          ...optimisticOrder,
+          id: result.order_id || tempId,
+          status: (result.status as any) || (isImmediate ? 'EXECUTED' : 'PENDING'),
+          fill_price: result.fill_price || state.client_price,
+        };
 
-        if (isImmediate || confirmedOrder.status === 'EXECUTED') {
-          window.dispatchEvent(new CustomEvent('order_placed_with_data', {
-            detail: {
-              symbol: state.symbol,
-              settlement: state.segment,
-              side: state.side,
-              qty_open: state.qty,
-              entry_price: result.fill_price || state.client_price,
-              ltp: result.fill_price || state.client_price,
-              product_type: state.product_type,
-              is_exit: effectiveIsExit,
-              linked_position_id: effectiveLinkedPosId,
-              opt_id: tempId,
-              brokerage: calculatedExpectedBrokerage,
-              entry_brokerage: calculatedExpectedBrokerage,
-              expected_brokerage: calculatedExpectedBrokerage,
-              order: confirmedOrder,
-            }
-          }));
-        }
-        window.dispatchEvent(new Event('order_placed'));
-
-        // For SLM orders, backend inserts a linked SL exit order slightly after the main order response.
-        // Fire a delayed second refresh so the linked SL order appears quickly without waiting for polling.
-        if (state.order_type === 'SLM') {
-          setTimeout(() => {
-            window.dispatchEvent(new Event('order_placed'));
-          }, 1200);
-        }
-      }
-
-      return { success: true, order: result, fill_price: result.fill_price };
-    } catch (err) {
-      if (balanceContext?.releaseOptimisticMargin) {
-        balanceContext.releaseOptimisticMargin(tempId);
-      }
-
-      let message = 'Unknown error';
-      if (err instanceof ApiError) {
-        if (typeof err.details === 'string' && err.details.trim()) {
-          message = err.details;
-        } else if (err.details && typeof err.details === 'object') {
-          const d = err.details as { details?: string; error?: string; message?: string };
-          message = d.error || d.details || d.message || `ApiError ${err.status}`;
-        } else {
-          message = `ApiError ${err.status}`;
-        }
-      } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
-        const errName = (err as any).name;
-        const errMessage = (err as any).message || String(err);
-        if (errName === 'AbortError' || errMessage.includes('abort')) {
-          message = 'Order submission processing in background. Please check Order Book / Positions.';
-        } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
-          message = 'Network connection error. Please try again.';
-        } else {
-          message = errMessage;
-        }
-      }
-
-      const isBackgroundProcessing = message.includes('processing in background') || message.includes('in progress') || (err instanceof ApiError && err.status === 409);
-
-      if (!isBackgroundProcessing) {
-        if (!effectiveIsExit && calculatedExpectedBrokerage > 0) {
-          if (balanceContext?.rollbackOptimisticBrokerage) {
-            balanceContext.rollbackOptimisticBrokerage(tempId);
-          }
-        }
-        // Rollback optimistic order on actual error
-        if ((ordersContext as any)?.removeOptimisticOrder) {
-          (ordersContext as any).removeOptimisticOrder(tempId);
-        }
-        if (effectiveIsExit && effectiveLinkedPosId && positionsContext?.restorePositionLocally) {
-          console.log('[DEBUG-OE] ERROR PATH: restorePositionLocally called with:', effectiveLinkedPosId);
-          // Only restore a SPECIFIC position exit. For cumulative exits
-          // (effectiveLinkedPosId = null) we must NOT call restorePositionLocally('')
-          // because that clears ALL optimistic removals — causing every
-          // in-progress exit to reappear, even if the server actually closed it.
-          // The 30-second TTL on optimisticallyRemovedIds will naturally expire
-          // the removal and allow a fresh server fetch to resolve truth.
-          positionsContext.restorePositionLocally(effectiveLinkedPosId);
-        } else if (!effectiveIsExit && positionsContext?.removeOptimisticPosition) {
-          positionsContext.removeOptimisticPosition(tempId);
+        if ((ordersContext as any)?.swapOptimisticOrder) {
+          (ordersContext as any).swapOptimisticOrder(tempId, confirmedOrder);
         }
 
         if (typeof window !== 'undefined') {
-          const failedIds = Array.from(new Set<string>([
-            tempId,
-            ...(effectiveLinkedPosId ? [effectiveLinkedPosId] : []),
-            ...optimisticHistoryItems.map(i => i.id)
-          ]));
-          removeFromClientHistoryCache(failedIds);
+          if (isImmediate) {
+            try {
+              const existingHistory = getClientHistoryCache();
+              const updatedHistory = existingHistory.map((h: any) => {
+                if (h.id === tempId) {
+                  return {
+                    ...h,
+                    id: result.order_id || tempId,
+                    status: (result.status as any) || 'EXECUTED',
+                    price: result.fill_price || h.price,
+                  };
+                }
+                return h;
+              });
+              saveClientHistoryCache(updatedHistory);
+            } catch { }
+          }
+
           if (effectiveIsExit) {
-            window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: Array.from(failedIds) } }));
-          } else {
-            window.dispatchEvent(new CustomEvent('order_failed', { detail: { orderId: tempId } }));
+            if (optimisticHistoryItems.length > 0) {
+              const confirmedHistory = optimisticHistoryItems.map(h => {
+                const fillPrice = result?.fill_price || h.price;
+                const isBuy = h.type === 'BUY';
+                const pnl = (h.entryPrice && h.entryPrice > 0)
+                  ? (isBuy ? (fillPrice - h.entryPrice) * h.qty : (h.entryPrice - fillPrice) * h.qty)
+                  : h.pnl;
+                return {
+                  ...h,
+                  price: fillPrice,
+                  exitPrice: fillPrice,
+                  pnl,
+                };
+              });
+              prependToClientHistoryCache(confirmedHistory);
+            }
+            window.dispatchEvent(new CustomEvent('position_closed', {
+              detail: {
+                positions: optimisticClosedPositions,
+                historyItems: optimisticHistoryItems,
+                position: optimisticClosedPositions[0],
+                historyItem: optimisticHistoryItems[0],
+              }
+            }));
+            window.dispatchEvent(new Event('position-closed'));
+            window.dispatchEvent(new Event('history_updated'));
+            // Force a fresh DB fetch after 1.5s so history shows real brokerage (not optimistic 0)
+            setTimeout(() => {
+              window.dispatchEvent(new Event('force_history_db_refresh'));
+            }, 1500);
+          }
+
+          if (isImmediate || confirmedOrder.status === 'EXECUTED') {
+            window.dispatchEvent(new CustomEvent('order_placed_with_data', {
+              detail: {
+                symbol: state.symbol,
+                settlement: state.segment,
+                side: state.side,
+                qty_open: state.qty,
+                entry_price: result.fill_price || state.client_price,
+                ltp: result.fill_price || state.client_price,
+                product_type: state.product_type,
+                is_exit: effectiveIsExit,
+                linked_position_id: effectiveLinkedPosId,
+                opt_id: tempId,
+                brokerage: calculatedExpectedBrokerage,
+                entry_brokerage: calculatedExpectedBrokerage,
+                expected_brokerage: calculatedExpectedBrokerage,
+                order: confirmedOrder,
+              }
+            }));
+          }
+          window.dispatchEvent(new Event('order_placed'));
+
+          if (state.order_type === 'SLM') {
+            setTimeout(() => {
+              window.dispatchEvent(new Event('order_placed'));
+            }, 1200);
           }
         }
-        soundEngine.playOrderRejected();
-        console.warn('[useOrderEntry] Order placement rejected:', message);
-        setError(message);
-        return { success: false, isProcessing: false, error: message };
-      }
 
-      return { success: true, isProcessing: true };
-    } finally {
-      const elapsed = Date.now() - orderStartTime;
-      if (elapsed < 350) {
-        await new Promise(r => setTimeout(r, 350 - elapsed));
+        return { success: true, order: result, fill_price: result.fill_price };
+      } catch (err) {
+        if (balanceContext?.releaseOptimisticMargin) {
+          balanceContext.releaseOptimisticMargin(tempId);
+        }
+
+        let message = 'Unknown error';
+        if (err instanceof ApiError) {
+          if (typeof err.details === 'string' && err.details.trim()) {
+            message = err.details;
+          } else if (err.details && typeof err.details === 'object') {
+            const d = err.details as { details?: string; error?: string; message?: string };
+            message = d.error || d.details || d.message || `ApiError ${err.status}`;
+          } else {
+            message = `ApiError ${err.status}`;
+          }
+        } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
+          const errName = (err as any).name;
+          const errMessage = (err as any).message || String(err);
+          if (errName === 'AbortError' || errMessage.includes('abort')) {
+            message = 'Order submission processing in background. Please check Order Book / Positions.';
+          } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
+            message = 'Network connection error. Please try again.';
+          } else {
+            message = errMessage;
+          }
+        }
+
+        const isBackgroundProcessing = message.includes('processing in background') || message.includes('in progress') || (err instanceof ApiError && err.status === 409);
+
+        if (!isBackgroundProcessing) {
+          if (!effectiveIsExit && calculatedExpectedBrokerage > 0) {
+            if (balanceContext?.rollbackOptimisticBrokerage) {
+              balanceContext.rollbackOptimisticBrokerage(tempId);
+            }
+          }
+          // Rollback optimistic order on actual error
+          if ((ordersContext as any)?.removeOptimisticOrder) {
+            (ordersContext as any).removeOptimisticOrder(tempId);
+          }
+          if (effectiveIsExit && effectiveLinkedPosId && positionsContext?.restorePositionLocally) {
+            positionsContext.restorePositionLocally(effectiveLinkedPosId);
+          } else if (!effectiveIsExit && positionsContext?.removeOptimisticPosition) {
+            positionsContext.removeOptimisticPosition(tempId);
+          }
+
+          if (typeof window !== 'undefined') {
+            const failedIds = Array.from(new Set<string>([
+              tempId,
+              ...(effectiveLinkedPosId ? [effectiveLinkedPosId] : []),
+              ...optimisticHistoryItems.map(i => i.id)
+            ]));
+            removeFromClientHistoryCache(failedIds);
+            if (effectiveIsExit) {
+              window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: Array.from(failedIds) } }));
+            } else {
+              window.dispatchEvent(new CustomEvent('order_failed', { detail: { orderId: tempId } }));
+            }
+            window.dispatchEvent(new CustomEvent('order_error', { detail: message }));
+          }
+          soundEngine.playOrderRejected();
+          console.warn('[useOrderEntry] Order placement rejected:', message);
+          setError(message);
+          return { success: false, isProcessing: false, error: message };
+        }
+
+        return { success: true, isProcessing: true };
       }
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('global-loader-end'));
-        window.dispatchEvent(new Event('exit-overlay-end'));
-      }
-      setLoading(false);
+    })();
+
+    // 350ms smooth visual feedback timer
+    await new Promise(r => setTimeout(r, 350));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('global-loader-end'));
+      window.dispatchEvent(new Event('exit-overlay-end'));
     }
+    setLoading(false);
+
+    return { success: true, isProcessing: true };
   }, [ordersContext, balanceContext, positionsContext]);
 
   const closePosition = useCallback(async (
@@ -666,157 +661,163 @@ export function useOrderEntry() {
       positionsContext.removePositionLocally(positionId, existingPos);
     }
 
-    try {
-      const result = await api.post<Record<string, unknown>>(`/api/positions/${positionId}/close`, {
-        client_price: resolvedExitPrice,
-        symbol: existingPos?.symbol || symbol,
-        settlement: existingPos?.settlement || settlement,
-        side: posSide,
-        qty,
-        entry_price: entryPrice,
-        product_type: existingPos?.product_type || 'INTRADAY'
-      }, { timeout: 45000 });
+    // Launch background server close
+    (async () => {
+      try {
+        const result = await api.post<Record<string, unknown>>(`/api/positions/${positionId}/close`, {
+          client_price: resolvedExitPrice,
+          symbol: existingPos?.symbol || symbol,
+          settlement: existingPos?.settlement || settlement,
+          side: posSide,
+          qty,
+          entry_price: entryPrice,
+          product_type: existingPos?.product_type || 'INTRADAY'
+        }, { timeout: 45000 });
 
-      const finalExitPrice = Number(result?.exit_price || result?.price || resolvedExitPrice);
-      const finalPnl = entryPrice > 0 ? (isBuy ? (finalExitPrice - entryPrice) * qty : (entryPrice - finalExitPrice) * qty) : pnl;
+        const finalExitPrice = Number(result?.exit_price || result?.price || resolvedExitPrice);
+        const finalPnl = entryPrice > 0 ? (isBuy ? (finalExitPrice - entryPrice) * qty : (entryPrice - finalExitPrice) * qty) : pnl;
 
-      let existingBrokerage = Number(
-        (result as any)?.brokerage ||
-        existingPos?.brokerage || 
-        (existingPos as any)?.total_brokerage || 
-        (existingPos as any)?.entry_brokerage || 
-        0
-      );
-      if (existingBrokerage <= 0 && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-        const mapPos = (window as any).__lastPositionsMap.get(positionId);
-        const mapBrk = Number(mapPos?.brokerage || mapPos?.entry_brokerage || 0);
-        if (mapBrk > 0) existingBrokerage = mapBrk;
-      }
-      if (existingBrokerage <= 0 && entryPrice > 0) {
-        try {
-          const exposure = qty * entryPrice;
-          const brkRes = calculateOrderBrokerage({
-            exposure,
-            lots: Number(existingPos?.lots || (existingPos as any)?.qty_total || 0) || 1,
-            productType: existingPos?.product_type || 'INTRADAY',
-            orderType: 'MARKET',
-            isExit: false,
-            dbSegment: existingPos?.settlement || settlement,
-          });
-          existingBrokerage = brkRes.totalBrokerage;
-        } catch {}
-      }
-
-      const confirmedHistoryItem: HistoryItem = {
-        id: positionId,
-        scriptName: existingPos?.symbol || symbol || 'UNKNOWN',
-        type: posSide as 'BUY' | 'SELL',
-        orderType: existingPos?.product_type || 'INTRADAY',
-        qty,
-        price: finalExitPrice,
-        entryPrice,
-        exitPrice: finalExitPrice,
-        pnl: finalPnl,
-        date: new Date(existingPos?.created_at || now).toLocaleString(),
-        exitDate: new Date(now).toLocaleDateString(),
-        status: 'closed',
-        brokerage: existingBrokerage,
-        entry_brokerage: existingBrokerage,
-        closedBy: 'USER_ACTION',
-        productType: existingPos?.product_type || 'INTRADAY',
-        settlement: existingPos?.settlement || settlement || 'NSE',
-        settlementAmount: 0,
-        timestamp: now,
-      };
-
-      const closedPos = {
-        id: positionId,
-        symbol: existingPos?.symbol || symbol || 'UNKNOWN',
-        side: posSide,
-        status: 'closed',
-        exit_price: finalExitPrice,
-        pnl: finalPnl,
-        total_pnl: finalPnl,
-        pnl_percent: entryPrice > 0 ? ((finalExitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
-        qty_total: qty,
-        qty_open: 0,
-        closed_at: new Date(now).toISOString(),
-        exit_time: new Date(now).toISOString(),
-        updated_at: new Date(now).toISOString(),
-      };
-
-      // Confirmed removal from positions
-      if (positionsContext?.removePositionLocally) {
-        positionsContext.removePositionLocally(positionId, existingPos);
-      }
-
-      // Add confirmed item to client history cache
-      prependToClientHistoryCache(confirmedHistoryItem);
-
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('position_closed', {
-          detail: {
-            position: closedPos,
-            positions: [closedPos],
-            historyItem: confirmedHistoryItem,
-            historyItems: [confirmedHistoryItem],
-          }
-        }));
-        window.dispatchEvent(new Event('order_placed'));
-        window.dispatchEvent(new Event('position-closed'));
-        window.dispatchEvent(new Event('history_updated'));
-      }
-
-      soundEngine.playOrderExecuted();
-      return { success: true, ...result };
-    } catch (err) {
-      let message = 'Unknown error';
-      if (err instanceof ApiError) {
-        message = (err.details as { error?: string } | null)?.error ?? (typeof err.details === 'string' && err.details.trim() ? err.details : null) ?? err.message ?? `ApiError ${err.status}`;
-      } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
-        const errName = (err as any).name;
-        const errMessage = (err as any).message || String(err);
-        if (errName === 'AbortError' || errMessage.includes('abort')) {
-          message = 'Exit is being processed. Check Positions — if still open, try exit again.';
-        } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
-          message = 'Network connection error. Please try again.';
-        } else {
-          message = errMessage;
+        let existingBrokerage = Number(
+          (result as any)?.brokerage ||
+          existingPos?.brokerage || 
+          (existingPos as any)?.total_brokerage || 
+          (existingPos as any)?.entry_brokerage || 
+          0
+        );
+        if (existingBrokerage <= 0 && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+          const mapPos = (window as any).__lastPositionsMap.get(positionId);
+          const mapBrk = Number(mapPos?.brokerage || mapPos?.entry_brokerage || 0);
+          if (mapBrk > 0) existingBrokerage = mapBrk;
         }
-      }
+        if (existingBrokerage <= 0 && entryPrice > 0) {
+          try {
+            const exposure = qty * entryPrice;
+            const brkRes = calculateOrderBrokerage({
+              exposure,
+              lots: Number(existingPos?.lots || (existingPos as any)?.qty_total || 0) || 1,
+              productType: existingPos?.product_type || 'INTRADAY',
+              orderType: 'MARKET',
+              isExit: false,
+              dbSegment: existingPos?.settlement || settlement,
+            });
+            existingBrokerage = brkRes.totalBrokerage;
+          } catch {}
+        }
 
-      // If position is already closed (e.g. concurrent exit or fast-pipe already closed it), treat as success
-      if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+        const confirmedHistoryItem: HistoryItem = {
+          id: positionId,
+          scriptName: existingPos?.symbol || symbol || 'UNKNOWN',
+          type: posSide as 'BUY' | 'SELL',
+          orderType: existingPos?.product_type || 'INTRADAY',
+          qty,
+          price: finalExitPrice,
+          entryPrice,
+          exitPrice: finalExitPrice,
+          pnl: finalPnl,
+          date: new Date(existingPos?.created_at || now).toLocaleString(),
+          exitDate: new Date(now).toLocaleDateString(),
+          status: 'closed',
+          brokerage: existingBrokerage,
+          entry_brokerage: existingBrokerage,
+          closedBy: 'USER_ACTION',
+          productType: existingPos?.product_type || 'INTRADAY',
+          settlement: existingPos?.settlement || settlement || 'NSE',
+          settlementAmount: 0,
+          timestamp: now,
+        };
+
+        const closedPos = {
+          id: positionId,
+          symbol: existingPos?.symbol || symbol || 'UNKNOWN',
+          side: posSide,
+          status: 'closed',
+          exit_price: finalExitPrice,
+          pnl: finalPnl,
+          total_pnl: finalPnl,
+          pnl_percent: entryPrice > 0 ? ((finalExitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
+          qty_total: qty,
+          qty_open: 0,
+          closed_at: new Date(now).toISOString(),
+          exit_time: new Date(now).toISOString(),
+          updated_at: new Date(now).toISOString(),
+        };
+
+        // Confirmed removal from positions
         if (positionsContext?.removePositionLocally) {
           positionsContext.removePositionLocally(positionId, existingPos);
         }
+
+        // Add confirmed item to client history cache
+        prependToClientHistoryCache(confirmedHistoryItem);
+
         if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('position_closed', {
+            detail: {
+              position: closedPos,
+              positions: [closedPos],
+              historyItem: confirmedHistoryItem,
+              historyItems: [confirmedHistoryItem],
+            }
+          }));
           window.dispatchEvent(new Event('order_placed'));
           window.dispatchEvent(new Event('position-closed'));
-          window.dispatchEvent(new Event('position_closed'));
           window.dispatchEvent(new Event('history_updated'));
         }
-        return { success: true, alreadyClosed: true };
-      }
 
-      // If failed, restore position locally
-      if (positionsContext?.restorePositionLocally && existingPos) {
-        positionsContext.restorePositionLocally(positionId, existingPos);
-      }
+        soundEngine.playOrderExecuted();
+      } catch (err) {
+        let message = 'Unknown error';
+        if (err instanceof ApiError) {
+          message = (err.details as { error?: string } | null)?.error ?? (typeof err.details === 'string' && err.details.trim() ? err.details : null) ?? err.message ?? `ApiError ${err.status}`;
+        } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
+          const errName = (err as any).name;
+          const errMessage = (err as any).message || String(err);
+          if (errName === 'AbortError' || errMessage.includes('abort')) {
+            message = 'Exit is being processed. Check Positions — if still open, try exit again.';
+          } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
+            message = 'Network connection error. Please try again.';
+          } else {
+            message = errMessage;
+          }
+        }
 
-      setError(message);
-      return { success: false, error: message };
-    } finally {
-      const elapsed = Date.now() - closeStartTime;
-      if (elapsed < 350) {
-        await new Promise(r => setTimeout(r, 350 - elapsed));
+        // If position is already closed, treat as success
+        if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+          if (positionsContext?.removePositionLocally) {
+            positionsContext.removePositionLocally(positionId, existingPos);
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('order_placed'));
+            window.dispatchEvent(new Event('position-closed'));
+            window.dispatchEvent(new Event('position_closed'));
+            window.dispatchEvent(new Event('history_updated'));
+          }
+          return;
+        }
+
+        // If failed, restore position locally
+        if (positionsContext?.restorePositionLocally && existingPos) {
+          positionsContext.restorePositionLocally(positionId, existingPos);
+        }
+
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: [positionId] } }));
+          window.dispatchEvent(new CustomEvent('order_error', { detail: message }));
+        }
+
+        setError(message);
       }
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('exit-overlay-end'));
-        window.dispatchEvent(new Event('global-loader-end'));
-      }
-      setLoading(false);
+    })();
+
+    // 350ms smooth visual timer
+    await new Promise(r => setTimeout(r, 350));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('exit-overlay-end'));
+      window.dispatchEvent(new Event('global-loader-end'));
     }
+    setLoading(false);
+
+    return { success: true };
   }, [positionsContext]);
 
   const closePositionsBatch = useCallback(async (positionIds: (string | any)[]) => {
@@ -840,190 +841,194 @@ export function useOrderEntry() {
       });
     }
 
-    try {
-      // Batch close always routes through /api/positions/close with per-ID validation,
-      // accurate pricing, and structured results [{ positionId, success, pnl, exit_price }]
-      const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds: ids }, { timeout: 45000 });
+    // Background server close
+    (async () => {
+      try {
+        const result = await api.post<Record<string, unknown>>('/api/positions/close', { positionIds: ids }, { timeout: 45000 });
 
-      const confirmedHistoryItems: HistoryItem[] = [];
-      const confirmedClosedPositions: any[] = [];
+        const confirmedHistoryItems: HistoryItem[] = [];
+        const confirmedClosedPositions: any[] = [];
 
-      ids.forEach(id => {
-        let existingPos = positionsContext?.positions?.find(p => p.id === id);
-        if (!existingPos && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
-          existingPos = (window as any).__lastPositionsMap.get(id);
-        }
-        if (!existingPos) {
-          existingPos = rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id);
-        }
-
-        const exitPrice = existingPos?.current_ltp || existingPos?.ltp || existingPos?.entry_price || 0;
-        const entryPrice = Number(existingPos?.entry_price || existingPos?.avg_price || 0);
-        const qty = Number(existingPos?.qty_total || existingPos?.qty_open || (existingPos as any)?.qty || 1);
-        const posSide = (existingPos?.side || 'BUY').toUpperCase();
-        const isBuy = posSide === 'BUY';
-        const pnl = entryPrice > 0 ? (isBuy ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty) : 0;
-
-        const entryTs = existingPos?.entry_time || existingPos?.created_at
-          ? new Date(existingPos.entry_time || existingPos.created_at).getTime()
-          : now;
-
-        let existingBrokerage = Number(
-          existingPos?.brokerage || 
-          (existingPos as any)?.total_brokerage || 
-          (existingPos as any)?.entry_brokerage || 
-          0
-        );
-        if (existingBrokerage <= 0 && entryPrice > 0) {
-          try {
-            const exposure = qty * entryPrice;
-            const brkRes = calculateOrderBrokerage({
-              exposure,
-              lots: Number(existingPos?.lots || (existingPos as any)?.qty_total || 0) || 1,
-              productType: existingPos?.product_type || 'INTRADAY',
-              orderType: 'MARKET',
-              isExit: false,
-              dbSegment: existingPos?.settlement || 'NSE',
-            });
-            existingBrokerage = brkRes.totalBrokerage;
-          } catch {}
-        }
-
-        confirmedHistoryItems.push({
-          id,
-          scriptName: existingPos?.symbol || 'UNKNOWN',
-          type: posSide as 'BUY' | 'SELL',
-          orderType: existingPos?.product_type || 'INTRADAY',
-          qty,
-          price: exitPrice,
-          entryPrice,
-          exitPrice,
-          pnl,
-          date: new Date(existingPos?.created_at || now).toLocaleString(),
-          exitDate: new Date(now).toLocaleDateString(),
-          status: 'closed',
-          brokerage: existingBrokerage,
-          entry_brokerage: existingBrokerage,
-          closedBy: 'USER_ACTION',
-          productType: existingPos?.product_type || 'INTRADAY',
-          settlement: existingPos?.settlement || 'NSE',
-          settlementAmount: 0,
-          timestamp: now,
-          entryTimestamp: entryTs,
-        });
-
-        confirmedClosedPositions.push({
-          id,
-          symbol: existingPos?.symbol || 'UNKNOWN',
-          side: posSide,
-          status: 'closed',
-          exit_price: exitPrice,
-          pnl,
-          total_pnl: pnl,
-          pnl_percent: entryPrice > 0 ? ((exitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
-          qty_total: qty,
-          qty_open: 0,
-          closed_at: new Date(now).toISOString(),
-          exit_time: new Date(now).toISOString(),
-          updated_at: new Date(now).toISOString(),
-        });
-      });
-
-      // Synchronize exact server fill prices and PnL if returned
-      const batchResults = (result as any)?.results;
-      if (Array.isArray(batchResults)) {
-        confirmedHistoryItems.forEach(h => {
-          const match = batchResults.find((r: any) => r.positionId === h.id && r.success);
-          if (match) {
-            if (match.exit_price !== undefined) {
-              h.price = Number(match.exit_price);
-              h.exitPrice = Number(match.exit_price);
-            }
-            if (match.pnl !== undefined) {
-              h.pnl = Number(match.pnl);
-            }
-            if (match.brokerage !== undefined) {
-              h.brokerage = Number(match.brokerage);
-            }
+        ids.forEach(id => {
+          let existingPos = positionsContext?.positions?.find(p => p.id === id);
+          if (!existingPos && typeof window !== 'undefined' && (window as any).__lastPositionsMap) {
+            existingPos = (window as any).__lastPositionsMap.get(id);
           }
-        });
-      }
+          if (!existingPos) {
+            existingPos = rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id);
+          }
 
-      // Confirmed removal from positions in 0ms
-      if (positionsContext?.removePositionLocally) {
-        ids.forEach(id => {
-          const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
-          positionsContext.removePositionLocally(id, pObj);
-        });
-      }
+          const exitPrice = existingPos?.current_ltp || existingPos?.ltp || existingPos?.entry_price || 0;
+          const entryPrice = Number(existingPos?.entry_price || existingPos?.avg_price || 0);
+          const qty = Number(existingPos?.qty_total || existingPos?.qty_open || (existingPos as any)?.qty || 1);
+          const posSide = (existingPos?.side || 'BUY').toUpperCase();
+          const isBuy = posSide === 'BUY';
+          const pnl = entryPrice > 0 ? (isBuy ? (exitPrice - entryPrice) * qty : (entryPrice - exitPrice) * qty) : 0;
 
-      if (confirmedHistoryItems.length > 0) {
-        prependToClientHistoryCache(confirmedHistoryItems);
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('position_closed', {
-            detail: {
-              positions: confirmedClosedPositions,
-              historyItems: confirmedHistoryItems,
-              position: confirmedClosedPositions[0],
-              historyItem: confirmedHistoryItems[0],
+          const entryTs = existingPos?.entry_time || existingPos?.created_at
+            ? new Date(existingPos.entry_time || existingPos.created_at).getTime()
+            : now;
+
+          let existingBrokerage = Number(
+            existingPos?.brokerage || 
+            (existingPos as any)?.total_brokerage || 
+            (existingPos as any)?.entry_brokerage || 
+            0
+          );
+          if (existingBrokerage <= 0 && entryPrice > 0) {
+            try {
+              const exposure = qty * entryPrice;
+              const brkRes = calculateOrderBrokerage({
+                exposure,
+                lots: Number(existingPos?.lots || (existingPos as any)?.qty_total || 0) || 1,
+                productType: existingPos?.product_type || 'INTRADAY',
+                orderType: 'MARKET',
+                isExit: false,
+                dbSegment: existingPos?.settlement || 'NSE',
+              });
+              existingBrokerage = brkRes.totalBrokerage;
+            } catch {}
+          }
+
+          confirmedHistoryItems.push({
+            id,
+            scriptName: existingPos?.symbol || 'UNKNOWN',
+            type: posSide as 'BUY' | 'SELL',
+            orderType: existingPos?.product_type || 'INTRADAY',
+            qty,
+            price: exitPrice,
+            entryPrice,
+            exitPrice,
+            pnl,
+            date: new Date(existingPos?.created_at || now).toLocaleString(),
+            exitDate: new Date(now).toLocaleDateString(),
+            status: 'closed',
+            brokerage: existingBrokerage,
+            entry_brokerage: existingBrokerage,
+            closedBy: 'USER_ACTION',
+            productType: existingPos?.product_type || 'INTRADAY',
+            settlement: existingPos?.settlement || 'NSE',
+            settlementAmount: 0,
+            timestamp: now,
+            entryTimestamp: entryTs,
+          });
+
+          confirmedClosedPositions.push({
+            id,
+            symbol: existingPos?.symbol || 'UNKNOWN',
+            side: posSide,
+            status: 'closed',
+            exit_price: exitPrice,
+            pnl,
+            total_pnl: pnl,
+            pnl_percent: entryPrice > 0 ? ((exitPrice - entryPrice) / entryPrice) * 100 * (isBuy ? 1 : -1) : 0,
+            qty_total: qty,
+            qty_open: 0,
+            closed_at: new Date(now).toISOString(),
+            exit_time: new Date(now).toISOString(),
+            updated_at: new Date(now).toISOString(),
+          });
+        });
+
+        // Synchronize exact server fill prices and PnL if returned
+        const batchResults = (result as any)?.results;
+        if (Array.isArray(batchResults)) {
+          confirmedHistoryItems.forEach(h => {
+            const match = batchResults.find((r: any) => r.positionId === h.id && r.success);
+            if (match) {
+              if (match.exit_price !== undefined) {
+                h.price = Number(match.exit_price);
+                h.exitPrice = Number(match.exit_price);
+              }
+              if (match.pnl !== undefined) {
+                h.pnl = Number(match.pnl);
+              }
+              if (match.brokerage !== undefined) {
+                h.brokerage = Number(match.brokerage);
+              }
             }
-          }));
-          window.dispatchEvent(new Event('order_placed'));
-          window.dispatchEvent(new Event('position-closed'));
-          window.dispatchEvent(new Event('history_updated'));
+          });
         }
-      }
 
-      soundEngine.playOrderExecuted();
-      return { success: true, ...result };
-    } catch (err) {
-      let message = 'Unknown error';
-      if (err instanceof ApiError) {
-        message = (err.details as { error?: string } | null)?.error ?? (typeof err.details === 'string' && err.details.trim() ? err.details : null) ?? err.message ?? `ApiError ${err.status}`;
-      } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
-        const errName = (err as any).name;
-        const errMessage = (err as any).message || String(err);
-        if (errName === 'AbortError' || errMessage.includes('abort')) {
-          message = 'Batch position exit timed out. Please try again.';
-        } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
-          message = 'Network connection error. Please try again.';
-        } else {
-          message = errMessage;
+        // Confirmed removal from positions in 0ms
+        if (positionsContext?.removePositionLocally) {
+          ids.forEach(id => {
+            const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
+            positionsContext.removePositionLocally(id, pObj);
+          });
         }
-      }
 
-      // If positions are already closed, treat as success
-      if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+        if (confirmedHistoryItems.length > 0) {
+          prependToClientHistoryCache(confirmedHistoryItems);
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('position_closed', {
+              detail: {
+                positions: confirmedClosedPositions,
+                historyItems: confirmedHistoryItems,
+                position: confirmedClosedPositions[0],
+                historyItem: confirmedHistoryItems[0],
+              }
+            }));
+            window.dispatchEvent(new Event('order_placed'));
+            window.dispatchEvent(new Event('position-closed'));
+            window.dispatchEvent(new Event('history_updated'));
+          }
+        }
+
+        soundEngine.playOrderExecuted();
+      } catch (err) {
+        let message = 'Unknown error';
+        if (err instanceof ApiError) {
+          message = (err.details as { error?: string } | null)?.error ?? (typeof err.details === 'string' && err.details.trim() ? err.details : null) ?? err.message ?? `ApiError ${err.status}`;
+        } else if (err instanceof Error || (err && typeof err === 'object' && 'name' in err)) {
+          const errName = (err as any).name;
+          const errMessage = (err as any).message || String(err);
+          if (errName === 'AbortError' || errMessage.includes('abort')) {
+            message = 'Batch position exit timed out. Please try again.';
+          } else if (errMessage.includes('NetworkError') || errMessage.includes('Failed to fetch')) {
+            message = 'Network connection error. Please try again.';
+          } else {
+            message = errMessage;
+          }
+        }
+
+        // If positions are already closed, treat as success
+        if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('order_placed'));
+            window.dispatchEvent(new Event('position-closed'));
+            window.dispatchEvent(new Event('position_closed'));
+            window.dispatchEvent(new Event('history_updated'));
+          }
+          return;
+        }
+
+        // If failed, restore positions locally
+        if (positionsContext?.restorePositionLocally) {
+          ids.forEach(id => {
+            const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
+            positionsContext.restorePositionLocally(id, pObj);
+          });
+        }
+
         if (typeof window !== 'undefined') {
-          window.dispatchEvent(new Event('order_placed'));
-          window.dispatchEvent(new Event('position-closed'));
-          window.dispatchEvent(new Event('position_closed'));
-          window.dispatchEvent(new Event('history_updated'));
+          window.dispatchEvent(new CustomEvent('position_closed_rollback', { detail: { positionIds: Array.from(ids) } }));
+          window.dispatchEvent(new CustomEvent('order_error', { detail: message }));
         }
-        return { success: true, alreadyClosed: true };
-      }
 
-      // If failed, restore positions locally
-      if (positionsContext?.restorePositionLocally) {
-        ids.forEach(id => {
-          const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
-          positionsContext.restorePositionLocally(id, pObj);
-        });
+        setError(message);
       }
+    })();
 
-      setError(message);
-      return { success: false, error: message };
-    } finally {
-      const elapsed = Date.now() - batchStartTime;
-      if (elapsed < 350) {
-        await new Promise(r => setTimeout(r, 350 - elapsed));
-      }
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new Event('exit-overlay-end'));
-        window.dispatchEvent(new Event('global-loader-end'));
-      }
-      setLoading(false);
+    // 350ms smooth visual timer
+    await new Promise(r => setTimeout(r, 350));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('exit-overlay-end'));
+      window.dispatchEvent(new Event('global-loader-end'));
     }
+    setLoading(false);
+
+    return { success: true };
   }, [positionsContext]);
 
   return {
