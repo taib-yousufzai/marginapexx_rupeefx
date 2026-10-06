@@ -184,7 +184,62 @@ export async function sendOtpSms(
 }
 
 /**
- * Sends an email using SendGrid. Falls back to Gmail SMTP if SendGrid is unconfigured.
+ * Sends an email using Twilio Comms Email API.
+ */
+async function sendTwilioEmail(
+  to: string,
+  subject: string,
+  html: string,
+  text: string
+): Promise<{ success: boolean; error?: string }> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID?.trim();
+  const authToken = process.env.TWILIO_AUTH_TOKEN?.trim();
+  const fromEmail = process.env.TWILIO_EMAIL_FROM?.trim() || `${accountSid}@twilio.email`;
+  const fromName = process.env.TWILIO_EMAIL_FROM_NAME?.trim() || 'MarginApex';
+
+  if (!accountSid || !authToken) {
+    return { success: false, error: 'Twilio credentials not configured' };
+  }
+
+  try {
+    const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    const res = await fetch('https://comms.twilio.com/v1/Emails', {
+      method: 'POST',
+      headers: {
+        Authorization: authHeader,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: {
+          address: fromEmail,
+          name: fromName,
+        },
+        to: [{ address: to }],
+        content: {
+          subject,
+          html,
+          text,
+        },
+      }),
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) {
+      console.info(`[Twilio Email] Sent email successfully to ${to}`);
+      return { success: true };
+    } else {
+      const errDetail = data?.message || JSON.stringify(data);
+      console.error(`[Twilio Email] API Error (${res.status}): ${errDetail}`);
+      return { success: false, error: errDetail };
+    }
+  } catch (err: any) {
+    console.error('[Twilio Email] Error sending email:', err);
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Sends an email using Twilio Comms Email API (primary), SendGrid (secondary), or Gmail SMTP (fallback).
  */
 export async function sendEmail(
   to: string,
@@ -194,6 +249,16 @@ export async function sendEmail(
 ): Promise<{ success: boolean; error?: string }> {
   const recipient = to.trim().toLowerCase();
 
+  // 1. Try Twilio Email API first
+  if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
+    const twilioRes = await sendTwilioEmail(recipient, subject, html, text);
+    if (twilioRes.success) {
+      return { success: true };
+    }
+    console.warn('[Twilio Email] Failed, attempting fallback...');
+  }
+
+  // 2. Try SendGrid if configured
   if (useSendGrid && fromEmail) {
     try {
       await sgMail.send({
@@ -211,12 +276,12 @@ export async function sendEmail(
     }
   }
 
-  // Fallback to Nodemailer / Gmail SMTP
+  // 3. Fallback to Nodemailer / Gmail SMTP
   try {
     const transporter = getNodemailerTransporter();
     const gmailUser = process.env.GMAIL_USER;
     await transporter.sendMail({
-      from: `"RupeeFX Trading" <${gmailUser}>`,
+      from: `"MarginApex" <${gmailUser}>`,
       to: recipient,
       subject,
       text,
@@ -229,3 +294,4 @@ export async function sendEmail(
     return { success: false, error: err.message || String(err) };
   }
 }
+

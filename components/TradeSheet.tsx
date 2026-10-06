@@ -1356,7 +1356,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           }).finally(() => {
             isExecutingRef.current = false;
             setOrderState('idle');
-            window.dispatchEvent(new Event('global-loader-end'));
           });
         } catch (err: any) {
           const errMsg = err.message || 'Order failed. Please try again.';
@@ -1364,7 +1363,6 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           setOrderState('error');
           window.dispatchEvent(new CustomEvent('order_error', { detail: errMsg }));
           window.dispatchEvent(new Event('order_failed'));
-          window.dispatchEvent(new Event('global-loader-end'));
           isExecutingRef.current = false;
           setOrderState('idle');
         }
