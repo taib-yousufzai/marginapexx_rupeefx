@@ -677,6 +677,11 @@ export function useOrderEntry() {
     const isBuy = posSide === 'BUY';
     const pnl = entryPrice > 0 ? (isBuy ? (resolvedExitPrice - entryPrice) * qty : (entryPrice - resolvedExitPrice) * qty) : 0;
 
+    // Optimistically remove position immediately (<1ms) for snappy UI
+    if (positionsContext?.removePositionLocally) {
+      positionsContext.removePositionLocally(positionId, existingPos);
+    }
+
     try {
       let result: any = null;
 
@@ -829,6 +834,11 @@ export function useOrderEntry() {
         return { success: true, alreadyClosed: true };
       }
 
+      // If failed, restore position locally
+      if (positionsContext?.restorePositionLocally && existingPos) {
+        positionsContext.restorePositionLocally(positionId, existingPos);
+      }
+
       setError(message);
       return { success: false, error: message };
     } finally {
@@ -843,6 +853,14 @@ export function useOrderEntry() {
     const now = Date.now();
     const rawList = Array.isArray(positionIds) ? positionIds : [positionIds];
     const ids = rawList.map((p: any) => (typeof p === 'string' ? p : p?.id)).filter(Boolean);
+
+    // Optimistically remove positions immediately (<1ms) for snappy UI
+    if (positionsContext?.removePositionLocally) {
+      ids.forEach(id => {
+        const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
+        positionsContext.removePositionLocally(id, pObj);
+      });
+    }
 
     try {
       // Batch close always routes through /api/positions/close with per-ID validation,
@@ -1005,6 +1023,14 @@ export function useOrderEntry() {
           window.dispatchEvent(new Event('history_updated'));
         }
         return { success: true, alreadyClosed: true };
+      }
+
+      // If failed, restore positions locally
+      if (positionsContext?.restorePositionLocally) {
+        ids.forEach(id => {
+          const pObj = (rawList.find((p: any) => typeof p === 'object' && p !== null && p.id === id) as any) || undefined;
+          positionsContext.restorePositionLocally(id, pObj);
+        });
       }
 
       setError(message);

@@ -508,8 +508,20 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       }
       savePersistedOptimisticRemovals(optimisticallyRemovedTimes.current);
 
-      // Positions from the database are authoritative and must ALWAYS be present at all times
-      let basePositions: MyPosition[] = rawPositionsFromServer;
+      // Positions from the database are authoritative, but we MUST exclude positions that were optimistically removed within the 20s window
+      const basePositions: MyPosition[] = rawPositionsFromServer
+        .filter(p => !optimisticallyRemovedIds.current.has(p.id))
+        .map(p => {
+          const updated = optimisticallyUpdatedPositions.current.get(p.id);
+          if (updated && now - updated.time < 20000) {
+            return {
+              ...p,
+              qty_open: updated.qty_open,
+              qty_total: updated.qty_total !== undefined ? updated.qty_total : updated.qty_open,
+            };
+          }
+          return p;
+        });
 
       // Reconcile optimistic positions with server response
       const persistedOpt = getPersistedOptimisticPositions();
@@ -682,8 +694,20 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
             optimisticallyRemovedTimes.current.delete(id);
           }
         }
-        // Positions from the server / database are authoritative and must ALWAYS be present
-        let basePositions: MyPosition[] = rawPositionsFromServer;
+        // Positions from the server / database are authoritative, excluding optimistically removed
+        const basePositions: MyPosition[] = rawPositionsFromServer
+          .filter(p => !optimisticallyRemovedIds.current.has(p.id))
+          .map(p => {
+            const updated = optimisticallyUpdatedPositions.current.get(p.id);
+            if (updated && now - updated.time < 20000) {
+              return {
+                ...p,
+                qty_open: updated.qty_open,
+                qty_total: updated.qty_total !== undefined ? updated.qty_total : updated.qty_open,
+              };
+            }
+            return p;
+          });
         const persistedOpt = getPersistedOptimisticPositions();
         setRawPositions(prev => {
           const existingOptMap = new Map<string, MyPosition>();
@@ -909,7 +933,9 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
     const props = staticPositionPropsRef.current;
 
-    return rawPositions.map(p => {
+    return rawPositions
+      .filter(p => !optimisticallyRemovedIds.current.has(p.id))
+      .map(p => {
       const product_type = inFlightConversions[p.id] || p.product_type;
       let ltp = p.ltp || p.entry_price;
       let bid = ltp;

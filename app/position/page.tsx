@@ -626,6 +626,11 @@ export default function PositionPage() {
 
     const posToClose = positions.find(p => p.id === posId);
 
+    // Optimistically remove position immediately (<1ms) for instantaneous UI responsiveness
+    if (posToClose && removePositionLocally) {
+      removePositionLocally(posId, posToClose);
+    }
+
     // Close sheet immediately for snappy UI
     closeSheet();
 
