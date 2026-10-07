@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { Toast, ToastState } from './AdminUtils';
+import { Toast, ToastState, apiCall } from './AdminUtils';
 
 export default function WhatsAppPage() {
   const [supportPhone, setSupportPhone] = useState('');
@@ -12,11 +12,10 @@ export default function WhatsAppPage() {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/admin/platform-settings');
-      const data = await res.json();
-      if (res.ok && data.settings) {
-        setSupportPhone(data.settings.SUPPORT_WHATSAPP_NUMBER || '');
-        setWhatsappCommunityLink(data.settings.WHATSAPP_COMMUNITY_LINK || '');
+      const { ok, data } = await apiCall('/api/admin/platform-settings', { method: 'GET' });
+      if (ok && (data as any)?.settings) {
+        setSupportPhone((data as any).settings.SUPPORT_WHATSAPP_NUMBER || '');
+        setWhatsappCommunityLink((data as any).settings.WHATSAPP_COMMUNITY_LINK || '');
       }
     } catch (err) {
       console.error('Failed to load WhatsApp settings', err);
@@ -36,16 +35,14 @@ export default function WhatsAppPage() {
       const cleanPhone = supportPhone.trim().replace(/[^\d]/g, '');
       const cleanCommunity = whatsappCommunityLink.trim();
 
-      const res = await fetch('/api/admin/platform-settings', {
+      const { ok, data } = await apiCall('/api/admin/platform-settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           SUPPORT_WHATSAPP_NUMBER: cleanPhone,
           WHATSAPP_COMMUNITY_LINK: cleanCommunity,
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save WhatsApp settings');
+      if (!ok) throw new Error((data as any)?.error || 'Failed to save WhatsApp settings');
 
       setSupportPhone(cleanPhone);
       setWhatsappCommunityLink(cleanCommunity);
@@ -67,16 +64,14 @@ export default function WhatsAppPage() {
     setWhatsappCommunityLink('');
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/platform-settings', {
+      const { ok, data } = await apiCall('/api/admin/platform-settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           SUPPORT_WHATSAPP_NUMBER: '',
           WHATSAPP_COMMUNITY_LINK: '',
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to clear WhatsApp settings');
+      if (!ok) throw new Error((data as any)?.error || 'Failed to clear WhatsApp settings');
 
       setToast({
         message: 'WhatsApp configuration cleared. WhatsApp buttons are now hidden for users.',

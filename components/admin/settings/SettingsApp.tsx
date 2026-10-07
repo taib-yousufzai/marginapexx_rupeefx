@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from 'react';
-import { Toast, ToastState } from '../AdminUtils';
+import { Toast, ToastState, apiCall } from '../AdminUtils';
 
 export default function SettingsApp() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
@@ -15,26 +15,16 @@ export default function SettingsApp() {
   const [loadingSettings, setLoadingSettings] = useState(true);
 
   useEffect(() => {
-    fetch('/api/admin/platform-settings')
-      .then(res => res.json())
-      .then(data => {
-        if (data.settings?.EXIT_PRICE_MODE) {
-          setExitPriceMode(data.settings.EXIT_PRICE_MODE);
-        }
-        if (data.settings?.MAINTENANCE_MODE !== undefined) {
-          setMaintenanceMode(data.settings.MAINTENANCE_MODE === 'true');
-        }
-        if (data.settings?.GLOBAL_KILL_SWITCH !== undefined) {
-          setGlobalKillSwitch(data.settings.GLOBAL_KILL_SWITCH === 'true');
-        }
-        if (data.settings?.ALLOW_REGISTRATIONS !== undefined) {
-          setAllowNewRegistrations(data.settings.ALLOW_REGISTRATIONS === 'true');
-        }
-        if (data.settings?.SUPPORT_WHATSAPP_NUMBER !== undefined) {
-          setSupportPhone(data.settings.SUPPORT_WHATSAPP_NUMBER);
-        }
-        if (data.settings?.WHATSAPP_COMMUNITY_LINK !== undefined) {
-          setWhatsappCommunityLink(data.settings.WHATSAPP_COMMUNITY_LINK);
+    apiCall('/api/admin/platform-settings', { method: 'GET' })
+      .then(({ ok, data }: any) => {
+        if (ok && data?.settings) {
+          const s = data.settings;
+          if (s.EXIT_PRICE_MODE) setExitPriceMode(s.EXIT_PRICE_MODE);
+          if (s.MAINTENANCE_MODE !== undefined) setMaintenanceMode(s.MAINTENANCE_MODE === 'true');
+          if (s.GLOBAL_KILL_SWITCH !== undefined) setGlobalKillSwitch(s.GLOBAL_KILL_SWITCH === 'true');
+          if (s.ALLOW_REGISTRATIONS !== undefined) setAllowNewRegistrations(s.ALLOW_REGISTRATIONS === 'true');
+          if (s.SUPPORT_WHATSAPP_NUMBER !== undefined) setSupportPhone(s.SUPPORT_WHATSAPP_NUMBER);
+          if (s.WHATSAPP_COMMUNITY_LINK !== undefined) setWhatsappCommunityLink(s.WHATSAPP_COMMUNITY_LINK);
         }
       })
       .catch(err => console.error('Failed to load platform settings', err))
@@ -44,9 +34,8 @@ export default function SettingsApp() {
   const handleSave = async () => {
     setSaveLoading(true);
     try {
-      const res = await fetch('/api/admin/platform-settings', {
+      const { ok, data } = await apiCall('/api/admin/platform-settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           EXIT_PRICE_MODE: exitPriceMode,
           MAINTENANCE_MODE: String(maintenanceMode),
@@ -56,8 +45,7 @@ export default function SettingsApp() {
           WHATSAPP_COMMUNITY_LINK: whatsappCommunityLink.trim(),
         }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save settings');
+      if (!ok) throw new Error((data as any)?.error || 'Failed to save settings');
 
       setToast({ message: 'App & Platform settings saved successfully', type: 'success' });
     } catch (err: any) {
