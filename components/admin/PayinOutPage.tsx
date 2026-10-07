@@ -23,7 +23,7 @@ export default function PayinOutPage({ isDemoMode }: { isDemoMode: boolean }) {
   const [startTime, setStartTime] = useState('10:00');
   const [endTime, setEndTime] = useState('16:00');
   const [minWithdraw, setMinWithdraw] = useState('100');
-  const [minDeposit, setMinDeposit] = useState('1000');
+  const [minDeposit, setMinDeposit] = useState('300');
 
   // Dynamic data state
   const [requests, setRequests] = useState<PayRequest[]>([]);

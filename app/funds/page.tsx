@@ -36,7 +36,7 @@ export default function FundsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw'>('deposit');
   const [depositStep, setDepositStep] = useState<1 | 2 | 3>(1);
-  const [amount, setAmount] = useState<string>('1000');
+  const [amount, setAmount] = useState<string>('300');
 
   const { balance, settlementAmount, loading: balanceLoading } = useBalance();
   const balanceError = null;
@@ -152,7 +152,7 @@ export default function FundsPage() {
     setSubmitted(false);
     setSubmitError(null);
     setPaymentMethod(null);
-    setAmount('1000');
+    setAmount('300');
   };
 
   const handleProceedToPay = async (method: 'UPI' | 'BANK_TRANSFER') => {
@@ -161,8 +161,8 @@ export default function FundsPage() {
     setPaymentMethod(method);
 
     const numAmount = Number(amount);
-    if (!amount || isNaN(numAmount) || numAmount < 1000) {
-      setToast({ message: 'Minimum deposit is ₹1,000', type: 'error' });
+    if (!amount || isNaN(numAmount) || numAmount < 300) {
+      setToast({ message: 'Minimum deposit is ₹300', type: 'error' });
       return;
     }
 
@@ -257,7 +257,7 @@ export default function FundsPage() {
   const handleConfirmDeposit = async () => {
     setSubmitError(null);
     const numAmount = Number(amount);
-    if (!amount || isNaN(numAmount) || numAmount < 1000) return;
+    if (!amount || isNaN(numAmount) || numAmount < 300) return;
     if (!activeAccount) return;
     if (utr && !/^\d{12}$/.test(utr)) {
       setSubmitError('Invalid UTR: Must be exactly 12 digits');
@@ -442,7 +442,7 @@ export default function FundsPage() {
                               />
                             </div>
                             <div className="quick-amounts" style={{ marginBottom: '24px' }}>
-                              {[500, 1000, 2000, 5000, 10000].map(val => (
+                              {[300, 500, 1000, 2000, 5000].map(val => (
                                 <div key={val} className="quick-btn" onClick={() => setAmount(val.toString())}>+₹{val}</div>
                               ))}
                             </div>
