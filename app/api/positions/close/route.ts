@@ -235,15 +235,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     ]);
 
     let positions = posResult?.data || [];
-    if (positions.length === 0 && positionIdsList.length > 0) {
-      // If positionIds had optimistic client IDs, fetch user's open positions
+    if (positions.length === 0 && positionIdsList.length > 0 && body?.symbol) {
+      const cleanTargetSymbol = (body.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_\-]/g, '').toUpperCase();
       const { data: userOpenPositions } = await admin
         .from('positions')
         .select('*')
         .eq('user_id', user.id)
         .or('status.eq.open,status.eq.active,status.eq.OPEN,status.eq.ACTIVE');
       if (userOpenPositions && userOpenPositions.length > 0) {
-        positions = userOpenPositions;
+        positions = userOpenPositions.filter(p => {
+          const sym = (p.symbol || p.kite_instrument || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_\-]/g, '').toUpperCase();
+          return sym === cleanTargetSymbol;
+        });
       }
     }
 
@@ -483,7 +486,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           continue;
         }
 
-        results.push({ positionId: pos.id, success: true, pnl: Number(pnl), exit_price: exitPrice });
+        results.push({ positionId: pos.id, success: true, pnl: Number(pnl), exit_price: exitPrice, brokerage: Number(pos.brokerage || pos.entry_brokerage || 0) + carryBrokerage });
       } catch (innerErr: any) {
         results.push({ positionId: pos.id, success: false, error: innerErr.message || 'Unknown error' });
       }
@@ -515,7 +518,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
               closed_by: 'USER',
               qty_open: 0,
               locked_margin: 0,
-              brokerage: Number(pos.brokerage || pos.entry_brokerage || 0),
+              brokerage: Number(resMatch?.brokerage ?? pos.brokerage ?? pos.entry_brokerage ?? 0),
             };
             const exitOrderRecord = {
               id: `order_exit_${pos.id}_${Date.now()}`,
@@ -542,6 +545,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           invalidateUserActiveOrdersCache(user.id),
           invalidateUserHistoryCache(user.id),
         ]);
+
+        // Invalidate balance cache so wallet updates immediately after profit/loss
+        try {
+          const { getRedisClient } = await import('@/lib/redis');
+          const redis = getRedisClient();
+          await redis.del(`user_balance:${user.id}`);
+        } catch (_) {}
       } catch (cacheErr) {
         console.warn('[POST /api/positions/close] Cache update warning:', cacheErr);
       }

@@ -191,27 +191,37 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     optimisticallyUpdatedPositionsRef.current.delete(posId);
     optimisticPositionsRef.current.delete(posId);
 
+    const targetSymbol = cleanSym(positionObj?.symbol || '');
+    if (targetSymbol) {
+      for (const [id, op] of Array.from(optimisticPositionsRef.current.entries())) {
+        if (cleanSym(op.symbol || op.kite_instrument) === targetSymbol) {
+          recentlyClosedTimesRef.current.set(id, now);
+          optimisticPositionsRef.current.delete(id);
+        }
+      }
+    }
+
     setRawPositions(prev => {
       const target = prev.find(p => p.id === posId);
-      const targetSymbol = cleanSym(target?.symbol || positionObj?.symbol || '');
+      const symbolToMatch = targetSymbol || cleanSym(target?.symbol || '');
       if (target) {
         recentlyRemovedPositionsRef.current.set(posId, target);
       } else if (positionObj && positionObj.symbol) {
         recentlyRemovedPositionsRef.current.set(posId, { id: posId, ...positionObj } as MyPosition);
       }
 
-      if (targetSymbol) {
-        prev.forEach(p => {
-          if ((p.id.startsWith('__optimistic__') || p.id.startsWith('opt_')) && cleanSym(p.symbol || p.kite_instrument) === targetSymbol) {
-            recentlyClosedTimesRef.current.set(p.id, now);
-            optimisticPositionsRef.current.delete(p.id);
+      if (symbolToMatch) {
+        for (const [id, op] of Array.from(optimisticPositionsRef.current.entries())) {
+          if (cleanSym(op.symbol || op.kite_instrument) === symbolToMatch) {
+            recentlyClosedTimesRef.current.set(id, now);
+            optimisticPositionsRef.current.delete(id);
           }
-        });
+        }
       }
 
       const next = prev.filter(p => {
         if (p.id === posId) return false;
-        if (targetSymbol && (p.id.startsWith('__optimistic__') || p.id.startsWith('opt_')) && cleanSym(p.symbol || p.kite_instrument) === targetSymbol) {
+        if (symbolToMatch && (p.id.startsWith('__optimistic__') || p.id.startsWith('opt_')) && cleanSym(p.symbol || p.kite_instrument) === symbolToMatch) {
           return false;
         }
         return true;
@@ -241,7 +251,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         optimisticallyUpdatedPositionsRef.current.delete(r.posId);
         optimisticPositionsRef.current.delete(r.posId);
         const sym = cleanSym(r.positionObj?.symbol || '');
-        if (sym) removedSymbols.add(sym);
+        if (sym) {
+          removedSymbols.add(sym);
+          for (const [id, op] of Array.from(optimisticPositionsRef.current.entries())) {
+            if (cleanSym(op.symbol || op.kite_instrument) === sym) {
+              recentlyClosedTimesRef.current.set(id, now);
+              optimisticPositionsRef.current.delete(id);
+            }
+          }
+        }
       } else {
         optimisticallyUpdatedPositionsRef.current.set(r.posId, {
           qty_open: r.qty_open,
@@ -373,22 +391,12 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
-      let rawPositionsFromServer: MyPosition[] = [];
       const isFresh = options?.fresh !== false;
-      if (!isFresh) {
-        const boot = await fetchUserBootstrap(false);
-        if (boot && Array.isArray(boot.positions)) {
-          rawPositionsFromServer = boot.positions;
-        }
-      }
-
-      if (rawPositionsFromServer.length === 0) {
-        const queryUrl = isFresh ? `/api/positions?fresh=true&_t=${Date.now()}` : '/api/positions';
-        const data = await api.get<{ positions: MyPosition[] }>(queryUrl, {
-          signal: controller.signal,
-        });
-        rawPositionsFromServer = data.positions || [];
-      }
+      const queryUrl = isFresh ? `/api/positions?fresh=true&_t=${Date.now()}` : '/api/positions';
+      const data = await api.get<{ positions: MyPosition[] }>(queryUrl, {
+        signal: controller.signal,
+      });
+      const rawPositionsFromServer: MyPosition[] = data?.positions || [];
 
       const now = Date.now();
       // Clean up closed IDs older than 5 seconds
@@ -414,7 +422,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         });
 
       setRawPositions(prev => {
-        // Collect active optimistic positions (< 4 seconds old and not closed)
+        // Collect active optimistic positions (< 3 seconds old and not closed)
         const activeOptPositions: MyPosition[] = [];
         const consumedServerQty = new Map<string, number>();
 
@@ -429,7 +437,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           const optId = optPos.id;
           const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
 
-          if (recentlyClosedTimesRef.current.has(optId) || (now - createdTime > 4000)) {
+          if (recentlyClosedTimesRef.current.has(optId) || (now - createdTime > 3000)) {
             optimisticPositionsRef.current.delete(optId);
             continue;
           }
@@ -526,9 +534,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           return [{ id: posId, ...stashed } as MyPosition, ...prev];
         });
       }
-    } else {
-      recentlyClosedTimesRef.current.clear();
-      recentlyRemovedPositionsRef.current.clear();
     }
     fetchPositions({ fresh: true });
   }, [fetchPositions]);
@@ -537,15 +542,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     // One-shot eviction: clear the legacy localStorage cache written by the old code.
     try { localStorage.removeItem('cached_open_positions'); } catch (_) { }
 
-    const handleBootstrapUpdated = (evt: Event) => {
-      const detail = (evt as CustomEvent).detail;
-      if (detail && Array.isArray(detail.positions)) {
-        fetchPositions({ fresh: false });
-      }
-    };
-    window.addEventListener('user_bootstrap_updated', handleBootstrapUpdated);
-
-    fetchPositions();
+    fetchPositions({ fresh: true });
     let isSubscribed = false;
     const channelName = `my-positions-realtime-${Math.random().toString(36).slice(2)}`;
 
@@ -585,8 +582,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     };
 
     const handleOrderFailed = () => {
-      recentlyClosedTimesRef.current.clear();
-      recentlyRemovedPositionsRef.current.clear();
       fetchPositions({ fresh: true });
     };
 
@@ -603,6 +598,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           optimisticallyUpdatedPositionsRef.current.delete(p.id);
           optimisticPositionsRef.current.delete(p.id);
         }
+        const sym = cleanSym(p?.symbol || p?.kite_instrument || '');
+        if (sym) {
+          for (const [id, op] of Array.from(optimisticPositionsRef.current.entries())) {
+            if (cleanSym(op.symbol || op.kite_instrument) === sym) {
+              recentlyClosedTimesRef.current.set(id, now);
+              optimisticPositionsRef.current.delete(id);
+            }
+          }
+        }
       });
       partialPositions.forEach((p: any) => {
         if (p?.id) {
@@ -615,9 +619,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       });
       setRawPositions(prev => {
         const closedIdSet = new Set(fullyClosedPositions.map((p: any) => p?.id).filter(Boolean));
+        const closedSymbolSet = new Set(fullyClosedPositions.map((p: any) => cleanSym(p?.symbol || p?.kite_instrument || '')).filter(Boolean));
         const partialMap = new Map(partialPositions.map((p: any) => [p.id, p]));
         const next = prev
-          .filter(p => !closedIdSet.has(p.id))
+          .filter(p => {
+            if (closedIdSet.has(p.id)) return false;
+            if ((p.id.startsWith('__optimistic__') || p.id.startsWith('opt_')) && closedSymbolSet.has(cleanSym(p.symbol || p.kite_instrument))) {
+              return false;
+            }
+            return true;
+          })
           .map(p => {
             const partial = partialMap.get(p.id);
             if (partial) {

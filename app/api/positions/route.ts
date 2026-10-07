@@ -5,6 +5,7 @@ import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { getRedisClient } from '@/lib/redis';
 import { getCachedUserProfile } from '@/lib/redisSettingsCache';
 
+
 /**
  * GET /api/positions
  * 
@@ -50,34 +51,6 @@ export async function GET(request: NextRequest) {
     // Fetch cached profile for history_reset_at (0 DB round trips on warm cache)
     const userProfile = await getCachedUserProfile(user.id, () => admin);
     const historyResetAt = userProfile?.history_reset_at;
-
-    let positionsQuery = admin
-      .from('positions')
-      .select('*')
-      .eq('user_id', user.id);
-
-    if (statusParam) {
-      if (statusParam === 'open') {
-        // 'open' shorthand — include both 'open' and 'active' statuses (case-insensitive)
-        positionsQuery = positionsQuery
-          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-          .order('created_at', { ascending: false });
-      } else {
-        // Case-insensitive matching for other status values (like 'closed')
-        const lowerStatus = statusParam.toLowerCase();
-        const upperStatus = statusParam.toUpperCase();
-        const queryStatuses = lowerStatus === 'closed'
-          ? ['closed', 'CLOSED', 'partially_closed', 'PARTIALLY_CLOSED', 'liquidated', 'LIQUIDATED', 'squared_off', 'SQUARED_OFF', 'auto_closed', 'AUTO_CLOSED']
-          : [lowerStatus, upperStatus];
-        positionsQuery = positionsQuery
-          .in('status', queryStatuses)
-          .order('updated_at', { ascending: false })
-          .limit(500);
-      }
-    } else {
-      // Default: only return open/active — closed positions are fetched explicitly (case-insensitive)
-      positionsQuery = positionsQuery.in('status', ['open', 'OPEN', 'active', 'ACTIVE']).order('created_at', { ascending: false });
-    }
 
     // Fetch positions with a 6s timeout wrapper
     const timeoutPromise = new Promise<any>((resolve) =>
