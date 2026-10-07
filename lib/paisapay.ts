@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 
-export const PAISAPAY_CREATE_ORDER_URL = 'https://api.paisapay.site/create_order.php';
-export const PAISAPAY_PAYOUT_URL = 'https://api.paisapay.site/create_payout.php';
+export const PAISAPAY_CREATE_ORDER_URL = process.env.PAISAPAY_GATEWAY_URL || 'https://pay.paisapay.site/create_order.php';
+export const PAISAPAY_PAYOUT_URL = process.env.PAISAPAY_PAYOUT_URL || 'https://pay.paisapay.site/create_payout.php';
 
 export interface PaisaPayOrderPayload {
   amount: string;     // e.g. "500.00"
