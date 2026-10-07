@@ -280,8 +280,9 @@ export async function sendEmail(
   try {
     const transporter = getNodemailerTransporter();
     const gmailUser = process.env.GMAIL_USER;
+    const appName = process.env.NEXT_PUBLIC_APP_NAME || 'RupeeFX Trading';
     await transporter.sendMail({
-      from: `"MarginApex" <${gmailUser}>`,
+      from: `"${appName}" <${gmailUser}>`,
       to: recipient,
       subject,
       text,
