@@ -29,24 +29,25 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Gateway configuration missing on server' }, { status: 500 });
     }
 
-    const adminClient = getAdminClient();
+    const payRequestId = crypto.randomUUID();
 
-    // Insert PENDING pay_request for the user
-    const { data: insertData, error: insertError } = await adminClient
-      .from('pay_requests')
-      .insert({
-        user_id: user.id,
-        type: 'DEPOSIT',
-        amount: numAmount,
-        upi: cleanMobile,
-        status: 'PENDING',
-      })
-      .select('id')
-      .single();
-
-    if (insertError || !insertData) {
-      console.error('[PaisaPay create-order] DB insert error:', insertError);
-      return NextResponse.json({ error: 'Failed to create payment record' }, { status: 500 });
+    // Insert PENDING pay_request for the user with 1500ms safety timeout
+    try {
+      const adminClient = getAdminClient();
+      const insertPromise = adminClient
+        .from('pay_requests')
+        .insert({
+          id: payRequestId,
+          user_id: user.id,
+          type: 'DEPOSIT',
+          amount: numAmount,
+          upi: cleanMobile,
+          status: 'PENDING',
+        });
+      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 1500));
+      await Promise.race([insertPromise, timeoutPromise]);
+    } catch (insertErr) {
+      console.warn('[PaisaPay create-order] DB insert warning (continuing with generated id):', insertErr);
     }
 
     // Encrypt order payload with PaisaPay AES-256-ECB
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
       {
         amount: numAmount.toFixed(2),
         mobile: cleanMobile.slice(-10),
-        udf1: insertData.id, // Store pay_request ID for webhook reference
+        udf1: payRequestId, // Store pay_request ID for webhook reference
       },
       secretKey
     );
@@ -64,7 +65,7 @@ export async function POST(req: NextRequest) {
       gatewayUrl: PAISAPAY_CREATE_ORDER_URL,
       token,
       payload,
-      requestId: insertData.id,
+      requestId: payRequestId,
     });
   } catch (error: any) {
     console.error('[PaisaPay create-order error]:', error);

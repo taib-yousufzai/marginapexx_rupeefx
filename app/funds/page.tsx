@@ -201,10 +201,14 @@ export default function FundsPage() {
       const session = await getSession();
       if (!session || !session.access_token) {
         setToast({ message: 'Please log in to make a deposit', type: 'error' });
+        setGatewayLoading(false);
         return;
       }
 
       const mobile = session.user?.user_metadata?.phone || session.user?.phone || '9999999999';
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000);
 
       const res = await fetch('/api/pay/paisapay/create-order', {
         method: 'POST',
@@ -213,7 +217,9 @@ export default function FundsPage() {
           'Authorization': `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ amount: numAmount, mobile }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -241,10 +247,9 @@ export default function FundsPage() {
       form.submit();
     } catch (err: any) {
       console.error('PaisaPay initiation error:', err);
-      const msg = err?.message || 'Payment initiation failed';
+      const msg = err?.name === 'AbortError' ? 'Connection timed out. Please try again.' : (err?.message || 'Payment initiation failed');
       setSubmitError(msg);
       setToast({ message: msg, type: 'error' });
-    } finally {
       setGatewayLoading(false);
     }
   };
