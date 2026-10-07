@@ -206,15 +206,20 @@ export default function FundsPage() {
 
       const mobile = session.user?.user_metadata?.phone || session.user?.phone || '9999999999';
 
-      const res = await fetch('/api/pay/paisapay/create-order', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amount: numAmount, mobile }),
+      const data = await api.post<{
+        success: boolean;
+        gatewayUrl: string;
+        token: string;
+        payload: string;
+        requestId: string;
+        error?: string;
+      }>('/api/pay/paisapay/create-order', {
+        amount: numAmount,
+        mobile,
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to initiate gateway payment');
+      if (!data || !data.success) {
+        throw new Error(data?.error || 'Failed to initiate gateway payment');
       }
 
       // Automatically construct and submit POST form to PaisaPay
@@ -238,8 +243,9 @@ export default function FundsPage() {
       form.submit();
     } catch (err: any) {
       console.error('PaisaPay initiation error:', err);
-      setSubmitError(err.message || 'Payment initiation failed');
-      setToast({ message: err.message || 'Payment initiation failed', type: 'error' });
+      const msg = err instanceof ApiError ? (err.message || 'Payment initiation failed') : (err.message || 'Payment initiation failed');
+      setSubmitError(msg);
+      setToast({ message: msg, type: 'error' });
     } finally {
       setGatewayLoading(false);
     }
