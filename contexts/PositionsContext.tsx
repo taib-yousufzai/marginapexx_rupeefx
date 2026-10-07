@@ -319,13 +319,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     const cleanSymbol = (partialPos.symbol || '').trim();
     if (!cleanSymbol) return;
 
-    // Clear recently removed guard for this symbol so re-entry trades appear immediately
+    // Clear recently removed and recently closed guards so new entries appear immediately
     const cleanSymUpper = cleanSym(cleanSymbol);
     for (const [id, rp] of Array.from(recentlyRemovedPositionsRef.current.entries())) {
       if (cleanSym(rp.symbol || rp.kite_instrument) === cleanSymUpper) {
         recentlyRemovedPositionsRef.current.delete(id);
       }
     }
+    recentlyClosedTimesRef.current.delete(tempId);
+    if (partialPos.id) recentlyClosedTimesRef.current.delete(partialPos.id);
 
     const newPos: MyPosition = {
       id: tempId,
@@ -399,19 +401,28 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       const rawPositionsFromServer: MyPosition[] = data?.positions || [];
 
       const now = Date.now();
-      // Clean up closed IDs older than 5 seconds
+      // Clean up closed IDs older than 1.5 seconds
       for (const [id, closedAt] of Array.from(recentlyClosedTimesRef.current.entries())) {
-        if (now - closedAt > 5000) {
+        if (now - closedAt > 1500) {
           recentlyClosedTimesRef.current.delete(id);
         }
       }
 
-      // Positions from the database are authoritative, excluding IDs closed within the last 5s
+      // Positions from the database are authoritative, excluding IDs closed within the last 1.5s
       const basePositions: MyPosition[] = rawPositionsFromServer
-        .filter(p => !recentlyClosedTimesRef.current.has(p.id))
+        .filter(p => {
+          const closedAt = recentlyClosedTimesRef.current.get(p.id);
+          if (!closedAt) return true;
+          const entryTime = new Date(p.entry_time || (p as any).created_at || 0).getTime();
+          if (entryTime > closedAt) {
+            recentlyClosedTimesRef.current.delete(p.id);
+            return true;
+          }
+          return false;
+        })
         .map(p => {
           const updated = optimisticallyUpdatedPositionsRef.current.get(p.id);
-          if (updated && now - updated.time < 5000) {
+          if (updated && now - updated.time < 2000) {
             return {
               ...p,
               qty_open: updated.qty_open,
@@ -422,7 +433,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         });
 
       setRawPositions(prev => {
-        // Collect active optimistic positions (< 3 seconds old and not closed)
         const activeOptPositions: MyPosition[] = [];
         const consumedServerQty = new Map<string, number>();
 
@@ -437,7 +447,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           const optId = optPos.id;
           const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
 
-          if (recentlyClosedTimesRef.current.has(optId) || (now - createdTime > 3000)) {
+          if (recentlyClosedTimesRef.current.has(optId)) {
             optimisticPositionsRef.current.delete(optId);
             continue;
           }
@@ -454,7 +464,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
             if (spSym !== optSym || spSide !== optSide) continue;
 
             const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
-            if (spTime < createdTime - 5000) continue;
+            if (spTime < createdTime - 10000) continue;
 
             const spTotalQty = Number(sp.qty_open || sp.qty_total || 0);
             const alreadyConsumed = consumedServerQty.get(sp.id) || 0;
@@ -469,8 +479,10 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
           if (matched) {
             optimisticPositionsRef.current.delete(optId);
-          } else {
+          } else if (now - createdTime < 8000) {
             activeOptPositions.push(optPos);
+          } else {
+            optimisticPositionsRef.current.delete(optId);
           }
         }
 
