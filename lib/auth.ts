@@ -62,52 +62,15 @@ export function getRole(user: User | null): AppRole {
  * Validates: Requirements 2.1, 2.3, 5.3
  */
 export async function signIn(email: string, password: string): Promise<SignInResult> {
-  let targetEmail = email.trim();
-  let targetPassword = password.trim();
+  const targetEmail = email.trim();
+  const targetPassword = password.trim();
 
-  // Fast-path: non-email identifiers (client_id, phone) and demo account bypass
-  // browser Supabase SDK directly to /api/auth/login, avoiding invalid email format errors & timeouts.
-  const isNonEmailOrDemo =
-    !targetEmail.includes('@') ||
-    ((targetEmail.toLowerCase() === 'demo@gmail.com' || targetEmail.toUpperCase() === 'DEMO123') && (targetPassword === 'demo123' || password === 'demo123'));
-
-  if (!isNonEmailOrDemo) {
-    try {
-      const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password: targetPassword });
-      const timeoutAuth = new Promise<any>((resolve) =>
-        setTimeout(() => resolve({ timeout: true }), 3500)
-      );
-
-      const res = await Promise.race([authPromise, timeoutAuth]);
-
-      if (!res.timeout && res.data?.session && res.data?.user && !res.error) {
-        _cachedSession = res.data.session;
-        _cacheTimestamp = Date.now();
-        return { session: res.data.session, user: res.data.user };
-      }
-
-      // Supabase returned a definitive auth error (e.g. wrong password, user not found).
-      if (!res.timeout && res.error) {
-        const errMsg = res.error.message || '';
-        const isNetworkErr = errMsg.includes('FetchError') || errMsg.includes('timeout') || errMsg.includes('fetch') || errMsg.includes('network');
-        if (!isNetworkErr) {
-          return { error: errMsg || 'Invalid credentials. Please try again.' };
-        }
-      }
-    } catch (e) {
-      console.warn('Supabase Auth SDK call failed/timed out, attempting server auth fallback:', e);
-    }
-  }
-
-  // Fallback: Direct server auth via /api/auth/login
-  // Handles: (a) non-email identifiers (client_id/phone) needing email resolution,
-  //          (b) network issues where client SDK timed out but server can still reach Supabase,
-  //          (c) demo credentials.
+  // 1. Primary: Authoritative Server Auth API (/api/auth/login)
   try {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: targetEmail, password }),
+      body: JSON.stringify({ email: targetEmail, password: targetPassword }),
     });
 
     const data = await response.json();
@@ -134,14 +97,29 @@ export async function signIn(email: string, password: string): Promise<SignInRes
             refresh_token: data.session.refresh_token || '',
           }).catch(() => {});
         } catch (e) {
-          console.warn('[signIn] Failed to persist fallback session to localStorage:', e);
+          console.warn('[signIn] Failed to persist session to localStorage:', e);
         }
       }
 
       return { session: data.session, user: data.user };
     }
   } catch (err: any) {
-    console.error('Direct auth fallback error:', err);
+    console.warn('Server auth endpoint error, attempting client SDK fallback:', err);
+  }
+
+  // 2. Fallback: Direct Client Supabase SDK
+  try {
+    const res = await supabase.auth.signInWithPassword({ email: targetEmail, password: targetPassword });
+    if (res.data?.session && res.data?.user && !res.error) {
+      _cachedSession = res.data.session;
+      _cacheTimestamp = Date.now();
+      return { session: res.data.session, user: res.data.user };
+    }
+    if (res.error) {
+      return { error: res.error.message || 'Invalid credentials. Please try again.' };
+    }
+  } catch (e) {
+    console.warn('Client Supabase Auth SDK error:', e);
   }
 
   return { error: 'Authentication failed. Please check credentials or network connection.' };
