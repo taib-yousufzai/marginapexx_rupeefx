@@ -226,6 +226,9 @@ export default function LoginPage() {
                 value={password}
                 onChange={handlePasswordChange}
                 autoComplete="current-password"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
                 disabled={isLoading}
                 suppressHydrationWarning
               />

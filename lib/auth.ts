@@ -63,16 +63,17 @@ export function getRole(user: User | null): AppRole {
  */
 export async function signIn(email: string, password: string): Promise<SignInResult> {
   let targetEmail = email.trim();
+  let targetPassword = password.trim();
 
   // Fast-path: non-email identifiers (client_id, phone) and demo account bypass
   // browser Supabase SDK directly to /api/auth/login, avoiding invalid email format errors & timeouts.
   const isNonEmailOrDemo =
     !targetEmail.includes('@') ||
-    ((targetEmail.toLowerCase() === 'demo@gmail.com' || targetEmail.toUpperCase() === 'DEMO123') && password === 'demo123');
+    ((targetEmail.toLowerCase() === 'demo@gmail.com' || targetEmail.toUpperCase() === 'DEMO123') && (targetPassword === 'demo123' || password === 'demo123'));
 
   if (!isNonEmailOrDemo) {
     try {
-      const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password });
+      const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password: targetPassword });
       const timeoutAuth = new Promise<any>((resolve) =>
         setTimeout(() => resolve({ timeout: true }), 3500)
       );

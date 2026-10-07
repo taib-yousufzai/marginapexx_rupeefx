@@ -29,11 +29,12 @@ export async function POST(req: Request) {
     }
 
     const targetIdentifier = String(email).trim();
+    const cleanPassword = String(password).trim();
 
     // ─── Strategy 1: Instant Demo Account Fast-Path ──────────────────────────
     if (
       (targetIdentifier.toLowerCase() === 'demo@gmail.com' || targetIdentifier.toUpperCase() === 'DEMO123') &&
-      password === 'demo123'
+      (cleanPassword === 'demo123' || password === 'demo123')
     ) {
       const demoUser = {
         id: 'dfa9b057-9187-4054-9ae6-9179c620666e',
@@ -100,7 +101,7 @@ export async function POST(req: Request) {
 
         const authPromise = supabase.auth.signInWithPassword({
           email: resolvedEmail,
-          password,
+          password: cleanPassword,
         });
 
         const timeoutPromise = new Promise<any>((resolve) =>
