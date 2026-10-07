@@ -39,24 +39,79 @@ function ResetPasswordForm() {
     sync();
     window.addEventListener('themeChanged', sync);
 
-    // Subscribe to auth state changes to detect PASSWORD_RECOVERY event
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'PASSWORD_RECOVERY') {
+    let isMounted = true;
+
+    async function initRecovery() {
+      // 1. Check for PKCE code in query params (?code=...)
+      if (typeof window !== 'undefined') {
+        const searchParams = new URLSearchParams(window.location.search);
+        const code = searchParams.get('code');
+        if (code) {
+          try {
+            const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+            if (!error && data.session && isMounted) {
+              setPageState('ready');
+              return;
+            }
+          } catch (e) {
+            console.warn('[reset-password] code exchange error:', e);
+          }
+        }
+
+        // 2. Check for hash parameters (#access_token=...&refresh_token=...)
+        if (window.location.hash) {
+          const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+          const accessToken = hashParams.get('access_token');
+          const refreshToken = hashParams.get('refresh_token');
+          if (accessToken && refreshToken) {
+            try {
+              const { data, error } = await supabase.auth.setSession({
+                access_token: accessToken,
+                refresh_token: refreshToken,
+              });
+              if (!error && data.session && isMounted) {
+                setPageState('ready');
+                return;
+              }
+            } catch (e) {
+              console.warn('[reset-password] setSession error:', e);
+            }
+          }
+        }
+      }
+
+      // 3. Check if session already exists
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session && isMounted) {
+        setPageState('ready');
+      }
+    }
+
+    initRecovery();
+
+    // Subscribe to auth state changes to detect recovery session
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!isMounted) return;
+      if (event === 'PASSWORD_RECOVERY' || (event === 'SIGNED_IN' && session) || (event === 'INITIAL_SESSION' && session)) {
         setPageState('ready');
       } else if (event === 'SIGNED_OUT') {
         setPageState('error');
       }
     });
 
-    // Timeout: if no recovery event fires within 5 seconds, show error
-    const timeout = setTimeout(() => {
-      setPageState((current) => {
-        if (current === 'verifying') return 'error';
-        return current;
-      });
-    }, 5000);
+    // Timeout: if still verifying after 6 seconds and no session, show error
+    const timeout = setTimeout(async () => {
+      if (!isMounted) return;
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        setPageState('ready');
+      } else {
+        setPageState((current) => (current === 'verifying' ? 'error' : current));
+      }
+    }, 6000);
 
     return () => {
+      isMounted = false;
       window.removeEventListener('themeChanged', sync);
       subscription.unsubscribe();
       clearTimeout(timeout);

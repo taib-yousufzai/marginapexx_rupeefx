@@ -177,12 +177,15 @@ export async function signOut(): Promise<void> {
  */
 export async function requestPasswordReset(email: string): Promise<PasswordResetResult> {
   try {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim().toLowerCase() }),
     });
 
-    if (error) {
-      return { error: 'Something went wrong. Please try again.' };
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { error: data.error || 'Something went wrong. Please try again.' };
     }
 
     return { success: true };
