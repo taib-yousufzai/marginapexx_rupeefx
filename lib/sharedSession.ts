@@ -100,18 +100,22 @@ export async function getSharedSession(): Promise<{ token: string | null; userId
   // Deduplicate: if someone else is already calling getSession(), wait for that
   if (sessionPromise) return sessionPromise;
   
-  // Last resort: call getSession() (slow, but only happens once and triggers refresh)
+  // Last resort: call getSession() with strict 1s timeout
   sessionPromise = (async () => {
     try {
       const { supabase: sb } = await import('@/lib/supabaseClient');
-      const { data: { session } } = await sb.auth.getSession();
+      const getSess = sb.auth.getSession();
+      const getTimeout = new Promise<{ data: { session: null }; error: Error }>((resolve) =>
+        setTimeout(() => resolve({ data: { session: null }, error: new Error('timeout') }), 1000)
+      );
+      const { data: { session } } = await Promise.race([getSess, getTimeout]) as any;
       if (session) {
         cachedToken = session.access_token;
-        cachedUserId = session.user.id;
+        cachedUserId = session.user?.id || null;
         return { token: cachedToken, userId: cachedUserId };
       }
     } catch (err) {
-      console.error('[SharedSession] getSession failed:', err);
+      console.warn('[SharedSession] getSession fallback timed out or failed:', err);
     } finally {
       sessionPromise = null;
     }

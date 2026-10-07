@@ -165,19 +165,24 @@ export function downloadCSV(data: Record<string, unknown>[], filename: string) {
   document.body.removeChild(link);
 }
 
+import { getSharedSessionSync, getSharedSession } from '@/lib/sharedSession';
+
 // ─── API helper ───────────────────────────────────────────────────────────────
 export async function apiCall(
   path: string,
   options: RequestInit,
 ): Promise<{ ok: boolean; status: number; data: unknown }> {
   try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token ?? '';
+    let token = getSharedSessionSync().token;
+    if (!token) {
+      const session = await getSharedSession();
+      token = session?.token ?? null;
+    }
     const res = await fetch(path, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        Authorization: `Bearer ${token || ''}`,
         ...(options.headers ?? {}),
       },
     });
