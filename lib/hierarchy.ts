@@ -19,10 +19,10 @@ export async function isUserInHierarchy(
     return true;
   }
 
-  // Fetch actor's role and parent_id
+  // Fetch actor's role
   const { data: actorData, error: actorError } = await supabase
     .from('profiles')
-    .select('role, parent_id')
+    .select('role')
     .eq('id', actorId)
     .single();
 
@@ -33,8 +33,8 @@ export async function isUserInHierarchy(
 
   const role = actorData.role;
 
-  // Super admins and top-level admins (parent_id is null) see everyone
-  if (role === 'super_admin' || (role === 'admin' && !actorData.parent_id)) {
+  // Super admins have platform-wide visibility across everyone
+  if (role === 'super_admin') {
     return true;
   }
 
@@ -51,7 +51,7 @@ export async function isUserInHierarchy(
   while (currentTargetId && depth < MAX_DEPTH) {
     const { data: targetData, error: targetError } = await supabase
       .from('profiles')
-      .select('parent_id')
+      .select('parent_id, created_by')
       .eq('id', currentTargetId)
       .single() as { data: any, error: any };
 
@@ -59,7 +59,7 @@ export async function isUserInHierarchy(
       break;
     }
 
-    if (targetData.parent_id === actorId) {
+    if (targetData.parent_id === actorId || targetData.created_by === actorId) {
       return true;
     }
 
@@ -72,7 +72,8 @@ export async function isUserInHierarchy(
 
 /**
  * Returns the list of accessible descendant user/profile IDs for a given actor according to hierarchy.
- * Returns null if the actor is super_admin or top-level admin (meaning unrestricted access to all users).
+ * Returns null ONLY if the actor is super_admin (meaning unrestricted platform-wide access).
+ * Admins and Brokers only receive their own ID and descendant user IDs.
  */
 export async function getDescendantUserIds(
   supabase: SupabaseClient,
@@ -80,36 +81,25 @@ export async function getDescendantUserIds(
   actorRole: string
 ): Promise<string[] | null> {
   if (actorRole === 'super_admin') {
-    return null; // Unrestricted access across system
-  }
-
-  if (actorRole === 'admin') {
-    const { data: actorProfile } = await supabase
-      .from('profiles')
-      .select('parent_id')
-      .eq('id', actorId)
-      .maybeSingle();
-
-    if (!actorProfile?.parent_id) {
-      return null; // Top-level admin has unrestricted platform-wide access
-    }
+    return null; // Super admin has unrestricted platform-wide access
   }
 
   const { data: allProfiles, error } = await supabase
     .from('profiles')
-    .select('id, parent_id');
+    .select('id, parent_id, created_by');
 
   if (error || !allProfiles) {
     console.error('Error fetching hierarchy profiles:', error);
-    return [];
+    return [actorId];
   }
 
   const getChildren = (parentId: string): string[] => {
-    const directChildren = allProfiles.filter(p => p.parent_id === parentId).map(p => p.id);
+    const directChildren = allProfiles.filter(p => p.parent_id === parentId || p.created_by === parentId).map(p => p.id);
     const indirectChildren = directChildren.flatMap(childId => getChildren(childId));
-    return [...directChildren, ...indirectChildren];
+    return Array.from(new Set([...directChildren, ...indirectChildren]));
   };
 
-  return getChildren(actorId);
+  const descendants = getChildren(actorId);
+  return [actorId, ...descendants];
 }
 
