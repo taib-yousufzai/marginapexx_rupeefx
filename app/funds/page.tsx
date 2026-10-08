@@ -36,7 +36,7 @@ export default function FundsPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeTab, setActiveTab] = useState<'deposit' | 'withdraw'>('deposit');
   const [depositStep, setDepositStep] = useState<1 | 2 | 3>(1);
-  const [amount, setAmount] = useState<string>('300');
+  const [amount, setAmount] = useState<string>('100');
 
   const { balance, settlementAmount, loading: balanceLoading } = useBalance();
   const balanceError = null;
@@ -152,7 +152,7 @@ export default function FundsPage() {
     setSubmitted(false);
     setSubmitError(null);
     setPaymentMethod(null);
-    setAmount('300');
+    setAmount('100');
   };
 
   const handleProceedToPay = async (method: 'UPI' | 'BANK_TRANSFER') => {
@@ -161,8 +161,8 @@ export default function FundsPage() {
     setPaymentMethod(method);
 
     const numAmount = Number(amount);
-    if (!amount || isNaN(numAmount) || numAmount < 300) {
-      setToast({ message: 'Minimum deposit is ₹300', type: 'error' });
+    if (!amount || isNaN(numAmount) || numAmount < 100) {
+      setToast({ message: 'Minimum deposit is ₹100', type: 'error' });
       return;
     }
 
@@ -191,8 +191,8 @@ export default function FundsPage() {
   const handlePaisaPayPayment = async () => {
     setSubmitError(null);
     const numAmount = Number(amount);
-    if (!amount || isNaN(numAmount) || numAmount < 300) {
-      setToast({ message: 'Minimum deposit is ₹300', type: 'error' });
+    if (!amount || isNaN(numAmount) || numAmount < 100) {
+      setToast({ message: 'Minimum deposit is ₹100', type: 'error' });
       return;
     }
 
@@ -257,7 +257,7 @@ export default function FundsPage() {
   const handleConfirmDeposit = async () => {
     setSubmitError(null);
     const numAmount = Number(amount);
-    if (!amount || isNaN(numAmount) || numAmount < 300) return;
+    if (!amount || isNaN(numAmount) || numAmount < 100) return;
     if (!activeAccount) return;
     if (utr && !/^\d{12}$/.test(utr)) {
       setSubmitError('Invalid UTR: Must be exactly 12 digits');
@@ -438,11 +438,11 @@ export default function FundsPage() {
                                 className="amount-input" 
                                 value={amount} 
                                 onChange={(e) => setAmount(e.target.value)} 
-                                placeholder="300.00" 
+                                placeholder="100.00" 
                               />
                             </div>
                             <div className="quick-amounts" style={{ marginBottom: '24px' }}>
-                              {[300, 500, 1000, 2000, 5000].map(val => (
+                              {[100, 500, 1000, 2000, 5000].map(val => (
                                 <div key={val} className="quick-btn" onClick={() => setAmount(val.toString())}>+₹{val}</div>
                               ))}
                             </div>
@@ -457,7 +457,7 @@ export default function FundsPage() {
                               </div>
                               <div style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
                                 • Balance is added to your account instantly upon payment.<br/>
-                                • Minimum deposit amount: <strong>₹300</strong>.<br/>
+                                • Minimum deposit amount: <strong>₹100</strong>.<br/>
                                 • Safe & 256-bit encrypted transaction.
                               </div>
                             </div>
@@ -481,14 +481,14 @@ export default function FundsPage() {
                                 cursor: 'pointer',
                                 boxShadow: '0 4px 16px rgba(22, 163, 74, 0.3)',
                               }}
-                              disabled={Number(amount) < 300 || gatewayLoading}
+                              disabled={Number(amount) < 100 || gatewayLoading}
                               onClick={handlePaisaPayPayment}
                             >
                               <i className={`fas ${gatewayLoading ? 'fa-spinner fa-spin' : 'fa-lock'}`}></i>
                               <span>{gatewayLoading ? 'Connecting Gateway...' : `Pay ₹${amount || '0'} via PaisaPay`}</span>
                             </button>
 
-                            {Number(amount) < 300 && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center', fontWeight: 600 }}>Minimum deposit is ₹300</p>}
+                            {Number(amount) < 100 && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center', fontWeight: 600 }}>Minimum deposit is ₹100</p>}
                             {submitError && <p style={{ fontSize: '0.7rem', color: '#c0392b', marginTop: '12px', textAlign: 'center' }}>{submitError}</p>}
                           </div>
                         </div>
