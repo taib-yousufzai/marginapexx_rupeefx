@@ -36,40 +36,35 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    if (data?.properties?.action_link) {
-      const resetLink = data.properties.action_link;
+    if (data?.properties) {
+      const otpCode = data.properties.email_otp;
       const appName = process.env.NEXT_PUBLIC_APP_NAME || 'RupeeFX Trading';
 
-      const emailSubject = `Reset your ${appName} password`;
+      const emailSubject = `Your ${appName} Password Reset Code`;
       const emailHtml = `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 24px; background: #0f172a; color: #f8fafc; border-radius: 16px; border: 1px solid #1e293b;">
-          <div style="text-align: center; margin-bottom: 28px;">
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 32px 24px; background: #0f172a; color: #f8fafc; border-radius: 16px; border: 1px solid #1e293b;">
+          <div style="text-align: center; margin-bottom: 24px;">
             <h1 style="color: #38bdf8; margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.5px;">${appName}</h1>
-            <p style="color: #94a3b8; font-size: 14px; margin-top: 4px;">Password Reset Request</p>
+            <p style="color: #94a3b8; font-size: 14px; margin-top: 4px;">Password Reset Code</p>
           </div>
           <div style="background: #1e293b; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
             <p style="margin: 0 0 16px; font-size: 15px; line-height: 1.5; color: #e2e8f0;">
               Hello,
             </p>
             <p style="margin: 0 0 20px; font-size: 14px; line-height: 1.5; color: #cbd5e1;">
-              We received a request to reset the password for your account associated with <strong style="color: #ffffff;">${normalizedEmail}</strong>. Click the button below to set a new password:
+              We received a request to reset the password for your account associated with <strong style="color: #ffffff;">${normalizedEmail}</strong>. Use the OTP code below to set your new password:
             </p>
-            <div style="text-align: center; margin: 28px 0;">
-              <a href="${resetLink}" style="background: linear-gradient(135deg, #0284c7, #2563eb); color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-weight: 700; font-size: 15px; display: inline-block; box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);">
-                Reset Password
-              </a>
+            <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 10px; padding: 18px; text-align: center; margin: 20px 0;">
+              <p style="margin: 0 0 6px 0; font-size: 11px; color: #94a3b8; text-transform: uppercase; font-weight: 700; letter-spacing: 1px;">Your OTP Code</p>
+              <span style="font-size: 32px; font-weight: 800; letter-spacing: 6px; color: #38bdf8; font-family: monospace;">${otpCode || ''}</span>
             </div>
-            <p style="margin: 0; font-size: 12px; color: #94a3b8; line-height: 1.5;">
-              Or copy and paste this link into your browser:<br/>
-              <a href="${resetLink}" style="color: #38bdf8; word-break: break-all; font-size: 12px;">${resetLink}</a>
-            </p>
           </div>
           <p style="font-size: 12px; color: #64748b; text-align: center; margin: 0;">
-            If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged.
+            If you did not request a password reset, you can safely ignore this email. This code will expire in 24 hours.
           </p>
         </div>
       `;
-      const emailText = `Hello,\n\nWe received a request to reset the password for your account. Please click the link below or copy and paste it into your browser to reset your password:\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`;
+      const emailText = `Hello,\n\nYour ${appName} password reset code is: ${otpCode}\n\nUse this code to reset your password. If you did not request this, you can ignore this email.`;
 
       const emailResult = await sendEmail(normalizedEmail, emailSubject, emailHtml, emailText);
       if (!emailResult.success) {
