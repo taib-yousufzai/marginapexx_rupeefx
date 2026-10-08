@@ -32,8 +32,18 @@ export async function POST(req: Request) {
 
     if (error) {
       console.warn('[forgot-password] generateLink error for', normalizedEmail, error.message);
-      // Return success to avoid email enumeration
-      return NextResponse.json({ success: true });
+      const isNotFound =
+        (error as any).code === 'user_not_found' ||
+        (error as any).status === 404 ||
+        error.message?.toLowerCase().includes('not found');
+
+      if (isNotFound) {
+        return NextResponse.json(
+          { error: 'No account found with this email address. Please check the spelling or sign up.' },
+          { status: 404 }
+        );
+      }
+      return NextResponse.json({ error: 'Unable to process reset request. Please try again later.' }, { status: 500 });
     }
 
     if (data?.properties) {
