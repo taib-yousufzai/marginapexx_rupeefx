@@ -203,6 +203,9 @@ async function sendTwilioEmail(
 
   try {
     const authHeader = 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2500);
+
     const res = await fetch('https://comms.twilio.com/v1/Emails', {
       method: 'POST',
       headers: {
@@ -221,7 +224,9 @@ async function sendTwilioEmail(
           text,
         },
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timer);
 
     const data = await res.json().catch(() => ({}));
     if (res.ok) {
@@ -233,7 +238,7 @@ async function sendTwilioEmail(
       return { success: false, error: errDetail };
     }
   } catch (err: any) {
-    console.error('[Twilio Email] Error sending email:', err);
+    console.error('[Twilio Email] Error sending email:', err?.name === 'AbortError' ? 'Request timed out' : err);
     return { success: false, error: err?.message || String(err) };
   }
 }
