@@ -139,7 +139,7 @@ export function evaluateOrderTriggerCondition(
   return { shouldTrigger, fillPrice };
 }
 
-import { getRedisClient } from './redis.ts';
+import { getRedisClient, createRedisPubSubClient } from './redis.ts';
 
 // ── In-Memory Micro-Cache for ultra low-latency matching and minimal DB IO ───
 let cachedPendingOrders: any[] = [];
@@ -153,13 +153,14 @@ const segmentSettingsCache: Map<string, { entry_buffer: number; exit_buffer: num
 let lastSegSettingsFetch = 0;
 
 let isSubscribedToRedisInvalidation = false;
+let subClient: any = null;
 function ensureRedisMatchingSubscription() {
   if (isSubscribedToRedisInvalidation) return;
   try {
-    const redis = getRedisClient();
-    if (typeof (redis as any).subscribe === 'function') {
-      (redis as any).subscribe('system:matching_engine:invalidate');
-      (redis as any).on('message', (channel: string) => {
+    subClient = createRedisPubSubClient();
+    if (subClient && typeof subClient.subscribe === 'function') {
+      subClient.subscribe('system:matching_engine:invalidate');
+      subClient.on('message', (channel: string) => {
         if (channel === 'system:matching_engine:invalidate') {
           invalidateMatchingCache();
         }
@@ -207,9 +208,9 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
   }
 
   const now = Date.now();
-  const PENDING_CACHE_TTL_MS = 5000;
-  const POSITIONS_CACHE_TTL_MS = 5000;
-  const SEG_SETTINGS_CACHE_TTL_MS = 15000;
+  const PENDING_CACHE_TTL_MS = 1000;
+  const POSITIONS_CACHE_TTL_MS = 1000;
+  const SEG_SETTINGS_CACHE_TTL_MS = 10000;
 
   let pendingOrders = cachedPendingOrders;
   let openPositions = cachedOpenPositions;
