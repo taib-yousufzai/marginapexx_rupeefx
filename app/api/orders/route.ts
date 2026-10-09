@@ -1065,6 +1065,36 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       (cleanSymHelper(p.symbol || p.kite_instrument) === targetClean && p.side !== side)
     );
 
+    // Strict Exit Validation: Ensure exit quantity does not exceed open quantity
+    if (is_exit || linked_position_id) {
+      if (matchingPositions.length === 0) {
+        return NextResponse.json({
+          error: 'No matching open position found to exit for this symbol.',
+        }, { status: 400 });
+      }
+
+      const totalOpenQty = matchingPositions.reduce((acc: number, p: any) => acc + Number(p.qty_open || 0), 0);
+      if (Number(qty) > totalOpenQty) {
+        return NextResponse.json({
+          error: `Exit quantity (${qty}) exceeds total open position quantity (${totalOpenQty}).`,
+        }, { status: 400 });
+      }
+
+      if (linked_position_id) {
+        const targetPos = matchingPositions.find((p: any) => p.id === linked_position_id);
+        if (!targetPos) {
+          return NextResponse.json({
+            error: 'Specified position not found or already closed.',
+          }, { status: 400 });
+        }
+        if (Number(qty) > Number(targetPos.qty_open || 0)) {
+          return NextResponse.json({
+            error: `Exit quantity (${qty}) exceeds open quantity for this position (${targetPos.qty_open}).`,
+          }, { status: 400 });
+        }
+      }
+    }
+
     const activePosition = openPositions.find((p: any) =>
       (linked_position_id && p.id === linked_position_id) ||
       (cleanSymHelper(p.symbol || p.kite_instrument) === targetClean && p.side !== side && (p.product_type || 'INTRADAY').toUpperCase() === (targetProductType || 'INTRADAY').toUpperCase()) ||

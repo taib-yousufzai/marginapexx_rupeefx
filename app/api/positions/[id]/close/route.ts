@@ -441,7 +441,14 @@ export async function POST(
   let pnl: any;
   let rpcErr: any;
 
-  const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
+  const openQtyNum = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
+  const requestedCloseQty = body?.qty ? Number(body.qty) : openQtyNum;
+  if (requestedCloseQty > openQtyNum) {
+    return NextResponse.json({
+      error: `Close quantity (${requestedCloseQty}) exceeds open position quantity (${openQtyNum}).`,
+    }, { status: 400 });
+  }
+  const closeQty = requestedCloseQty > 0 ? requestedCloseQty : openQtyNum;
 
   const resV2 = await admin.rpc('close_position_v2', {
     p_position_id:        resolvedPositionId,
