@@ -793,9 +793,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const t4_backendQuoteRead = Date.now();
     const openPositions = positionsResult?.data ?? [];
+    let userBalance = 0;
+    if (balanceResult?.data?.balance !== undefined && balanceResult?.data?.balance !== null) {
+      userBalance = Number(balanceResult.data.balance);
+    } else {
+      try {
+        const { data: bData } = await admin.from('profiles').select('balance').eq('id', user.id).single();
+        if (bData?.balance !== undefined && bData?.balance !== null) {
+          userBalance = Number(bData.balance);
+        }
+      } catch {}
+    }
+
     const profile = cachedProfile ? {
       ...cachedProfile,
-      balance: Number(balanceResult.data?.balance ?? 0),
+      balance: userBalance,
     } : null;
     const profileErr = !profile ? 'Profile not found' : null;
     const cleanSymKey = cleanSymHelper(symbol);
