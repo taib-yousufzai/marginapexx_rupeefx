@@ -401,14 +401,14 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       const rawPositionsFromServer: MyPosition[] = data?.positions || [];
 
       const now = Date.now();
-      // Clean up closed IDs older than 1.5 seconds
+      // Clean up closed IDs older than 60 seconds (prevents exited positions from popping back up during stale polls)
       for (const [id, closedAt] of Array.from(recentlyClosedTimesRef.current.entries())) {
-        if (now - closedAt > 1500) {
+        if (now - closedAt > 60000) {
           recentlyClosedTimesRef.current.delete(id);
         }
       }
 
-      // Positions from the database are authoritative, excluding IDs closed within the last 1.5s
+      // Positions from the database are authoritative, excluding IDs closed within the last 60s (unless re-entered)
       const basePositions: MyPosition[] = rawPositionsFromServer
         .filter(p => {
           const closedAt = recentlyClosedTimesRef.current.get(p.id);
