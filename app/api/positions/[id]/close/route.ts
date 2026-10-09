@@ -14,7 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminClient, getUserFromRequest, isTransientDbError } from '@/lib/adminClient';
+import { getAdminClient, getUserFromRequest, isTransientDbError, withDbRetry } from '@/lib/adminClient';
 import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import type { ClosePositionResponse } from '@/lib/types/order';
@@ -204,12 +204,12 @@ export async function POST(
   // 1. Parallel fetch position (if valid UUID) and cached profile
   const [posResult, cachedProfile] = await Promise.all([
     isUuid
-      ? admin.from('positions')
+      ? withDbRetry(() => admin.from('positions')
           .select('*')
           .eq('id', positionId)
           .eq('user_id', user.id)
           .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-          .maybeSingle()
+          .maybeSingle())
       : Promise.resolve({ data: null, error: null }),
     getCachedUserProfile(user.id, () => admin),
   ]);
@@ -224,12 +224,12 @@ export async function POST(
     const targetClean = cleanSym(targetSymbol);
 
     for (let attempt = 0; attempt < 5; attempt++) {
-      const { data: userOpenPositions } = await admin
+      const { data: userOpenPositions } = await withDbRetry(() => admin
         .from('positions')
         .select('*')
         .eq('user_id', user.id)
         .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false }));
 
       if (userOpenPositions && userOpenPositions.length > 0) {
         if (targetClean) {

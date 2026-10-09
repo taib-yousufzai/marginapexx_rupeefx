@@ -694,22 +694,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       getCachedUserProfile(user.id, () => admin),
 
       // Fresh balance from profiles
-      admin.from('profiles')
+      withDbRetry(() => admin.from('profiles')
         .select('balance')
         .eq('id', user.id)
-        .single(),
+        .single()),
 
       // Fetch active positions to verify total open lot limits (max_lot)
-      admin.from('positions')
+      withDbRetry(() => admin.from('positions')
         .select('id, symbol, settlement, qty_open, status, entry_price, side, product_type, entry_time')
         .eq('user_id', user.id)
-        .in('status', ['open', 'OPEN', 'active', 'ACTIVE', 'PARTIALLY_CLOSED', 'PARTIAL_CLOSED']),
+        .in('status', ['open', 'OPEN', 'active', 'ACTIVE', 'PARTIALLY_CLOSED', 'PARTIAL_CLOSED'])),
 
       // Fetch pending orders to verify total open lot limits
-      admin.from('orders')
+      withDbRetry(() => admin.from('orders')
         .select('symbol, qty, lots, is_exit, status')
         .eq('user_id', user.id)
-        .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending']),
+        .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending'])),
 
       // Fetch quotes — either Kite or Binance depending on segment (with 2.0s fast timeout guard)
       (async () => {

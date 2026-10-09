@@ -1,4 +1,5 @@
 import { getRedisClient, isRedisMock } from './redis';
+import { withDbRetry } from './adminClient';
 
 export interface ScriptSettingItem {
   symbol: string;
@@ -37,7 +38,7 @@ export async function getCachedScriptSettings(getSupabaseAdmin: () => any): Prom
   // Fallback to Supabase query
   try {
     const admin = getSupabaseAdmin();
-    const { data } = await admin.from('script_settings').select('symbol, lot_size');
+    const { data } = await withDbRetry(() => admin.from('script_settings').select('symbol, lot_size'));
     const result: Record<string, number> = {};
 
     if (data) {
@@ -83,11 +84,11 @@ export async function getCachedUserSegmentSettings(
 
   try {
     const admin = getSupabaseAdmin();
-    const { data } = await admin
+    const { data } = await withDbRetry(() => admin
       .from(targetTable)
       .select('*')
       .eq('user_id', userId)
-      .eq('segment', segment);
+      .eq('segment', segment));
 
     const result = data ?? [];
     try {
@@ -143,11 +144,11 @@ export async function getCachedUserProfile(
 
   try {
     const admin = getSupabaseAdmin();
-    const { data, error } = await admin
+    const { data, error } = await withDbRetry(() => admin
       .from('profiles')
       .select('id, active, read_only, segments, parent_id, trading_mode, history_reset_at')
       .eq('id', userId)
-      .single();
+      .single());
 
     if (error || !data) return null;
 
