@@ -449,6 +449,8 @@ export async function POST(
     p_close_price:        exitPrice,
     p_closed_by:          'USER',
     p_expected_brokerage: 0,
+    p_idempotency_key:    null,
+    p_skip_cancel_orders: false,
   });
 
   if (resV2.error) {
