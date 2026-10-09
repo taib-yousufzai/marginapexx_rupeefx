@@ -459,19 +459,26 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           // Check if server already has a matching unconsumed position
           let matched = false;
           for (const sp of basePositions) {
+            // Match exact ID if confirmed
+            if (optPos.id === sp.id) {
+              matched = true;
+              break;
+            }
+
             const spSym = cleanSym(sp.symbol || sp.kite_instrument);
             const spSide = (sp.side || '').toUpperCase();
             if (spSym !== optSym || spSide !== optSide) continue;
 
             const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
-            if (spTime < createdTime - 10000) continue;
+            // Only match against server positions created AFTER or AT the same time as this optimistic order
+            if (spTime < createdTime - 1500) continue;
 
             const spTotalQty = Number(sp.qty_open || sp.qty_total || 0);
             const alreadyConsumed = consumedServerQty.get(sp.id) || 0;
             const remainingAvailable = spTotalQty - alreadyConsumed;
 
-            if (remainingAvailable >= optQty || (remainingAvailable > 0 && spTotalQty <= optQty)) {
-              consumedServerQty.set(sp.id, alreadyConsumed + Math.min(remainingAvailable, optQty));
+            if (remainingAvailable >= optQty) {
+              consumedServerQty.set(sp.id, alreadyConsumed + optQty);
               matched = true;
               break;
             }
@@ -479,7 +486,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
           if (matched) {
             optimisticPositionsRef.current.delete(optId);
-          } else if (now - createdTime < 8000) {
+          } else if (now - createdTime < 5000) {
             activeOptPositions.push(optPos);
           } else {
             optimisticPositionsRef.current.delete(optId);
