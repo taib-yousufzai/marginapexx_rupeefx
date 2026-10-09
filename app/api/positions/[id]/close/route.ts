@@ -450,30 +450,44 @@ export async function POST(
   }
   const closeQty = requestedCloseQty > 0 ? requestedCloseQty : openQtyNum;
 
-  const resV2 = await admin.rpc('close_position_v2', {
-    p_position_id:        resolvedPositionId,
-    p_close_qty:          closeQty,
-    p_close_price:        exitPrice,
-    p_closed_by:          'USER',
-    p_expected_brokerage: 0,
-    p_idempotency_key:    null,
-    p_skip_cancel_orders: false,
-  });
-
-  if (resV2.error) {
-    console.warn('[POST /api/positions/[id]/close] v2 RPC error, falling back to v1:', resV2.error);
-    const resV1 = await admin.rpc('close_position', {
-      p_position_id: resolvedPositionId,
-      p_user_id:     user.id,
-      p_ltp:         baseLtp,
-      p_exit_price:  exitPrice,
-      p_closed_by:   'USER',
+  for (let retry = 0; retry < 3; retry++) {
+    const resV2 = await admin.rpc('close_position_v2', {
+      p_position_id:        resolvedPositionId,
+      p_close_qty:          closeQty,
+      p_close_price:        exitPrice,
+      p_closed_by:          'USER',
+      p_expected_brokerage: 0,
+      p_idempotency_key:    null,
+      p_skip_cancel_orders: false,
     });
-    pnl = resV1.data;
-    rpcErr = resV1.error;
-  } else {
-    pnl = resV2.data;
-    rpcErr = resV2.error;
+
+    if (resV2.error) {
+      const errCode = (resV2.error as any)?.code;
+      const errMsg = (resV2.error.message || '').toLowerCase();
+      const isDeadlock = errCode === '40P01' || errCode === '55P03' || errCode === '40001' || errMsg.includes('deadlock') || errMsg.includes('lock_not_available');
+
+      if (isDeadlock && retry < 2) {
+        const jitterMs = 30 * (retry + 1) + Math.floor(Math.random() * 25);
+        console.warn(`[POST /api/positions/[id]/close] Transient deadlock on close attempt ${retry + 1}. Retrying in ${jitterMs}ms...`);
+        await new Promise(r => setTimeout(r, jitterMs));
+        continue;
+      }
+
+      console.warn('[POST /api/positions/[id]/close] v2 RPC error, falling back to v1:', resV2.error);
+      const resV1 = await admin.rpc('close_position', {
+        p_position_id: resolvedPositionId,
+        p_user_id:     user.id,
+        p_ltp:         baseLtp,
+        p_exit_price:  exitPrice,
+        p_closed_by:   'USER',
+      });
+      pnl = resV1.data;
+      rpcErr = resV1.error;
+    } else {
+      pnl = resV2.data;
+      rpcErr = null;
+    }
+    break;
   }
 
   if (rpcErr) {
