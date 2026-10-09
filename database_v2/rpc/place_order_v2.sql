@@ -1,7 +1,7 @@
 -- ==============================================================================
 -- DATABASE v2: place_order_v2
 -- Synchronous Financial Transaction Block routing into the Position Engine.
--- Uses FIFO (First-In, First-Out) lot selection for cumulative exits.
+-- Automatically nets against opposite-side positions using FIFO lot selection.
 -- ==============================================================================
 
 -- Drop all existing versions to avoid overloaded function ambiguity
@@ -109,19 +109,33 @@ BEGIN
 
     -- STEP 3: ROUTE INTO POSITION ENGINE (Only if immediate execution)
     IF p_status = 'EXECUTED' THEN
-        -- Validate exit order constraints
-        IF p_is_exit THEN
-            -- Check if linked_position_id is supplied to anchor position side & product_type & symbol
-            IF p_linked_position_id IS NOT NULL THEN
-                SELECT side, product_type, symbol
-                INTO v_pos_side, p_product_type, p_symbol
-                FROM public.positions
-                WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active');
-            END IF;
+        -- Check if linked_position_id is supplied to anchor position side & product_type & symbol
+        IF p_linked_position_id IS NOT NULL THEN
+            SELECT side, product_type, symbol
+            INTO v_pos_side, p_product_type, p_symbol
+            FROM public.positions
+            WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active');
+        END IF;
 
-            -- Always calculate total open position quantity across all lots for this symbol & opposite side
-            SELECT side, COALESCE(SUM(qty_open), 0)
-            INTO v_pos_side, v_pos_qty_open
+        -- Always calculate total open position quantity across all lots for this symbol & opposite side
+        SELECT side, COALESCE(SUM(qty_open), 0)
+        INTO v_pos_side, v_pos_qty_open
+        FROM public.positions
+        WHERE user_id = p_user_id 
+          AND (
+            symbol = p_symbol 
+            OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
+               UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+          )
+          AND LOWER(status) IN ('open', 'active')
+          AND side <> p_side
+        GROUP BY side
+        LIMIT 1;
+
+        -- Fall back to any open position for this symbol with opposite side if product_type differed
+        IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
+            SELECT side, COALESCE(SUM(qty_open), 0), product_type
+            INTO v_pos_side, v_pos_qty_open, p_product_type
             FROM public.positions
             WHERE user_id = p_user_id 
               AND (
@@ -131,26 +145,12 @@ BEGIN
               )
               AND LOWER(status) IN ('open', 'active')
               AND side <> p_side
-            GROUP BY side
+            GROUP BY side, product_type
             LIMIT 1;
+        END IF;
 
-            -- Fall back to any open position for this symbol with opposite side if product_type differed
-            IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
-                SELECT side, COALESCE(SUM(qty_open), 0), product_type
-                INTO v_pos_side, v_pos_qty_open, p_product_type
-                FROM public.positions
-                WHERE user_id = p_user_id 
-                  AND (
-                    symbol = p_symbol 
-                    OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                       UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
-                  )
-                  AND LOWER(status) IN ('open', 'active')
-                  AND side <> p_side
-                GROUP BY side, product_type
-                LIMIT 1;
-            END IF;
-
+        -- Explicit exit order constraints
+        IF p_is_exit THEN
             IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
                 RAISE EXCEPTION 'No open position exists to exit.';
             END IF;
@@ -175,47 +175,29 @@ BEGIN
         END IF;
 
         IF v_position_id IS NULL THEN
-            IF p_is_exit = true THEN
-                -- Match opposite side position for exit
-                SELECT id, side, product_type, symbol
-                INTO v_position_id, v_pos_side, p_product_type, p_symbol
-                FROM public.positions
-                WHERE user_id = p_user_id 
-                  AND (
-                    symbol = p_symbol 
-                    OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                       UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
-                  )
-                  AND LOWER(status) IN ('open', 'active')
-                  AND side <> p_side
-                ORDER BY entry_time DESC
-                LIMIT 1
-                FOR UPDATE;
+            -- Match any opposite side position for automatic netting
+            SELECT id, side, product_type, symbol
+            INTO v_position_id, v_pos_side, p_product_type, p_symbol
+            FROM public.positions
+            WHERE user_id = p_user_id 
+              AND (
+                symbol = p_symbol 
+                OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
+                   UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+              )
+              AND LOWER(status) IN ('open', 'active')
+              AND side <> p_side
+            ORDER BY entry_time DESC
+            LIMIT 1
+            FOR UPDATE;
 
-                -- Fallback: match any open position for this symbol if side was passed identically
-                IF v_position_id IS NULL THEN
-                    SELECT id, side, product_type, symbol
-                    INTO v_position_id, v_pos_side, p_product_type, p_symbol
-                    FROM public.positions
-                    WHERE user_id = p_user_id 
-                      AND (
-                        symbol = p_symbol 
-                        OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                           UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
-                      )
-                      AND LOWER(status) IN ('open', 'active')
-                    ORDER BY entry_time DESC
-                    LIMIT 1
-                    FOR UPDATE;
-                END IF;
-
-                IF v_position_id IS NULL THEN
-                    RAISE EXCEPTION 'Cannot place exit order: No matching open position found for symbol %.', p_symbol;
-                END IF;
+            IF v_position_id IS NULL AND p_is_exit = true THEN
+                RAISE EXCEPTION 'Cannot place exit order: No matching open position found for symbol %.', p_symbol;
             END IF;
         END IF;
 
-        IF (p_is_exit IS NOT TRUE) AND (v_position_id IS NULL OR v_pos_side = p_side) THEN
+        -- IF no opposite-side position exists, create a new lot on p_side
+        IF (v_position_id IS NULL OR v_pos_side = p_side) THEN
             -- Lifecycle: Create Position Lot (Same-side additions create separate lots for FIFO)
             v_position_id := public.create_position_internal(
                 p_user_id, p_symbol, p_side, p_qty, p_fill_price, p_ltp,
