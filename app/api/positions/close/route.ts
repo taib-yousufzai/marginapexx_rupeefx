@@ -360,151 +360,147 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       Array.from(cryptoSymbolsToFetch)
     );
 
-    // 4. Process closings sequentially to avoid database deadlocks.
+    // 4. Process closings in concurrent chunks of 6 for lightning-fast batch closure (<2s)
+    const BATCH_CONCURRENCY = 6;
     const results: any[] = [];
 
-    for (const { pos, lookupKey } of posSymbols) {
-      try {
-        // Note: Position exits (closing open positions) are allowed off-hours so users/system are never trapped in open positions.
+    for (let i = 0; i < posSymbols.length; i += BATCH_CONCURRENCY) {
+      const chunk = posSymbols.slice(i, i + BATCH_CONCURRENCY);
+      const chunkPromises = chunk.map(async ({ pos, lookupKey }) => {
+        try {
+          // Get settings and price parameters
+          const dbSeg = mapSegmentWithSymbol(pos.settlement || '', pos.symbol || '');
+          const upperSide = (pos.side ?? '').toUpperCase();
+          const segSetting = segSettingsMap.get(`${dbSeg}|${upperSide}`) || segSettingsMap.get(`CRYPTO|${upperSide}`) || segSettingsMap.get(`NSE|${upperSide}`);
+          const rawExitBuffer = segSetting?.exit_buffer;
+          const exitBuffer = (rawExitBuffer !== undefined && rawExitBuffer !== null && !isNaN(Number(rawExitBuffer)))
+            ? (Number(rawExitBuffer) > 0.005 ? Number(rawExitBuffer) / 100 : Number(rawExitBuffer))
+            : 0;
+          const profitHoldSec = segSetting?.profit_hold_sec ?? 0;
+          const lossHoldSec = segSetting?.loss_hold_sec ?? 0;
 
+          // Resolve price components from quote batch with fallback to position LTP / entry_price
+          const quote = quotesMap[lookupKey];
+          const rawBid = quote?.bid && quote.bid > 0 ? quote.bid : null;
+          const rawAsk = quote?.ask && quote.ask > 0 ? quote.ask : null;
+          const baseLtp = quote?.ltp ?? (rawBid && rawAsk ? (rawBid + rawAsk) / 2 : null) ?? Number(pos.ltp ?? pos.entry_price ?? 0);
 
-        // Get settings and price parameters
-        const dbSeg = mapSegmentWithSymbol(pos.settlement || '', pos.symbol || '');
-        const upperSide = (pos.side ?? '').toUpperCase();
-        const segSetting = segSettingsMap.get(`${dbSeg}|${upperSide}`) || segSettingsMap.get(`CRYPTO|${upperSide}`) || segSettingsMap.get(`NSE|${upperSide}`);
-        const rawExitBuffer = segSetting?.exit_buffer;
-        const exitBuffer = (rawExitBuffer !== undefined && rawExitBuffer !== null && !isNaN(Number(rawExitBuffer)))
-          ? (Number(rawExitBuffer) > 0.005 ? Number(rawExitBuffer) / 100 : Number(rawExitBuffer))
-          : 0;
-        const profitHoldSec = segSetting?.profit_hold_sec ?? 0;
-        const lossHoldSec = segSetting?.loss_hold_sec ?? 0;
+          if (!baseLtp || baseLtp <= 0) {
+            return { positionId: pos.id, success: false, error: 'Market quote unavailable for this instrument' };
+          }
 
-        // Resolve price components from quote batch with fallback to position LTP / entry_price
-        const quote = quotesMap[lookupKey];
-        const rawBid = quote?.bid && quote.bid > 0 ? quote.bid : null;
-        const rawAsk = quote?.ask && quote.ask > 0 ? quote.ask : null;
-        const baseLtp = quote?.ltp ?? (rawBid && rawAsk ? (rawBid + rawAsk) / 2 : null) ?? Number(pos.ltp ?? pos.entry_price ?? 0);
+          const isCommodity = (pos.settlement || '').toUpperCase().includes('MCX') ||
+            ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => (pos.symbol || '').toUpperCase().includes(c));
 
-        if (!baseLtp || baseLtp <= 0) {
-          results.push({ positionId: pos.id, success: false, error: 'Market quote unavailable for this instrument' });
-          continue;
-        }
+          const hasRealBidAsk = isCommodity ? false : Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
 
-        const isCommodity = (pos.settlement || '').toUpperCase().includes('MCX') ||
-          ['GOLD', 'SILVER', 'CRUDEOIL', 'NATURALGAS', 'GOLDM', 'SILVERM', 'CRUDEOILM', 'NATGASMINI', 'COPPER', 'ZINC', 'LEAD', 'ALUMINIUM', 'NICKEL'].some(c => (pos.symbol || '').toUpperCase().includes(c));
-
-        const hasRealBidAsk = isCommodity ? false : Boolean(rawBid && rawAsk && rawBid > 0 && rawAsk > 0 && rawBid < rawAsk);
-
-        const effective = resolveEffectivePrices({
-          ltp: baseLtp,
-          rawBid,
-          rawAsk,
-          hasRealBidAsk,
-          askBuffer: 0,
-          bidBuffer: 0,
-        });
-
-        let exitPrice: number;
-        if (pos.side === 'BUY') {
-          // Closing a long → sell at effective bid (no exitBuffer applied on exit)
-          exitPrice = effective.effectiveBid;
-        } else {
-          // Closing a short → buy at effective ask (no exitBuffer applied on exit)
-          exitPrice = effective.effectiveAsk;
-        }
-        exitPrice = Math.round(exitPrice * 100) / 100;
-
-        const pnlValue = pos.side === 'BUY'
-          ? (exitPrice - Number(pos.entry_price)) * Number(pos.qty_open)
-          : (Number(pos.entry_price) - exitPrice) * Number(pos.qty_open);
-
-        const durationSec = Math.floor((Date.now() - new Date(pos.entry_time).getTime()) / 1000);
-        const requiredHold = pnlValue >= 0 ? profitHoldSec : lossHoldSec;
-
-        if (durationSec < requiredHold) {
-          results.push({
-            positionId: pos.id,
-            success: false,
-            error: `Anti-Scalping: Minimum hold time of ${requiredHold}s required. Elapsed: ${durationSec}s.`
-          });
-          continue;
-        }
-
-        // --- CARRY BROKERAGE (deferred from entry to exit) ---
-        let carryBrokerage = 0;
-        if (!pos.carry_brokerage_paid) {
-          carryBrokerage = calculateCarryBrokerage({
-            productType: pos.product_type,
-            qty: Number(pos.qty_open),
-            entryPrice: Number(pos.entry_price),
-            lots: Number(pos.lots || 0) || undefined,
-            carryCommissionType: segSetting?.carry_commission_type,
-            carryCommissionValue: segSetting?.carry_commission_value != null ? Number(segSetting.carry_commission_value) : null,
-            commissionType: segSetting?.commission_type,
-            commissionValue: segSetting?.commission_value != null ? Number(segSetting.commission_value) : null,
-          });
-        }
-
-        // Call RPC — sequential execution eliminates deadlocks
-        let pnl: any;
-        let rpcErr: any;
-
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
-          const result = await admin.rpc('close_position_v2', {
-            p_position_id: pos.id,
-            p_close_qty: closeQty,
-            p_close_price: exitPrice,
-            p_closed_by: 'USER',
-            p_expected_brokerage: carryBrokerage,
+          const effective = resolveEffectivePrices({
+            ltp: baseLtp,
+            rawBid,
+            rawAsk,
+            hasRealBidAsk,
+            askBuffer: 0,
+            bidBuffer: 0,
           });
 
-          pnl = result.data;
-          rpcErr = result.error;
+          let exitPrice: number;
+          if (pos.side === 'BUY') {
+            exitPrice = effective.effectiveBid;
+          } else {
+            exitPrice = effective.effectiveAsk;
+          }
+          exitPrice = Math.round(exitPrice * 100) / 100;
 
-          if (rpcErr && rpcErr.message && rpcErr.message.toLowerCase().includes('deadlock')) {
-            console.warn(`[POST /api/positions/close] Deadlock on attempt ${attempt} for position ${pos.id}. Retrying...`);
-            if (attempt < 2) {
-              await new Promise(resolve => setTimeout(resolve, 300));
-              continue;
+          const pnlValue = pos.side === 'BUY'
+            ? (exitPrice - Number(pos.entry_price)) * Number(pos.qty_open)
+            : (Number(pos.entry_price) - exitPrice) * Number(pos.qty_open);
+
+          const durationSec = Math.floor((Date.now() - new Date(pos.entry_time).getTime()) / 1000);
+          const requiredHold = pnlValue >= 0 ? profitHoldSec : lossHoldSec;
+
+          if (durationSec < requiredHold) {
+            return {
+              positionId: pos.id,
+              success: false,
+              error: `Anti-Scalping: Minimum hold time of ${requiredHold}s required. Elapsed: ${durationSec}s.`
+            };
+          }
+
+          // --- CARRY BROKERAGE (deferred from entry to exit) ---
+          let carryBrokerage = 0;
+          if (!pos.carry_brokerage_paid) {
+            carryBrokerage = calculateCarryBrokerage({
+              productType: pos.product_type,
+              qty: Number(pos.qty_open),
+              entryPrice: Number(pos.entry_price),
+              lots: Number(pos.lots || 0) || undefined,
+              carryCommissionType: segSetting?.carry_commission_type,
+              carryCommissionValue: segSetting?.carry_commission_value != null ? Number(segSetting.carry_commission_value) : null,
+              commissionType: segSetting?.commission_type,
+              commissionValue: segSetting?.commission_value != null ? Number(segSetting.commission_value) : null,
+            });
+          }
+
+          let pnl: any;
+          let rpcErr: any;
+
+          for (let attempt = 1; attempt <= 2; attempt++) {
+            const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
+            const result = await admin.rpc('close_position_v2', {
+              p_position_id: pos.id,
+              p_close_qty: closeQty,
+              p_close_price: exitPrice,
+              p_closed_by: 'USER',
+              p_expected_brokerage: carryBrokerage,
+            });
+
+            pnl = result.data;
+            rpcErr = result.error;
+
+            if (rpcErr && rpcErr.message && rpcErr.message.toLowerCase().includes('deadlock')) {
+              if (attempt < 2) {
+                await new Promise(resolve => setTimeout(resolve, 150));
+                continue;
+              }
+            }
+            break;
+          }
+
+          if (rpcErr) {
+            console.warn(`[POST /api/positions/close] v2 RPC error for ${pos.id}, trying v1 fallback:`, rpcErr);
+            const resV1 = await admin.rpc('close_position', {
+              p_position_id: pos.id,
+              p_user_id: user.id,
+              p_ltp: baseLtp,
+              p_exit_price: exitPrice,
+              p_closed_by: 'USER',
+            });
+            if (!resV1.error) {
+              pnl = resV1.data;
+              rpcErr = null;
             }
           }
-          break;
-        }
 
-        if (rpcErr) {
-          console.warn(`[POST /api/positions/close] v2 RPC error for ${pos.id}, trying v1 fallback:`, rpcErr);
-          const resV1 = await admin.rpc('close_position', {
-            p_position_id: pos.id,
-            p_user_id: user.id,
-            p_ltp: baseLtp,
-            p_exit_price: exitPrice,
-            p_closed_by: 'USER',
-          });
-          if (!resV1.error) {
-            pnl = resV1.data;
-            rpcErr = null;
+          if (rpcErr) {
+            const isAlreadyClosed = rpcErr.message && (
+              rpcErr.message.toLowerCase().includes('already closed') ||
+              rpcErr.message.toLowerCase().includes('not found')
+            );
+            if (isAlreadyClosed) {
+              return { positionId: pos.id, success: true, already_closed: true };
+            }
+            console.error(`[POST /api/positions/close] RPC error for position ${pos.id}:`, rpcErr);
+            return { positionId: pos.id, success: false, error: rpcErr.message || 'RPC Error' };
           }
-        }
 
-        if (rpcErr) {
-          const isAlreadyClosed = rpcErr.message && (
-            rpcErr.message.toLowerCase().includes('already closed') ||
-            rpcErr.message.toLowerCase().includes('not found')
-          );
-          if (isAlreadyClosed) {
-            results.push({ positionId: pos.id, success: true, already_closed: true });
-            continue;
-          }
-          console.error(`[POST /api/positions/close] RPC error for position ${pos.id}:`, rpcErr);
-          results.push({ positionId: pos.id, success: false, error: rpcErr.message || 'RPC Error' });
-          continue;
+          return { positionId: pos.id, success: true, pnl: Number(pnl), exit_price: exitPrice, brokerage: Number(pos.brokerage || pos.entry_brokerage || 0) + carryBrokerage };
+        } catch (innerErr: any) {
+          return { positionId: pos.id, success: false, error: innerErr.message || 'Unknown error' };
         }
+      });
 
-        results.push({ positionId: pos.id, success: true, pnl: Number(pnl), exit_price: exitPrice, brokerage: Number(pos.brokerage || pos.entry_brokerage || 0) + carryBrokerage });
-      } catch (innerErr: any) {
-        results.push({ positionId: pos.id, success: false, error: innerErr.message || 'Unknown error' });
-      }
+      const chunkResults = await Promise.all(chunkPromises);
+      results.push(...chunkResults);
     }
 
     // Update Redis cache synchronously for all successfully closed positions (<5ms responses for history)
