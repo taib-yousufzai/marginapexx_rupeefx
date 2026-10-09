@@ -473,6 +473,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
 
         if (rpcErr) {
+          console.warn(`[POST /api/positions/close] v2 RPC error for ${pos.id}, trying v1 fallback:`, rpcErr);
+          const resV1 = await admin.rpc('close_position', {
+            p_position_id: pos.id,
+            p_user_id: user.id,
+            p_ltp: baseLtp,
+            p_exit_price: exitPrice,
+            p_closed_by: 'USER',
+          });
+          if (!resV1.error) {
+            pnl = resV1.data;
+            rpcErr = null;
+          }
+        }
+
+        if (rpcErr) {
           const isAlreadyClosed = rpcErr.message && (
             rpcErr.message.toLowerCase().includes('already closed') ||
             rpcErr.message.toLowerCase().includes('not found')
