@@ -146,10 +146,14 @@ export default function LoginPage() {
 
   return (
     <div className="login-page">
-      {/* Branding — matches nav bar style (Requirement 1.3) */}
+      {/* Branding */}
       <div className="login-branding">
-        <span className="login-brand-margin">MARGIN</span>
-        <span className="login-brand-apex">APEX</span>
+        <img
+          src="/rupeefx-logo-transparent.png"
+          alt="RupeeFX"
+          className="login-brand-logo-img"
+          style={{ height: '56px', width: 'auto', objectFit: 'contain' }}
+        />
       </div>
 
       {/* Auth card */}
@@ -244,7 +248,7 @@ export default function LoginPage() {
             type="submit"
             className="login-submit-btn"
             disabled={isLoading}
-            aria-label="Log in to Margin Apex"
+            aria-label="Log in to RupeeFX"
             suppressHydrationWarning
           >
             {isLoading ? (
