@@ -7,6 +7,7 @@
 import { requireAdmin } from '../_auth';
 import { getRole } from '../../../../lib/auth';
 import { getDescendantUserIds } from '../../../../lib/hierarchy';
+import { getRedisClient } from '../../../../lib/redis';
 
 export type TransactionRecord = { type: 'DEPOSIT' | 'WITHDRAWAL'; amount: number };
 export type PositionRecord = { pnl: number; side: 'BUY' | 'SELL'; brokerage: number };
@@ -28,6 +29,16 @@ export async function GET(request: Request): Promise<Response> {
 
     const callerRole = getRole(callerUser);
     const callerId = callerUser.id;
+
+    // Cache key for 15s micro-cache on dashboard aggregations
+    const cacheKey = `cache:admin:dashboard:${callerId}:${date_from || ''}:${date_to || ''}:${broker_id || ''}:${sub_broker_id || ''}:${client_id || ''}:${isDemo}`;
+    try {
+      const redis = getRedisClient();
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return Response.json(JSON.parse(cached), { status: 200 });
+      }
+    } catch (_) {}
 
     const descendantIds = await getDescendantUserIds(adminClient, callerId, callerRole);
 
@@ -165,6 +176,12 @@ export async function GET(request: Request): Promise<Response> {
       added_funds: txns.filter(t => t.type === 'DEPOSIT').length,
       conversion: '0%',
     };
+
+    // Cache response for 15s to prevent concurrent query overload
+    try {
+      const redis = getRedisClient();
+      await redis.setex(cacheKey, 15, JSON.stringify(fullMetrics));
+    } catch (_) {}
 
     return Response.json(fullMetrics, { status: 200 });
   } catch (err) {

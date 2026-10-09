@@ -141,8 +141,10 @@ export default function DashboardPage({ selectedUser, onOpenUserPanel, isDemoMod
   useEffect(() => {
     setTimeout(() => fetchMetrics(), 0);
     const interval = setInterval(() => {
-      fetchMetrics(false, true); // silent refresh every second
-    }, 1000);
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        fetchMetrics(false, true); // silent refresh every 15 seconds
+      }
+    }, 15000);
     return () => clearInterval(interval);
   }, [fetchMetrics]);
 

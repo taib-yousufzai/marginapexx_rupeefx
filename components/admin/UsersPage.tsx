@@ -93,8 +93,10 @@ export default function UsersPage({ selectedUser: _selectedUser, onSelectUser, o
   useEffect(() => {
     setTimeout(() => fetchUsers(), 0);
     const interval = setInterval(() => {
-      fetchUsers(true); // silent refresh every second
-    }, 1000);
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        fetchUsers(true); // silent refresh every 15 seconds
+      }
+    }, 15000);
     return () => clearInterval(interval);
   }, [fetchUsers]);
 

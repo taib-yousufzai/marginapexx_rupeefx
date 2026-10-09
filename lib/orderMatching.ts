@@ -139,6 +139,8 @@ export function evaluateOrderTriggerCondition(
   return { shouldTrigger, fillPrice };
 }
 
+import { getRedisClient } from './redis.ts';
+
 // ── In-Memory Micro-Cache for ultra low-latency matching and minimal DB IO ───
 let cachedPendingOrders: any[] = [];
 let lastPendingOrdersFetch = 0;
@@ -150,10 +152,38 @@ const cachedProfiles: Map<string, { balance: number; auto_sqoff: number; ts: num
 const segmentSettingsCache: Map<string, { entry_buffer: number; exit_buffer: number }> = new Map();
 let lastSegSettingsFetch = 0;
 
+let isSubscribedToRedisInvalidation = false;
+function ensureRedisMatchingSubscription() {
+  if (isSubscribedToRedisInvalidation) return;
+  try {
+    const redis = getRedisClient();
+    if (typeof (redis as any).subscribe === 'function') {
+      (redis as any).subscribe('system:matching_engine:invalidate');
+      (redis as any).on('message', (channel: string) => {
+        if (channel === 'system:matching_engine:invalidate') {
+          invalidateMatchingCache();
+        }
+      });
+      isSubscribedToRedisInvalidation = true;
+    }
+  } catch (_) {}
+}
+
 export function invalidateMatchingCache() {
   lastPendingOrdersFetch = 0;
   lastOpenPositionsFetch = 0;
   cachedProfiles.clear();
+}
+
+/**
+ * Triggers matching engine cache eviction locally and across all distributed ticker processes
+ */
+export function triggerMatchingEngineInvalidation() {
+  invalidateMatchingCache();
+  try {
+    const redis = getRedisClient();
+    redis.publish('system:matching_engine:invalidate', '1').catch(() => {});
+  } catch (_) {}
 }
 
 /**
@@ -164,6 +194,7 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
   const admin = getAdminClient();
 
   if (!quotes || quotes.length === 0) return;
+  ensureRedisMatchingSubscription();
 
   // Build a lookup map of prices for fast access
   const pricesMap = new Map<string, { ltp: number; bid: number; ask: number }>();
@@ -176,9 +207,9 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
   }
 
   const now = Date.now();
-  const PENDING_CACHE_TTL_MS = 500;
-  const POSITIONS_CACHE_TTL_MS = 500;
-  const SEG_SETTINGS_CACHE_TTL_MS = 10000;
+  const PENDING_CACHE_TTL_MS = 5000;
+  const POSITIONS_CACHE_TTL_MS = 5000;
+  const SEG_SETTINGS_CACHE_TTL_MS = 15000;
 
   let pendingOrders = cachedPendingOrders;
   let openPositions = cachedOpenPositions;
@@ -217,7 +248,12 @@ export async function processPendingOrdersAndPositions(quotes: Quote[]): Promise
     }
   }
 
-  // Pre-fetch segment settings with 10s cache
+  // If no pending orders and no open positions, no matching or liquidation calculation is needed
+  if (pendingOrders.length === 0 && openPositions.length === 0) {
+    return;
+  }
+
+  // Pre-fetch segment settings with 15s cache
   const userIds = Array.from(new Set([
     ...pendingOrders.map(o => o.user_id),
     ...openPositions.map(p => p.user_id)

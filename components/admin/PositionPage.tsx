@@ -93,8 +93,10 @@ export default function PositionPage({ selectedUser, onOpenUserPanel, isDemoMode
 
   useEffect(() => {
     const interval = setInterval(() => {
-      fetchPositions(true); // silent refresh
-    }, 5000);
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') {
+        fetchPositions(true); // silent refresh every 15s
+      }
+    }, 15000);
     return () => clearInterval(interval);
   }, [fetchPositions]);
 

@@ -233,7 +233,7 @@ export async function getCachedTemplateScripts(
 }
 
 /**
- * Invalidate user positions API response cache in Redis.
+ * Invalidate user positions API response cache in Redis and signal matching engine.
  */
 export async function invalidateUserPositionsCache(userId: string): Promise<void> {
   const redis = getRedisClient();
@@ -254,11 +254,13 @@ export async function invalidateUserPositionsCache(userId: string): Promise<void
         await redis.del(...dynamicKeys);
       }
     }
+    // Signal matching engine to refresh positions cache
+    await redis.publish('system:matching_engine:invalidate', '1');
   } catch (_) {}
 }
 
 /**
- * Invalidate user orders API response cache in Redis.
+ * Invalidate user orders API response cache in Redis and signal matching engine.
  */
 export async function invalidateUserOrdersCache(userId: string): Promise<void> {
   const redis = getRedisClient();
@@ -275,6 +277,8 @@ export async function invalidateUserOrdersCache(userId: string): Promise<void> {
         await redis.del(...dynamicKeys);
       }
     }
+    // Signal matching engine to refresh pending orders cache
+    await redis.publish('system:matching_engine:invalidate', '1');
   } catch (_) {}
 }
 

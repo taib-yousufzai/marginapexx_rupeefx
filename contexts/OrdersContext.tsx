@@ -266,7 +266,7 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       if (cancelled) return;
       intervalRef.current = setInterval(() => {
         if (typeof document === 'undefined' || document.visibilityState === 'visible') {
-          fetchOrders({ fresh: true });
+          fetchOrders(); // Serves from Redis micro-cache (3s TTL) during passive polling
         }
       }, Math.max(refreshInterval, 3000));
     }
