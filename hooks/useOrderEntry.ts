@@ -512,6 +512,9 @@ export function useOrderEntry() {
           }
 
           if (isImmediate || confirmedOrder.status === 'EXECUTED') {
+            if (!effectiveIsExit && positionsContext?.removeOptimisticPosition) {
+              positionsContext.removeOptimisticPosition(tempId);
+            }
             window.dispatchEvent(new CustomEvent('order_placed_with_data', {
               detail: {
                 symbol: state.symbol,

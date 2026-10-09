@@ -447,49 +447,26 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           const optId = optPos.id;
           const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
 
-          if (recentlyClosedTimesRef.current.has(optId)) {
+          if (recentlyClosedTimesRef.current.has(optId) || (now - createdTime > 2500)) {
             optimisticPositionsRef.current.delete(optId);
             continue;
           }
 
-          const optQty = Number(optPos.qty_open || optPos.qty_total || 1);
           const optSym = cleanSym(optPos.symbol || optPos.kite_instrument);
           const optSide = (optPos.side || '').toUpperCase();
 
-          // Check if server already has a matching unconsumed position
-          let matched = false;
-          for (const sp of basePositions) {
-            // Match exact ID if confirmed
-            if (optPos.id === sp.id) {
-              matched = true;
-              break;
-            }
-
+          // If server already returned positions for this symbol/side, server DB is authoritative
+          const serverHasMatching = basePositions.some(sp => {
+            if (optPos.id === sp.id) return true;
             const spSym = cleanSym(sp.symbol || sp.kite_instrument);
             const spSide = (sp.side || '').toUpperCase();
-            if (spSym !== optSym || spSide !== optSide) continue;
+            return spSym === optSym && spSide === optSide;
+          });
 
-            const spTime = new Date(sp.entry_time || (sp as any).created_at || 0).getTime();
-            // Only match against server positions created AFTER or AT the same time as this optimistic order
-            if (spTime < createdTime - 1500) continue;
-
-            const spTotalQty = Number(sp.qty_open || sp.qty_total || 0);
-            const alreadyConsumed = consumedServerQty.get(sp.id) || 0;
-            const remainingAvailable = spTotalQty - alreadyConsumed;
-
-            if (remainingAvailable >= optQty) {
-              consumedServerQty.set(sp.id, alreadyConsumed + optQty);
-              matched = true;
-              break;
-            }
-          }
-
-          if (matched) {
+          if (serverHasMatching) {
             optimisticPositionsRef.current.delete(optId);
-          } else if (now - createdTime < 5000) {
-            activeOptPositions.push(optPos);
           } else {
-            optimisticPositionsRef.current.delete(optId);
+            activeOptPositions.push(optPos);
           }
         }
 
@@ -588,11 +565,11 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
     const handleOrderPlacedWithData = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      if (detail && !detail.is_exit) {
-        addOptimisticPosition(detail);
+      if (detail?.opt_id) {
+        optimisticPositionsRef.current.delete(detail.opt_id);
       }
       fetchPositions({ fresh: true });
-      debouncedFetch(800, true);
+      debouncedFetch(600, true);
     };
 
     const handleOrderPlaced = () => {
