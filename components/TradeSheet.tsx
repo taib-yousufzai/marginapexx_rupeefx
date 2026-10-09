@@ -1150,16 +1150,25 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
           const orderAttemptId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `att_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 
           const cachedPos = typeof window !== 'undefined' && (window as any).__lastPositionsMap && currentLinkedPosId ? (window as any).__lastPositionsMap.get(currentLinkedPosId) : null;
-          const targetPos = (currentLinkedPosId ? activePositions.find(p => p.id === currentLinkedPosId) : undefined) || existingPos || cachedPos;
+          const anySymbolPos = activePositions.find(p => isMatchingSymbol(p.symbol) && ((p.status as string) === 'open' || (p.status as string) === 'OPEN' || (p.status as string) === 'active'));
+          const targetPos = (currentLinkedPosId ? activePositions.find(p => p.id === currentLinkedPosId) : undefined) || existingPos || anySymbolPos || cachedPos;
 
           let targetPosSide: 'BUY' | 'SELL';
           let orderExitSide: 'BUY' | 'SELL';
           if (targetPos?.side) {
-            targetPosSide = targetPos.side as 'BUY' | 'SELL';
+            targetPosSide = (targetPos.side as string).toUpperCase() as 'BUY' | 'SELL';
             orderExitSide = targetPosSide === 'BUY' ? 'SELL' : 'BUY';
           } else {
-            orderExitSide = (placeSide === 'SELL' || placeSide === 'BUY') ? placeSide : 'SELL';
-            targetPosSide = orderExitSide === 'SELL' ? 'BUY' : 'SELL';
+            if (hasBuyPos) {
+              orderExitSide = 'SELL';
+              targetPosSide = 'BUY';
+            } else if (hasSellPos) {
+              orderExitSide = 'BUY';
+              targetPosSide = 'SELL';
+            } else {
+              orderExitSide = (placeSide === 'SELL' || placeSide === 'BUY') ? (placeSide === 'BUY' && effectiveExitMode ? 'SELL' : placeSide) : 'SELL';
+              targetPosSide = orderExitSide === 'SELL' ? 'BUY' : 'SELL';
+            }
           }
 
           const orderPayload = {
@@ -2160,7 +2169,7 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
                         className={`ts2-btn${effectiveExitMode ? ' ts2-btn-sell' : ' ts2-btn-buy'}`}
                         disabled={isBusy || isExpired}
                         style={(isBusy || isExpired) ? { opacity: isBusy ? 0.85 : 0.5, cursor: 'not-allowed' } : {}}
-                        onClick={() => handlePlace('BUY')}
+                        onClick={() => handlePlace(effectiveExitMode ? (existingPos?.side === 'SELL' ? 'BUY' : 'SELL') : 'BUY')}
                       >
                         {renderButtonContent(
                           isModify ? 'MODIFY' : effectiveExitMode ? (['TARGET', 'SL', 'GTT'].includes(orderType) ? 'MODIFY POSITION' : 'EXIT POSITION') : hideLotText ? 'BUY' : `BUY ${actionText}${buyPriceLabel}`

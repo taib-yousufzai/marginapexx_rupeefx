@@ -594,7 +594,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
     }
 
-    const { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, linked_position_id, orderAttemptId } = body;
+    let { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, linked_position_id, orderAttemptId } = body;
     const is_exit = Boolean(body.is_exit === true || body.is_exit === 'true' || body.is_exit === 1 || body.is_exit === '1');
 
     // 2b. Idempotency pre-check using Redis (with 300ms fast safety guard and 3s lock TTL)
@@ -1060,10 +1060,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     // Resolve reference entry price and position side (Long vs Short)
     const targetClean = cleanSymHelper(symbol);
-    const matchingPositions = openPositions.filter((p: any) =>
+    let matchingPositions = openPositions.filter((p: any) =>
       (linked_position_id && p.id === linked_position_id) ||
       (cleanSymHelper(p.symbol || p.kite_instrument) === targetClean && p.side !== side)
     );
+
+    // If client requested an exit (or linked_position_id) but side was sent matching the position (e.g. BUY for a BUY position),
+    // auto-correct the exit side to the opposite side so it nets/exits rather than failing or entering
+    if ((is_exit || linked_position_id) && matchingPositions.length === 0) {
+      const sameSidePositions = openPositions.filter((p: any) =>
+        (linked_position_id && p.id === linked_position_id) ||
+        (cleanSymHelper(p.symbol || p.kite_instrument) === targetClean && p.side === side)
+      );
+      if (sameSidePositions.length > 0) {
+        side = (side === 'BUY' ? 'SELL' : 'BUY') as 'BUY' | 'SELL';
+        matchingPositions = sameSidePositions;
+      }
+    }
 
     // Strict Exit Validation: Ensure exit quantity does not exceed open quantity
     if (is_exit || linked_position_id) {
@@ -1389,12 +1402,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let resolvedIsExit: boolean = Boolean(is_exit);
     let resolvedLinkedPositionId: string | null = linked_position_id ?? null;
 
-    // If an order claims to be an exit, but no matching opposite open position exists in DB:
-    // It cannot be an exit; treat it as a fresh new entry!
     if (resolvedIsExit && matchingPositions.length === 0) {
-      console.log(`[POST /api/orders] is_exit was true but no open opposite position exists for ${symbol} (${side}). Treating as fresh entry.`);
-      resolvedIsExit = false;
-      resolvedLinkedPositionId = null;
+      return NextResponse.json({
+        error: `Cannot place exit order: No matching open position found for ${symbol}.`,
+      }, { status: 400 });
     } else if (matchingPositions.length > 0) {
       resolvedIsExit = true;
       if (resolvedLinkedPositionId) {

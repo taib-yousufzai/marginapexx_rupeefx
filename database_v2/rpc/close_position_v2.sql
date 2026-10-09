@@ -50,7 +50,13 @@ BEGIN
         END IF;
     END IF;
 
-    -- STEP 1: Lock Position
+    -- STEP 1: Strict Global Lock Hierarchy (profiles -> positions -> transactions)
+    SELECT user_id INTO v_user_id FROM public.positions WHERE id = p_position_id;
+    IF v_user_id IS NOT NULL THEN
+        PERFORM 1 FROM public.profiles WHERE id = v_user_id FOR UPDATE;
+    END IF;
+
+    -- STEP 2: Lock Position
     SELECT user_id, symbol, side, qty_open, avg_price, locked_margin, margin_required, settlement, product_type
     INTO v_user_id, v_symbol, v_side, v_qty_open, v_avg_price, v_locked_margin, v_margin_required, v_settlement, v_product_type
     FROM public.positions
