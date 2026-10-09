@@ -711,16 +711,16 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
       if (effectiveExitMode) {
         let maxExitQty = 0;
         if (linkedPosId) {
-          // Specific-position exit: cap to that position's qty_open only
           const exactPos = activePositionsRef.current?.find(p => p.id === linkedPosId);
-          maxExitQty = exactPos?.qty_open ?? 0;
+          const totalOpen = totalOpenQtyForSymbol || existingPos?.qty_open || 0;
+          maxExitQty = Math.max(exactPos?.qty_open ?? 0, totalOpen);
         } else if (existingPos) {
           // General exit: cap to TOTAL qty across all open lots for this symbol
           maxExitQty = totalOpenQtyForSymbol || existingPos.qty_open;
         }
         if (maxExitQty > 0 && rawQty > maxExitQty) {
-          showOrderError(`Error: Exit qty (${rawQty}) exceeds this lot's available qty (${maxExitQty}). Please reduce the quantity.`);
-          setQtyError(`Cannot exceed ${maxExitQty} qty for this lot`);
+          showOrderError(`Error: Exit qty (${rawQty}) exceeds total open position qty (${maxExitQty}). Please reduce the quantity.`);
+          setQtyError(`Cannot exceed ${maxExitQty} qty`);
           return;
         }
       } else {

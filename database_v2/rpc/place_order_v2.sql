@@ -164,10 +164,10 @@ BEGIN
             END IF;
         END IF;
 
-        -- Find if an open position exists for this symbol (re-fetch single lot for routing)
+        -- Find if an open position exists for this symbol (anchor initial lot for routing)
         IF p_linked_position_id IS NOT NULL THEN
-            SELECT id, qty_open, side, product_type, symbol
-            INTO v_position_id, v_pos_qty_open, v_pos_side, p_product_type, p_symbol
+            SELECT id, side, product_type, symbol
+            INTO v_position_id, v_pos_side, p_product_type, p_symbol
             FROM public.positions
             WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active')
             LIMIT 1
@@ -177,8 +177,8 @@ BEGIN
         IF v_position_id IS NULL THEN
             IF p_is_exit = true THEN
                 -- Match opposite side position for exit
-                SELECT id, qty_open, side, product_type, symbol
-                INTO v_position_id, v_pos_qty_open, v_pos_side, p_product_type, p_symbol
+                SELECT id, side, product_type, symbol
+                INTO v_position_id, v_pos_side, p_product_type, p_symbol
                 FROM public.positions
                 WHERE user_id = p_user_id 
                   AND (
@@ -191,10 +191,31 @@ BEGIN
                 ORDER BY entry_time DESC
                 LIMIT 1
                 FOR UPDATE;
+
+                -- Fallback: match any open position for this symbol if side was passed identically
+                IF v_position_id IS NULL THEN
+                    SELECT id, side, product_type, symbol
+                    INTO v_position_id, v_pos_side, p_product_type, p_symbol
+                    FROM public.positions
+                    WHERE user_id = p_user_id 
+                      AND (
+                        symbol = p_symbol 
+                        OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
+                           UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                      )
+                      AND LOWER(status) IN ('open', 'active')
+                    ORDER BY entry_time DESC
+                    LIMIT 1
+                    FOR UPDATE;
+                END IF;
+
+                IF v_position_id IS NULL THEN
+                    RAISE EXCEPTION 'Cannot place exit order: No matching open position found for symbol %.', p_symbol;
+                END IF;
             END IF;
         END IF;
 
-        IF v_position_id IS NULL OR v_pos_side = p_side THEN
+        IF (p_is_exit IS NOT TRUE) AND (v_position_id IS NULL OR v_pos_side = p_side) THEN
             -- Lifecycle: Create Position Lot (Same-side additions create separate lots for FIFO)
             v_position_id := public.create_position_internal(
                 p_user_id, p_symbol, p_side, p_qty, p_fill_price, p_ltp,
@@ -214,7 +235,7 @@ BEGIN
             v_remaining_qty := p_qty;
             
             IF p_linked_position_id IS NOT NULL THEN
-                -- Target specific lot
+                -- Target specific lot first
                 FOR v_pos IN 
                     SELECT id, qty_open 
                     FROM public.positions
@@ -231,7 +252,7 @@ BEGIN
                         PERFORM public.reduce_position_internal(
                             v_pos.id, v_closed_qty, p_fill_price, p_ltp,
                             round((p_expected_brokerage * v_closed_qty) / p_qty, 2),
-                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text -- unique per lot
+                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text
                         );
                         v_remaining_qty := 0;
                     ELSE
@@ -240,14 +261,14 @@ BEGIN
                         PERFORM public.close_position_v2(
                             v_pos.id, v_closed_qty, p_fill_price,
                             'FIFO_EXIT', round((p_expected_brokerage * v_closed_qty) / p_qty, 2),
-                            v_order_id::text  -- reuse the already-inserted order id so close_position_v2 skips its own insert
+                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text, true
                         );
                         v_remaining_qty := v_remaining_qty - v_closed_qty;
                     END IF;
                 END LOOP;
             END IF;
 
-            -- Default FIFO Order Consuming Oldest First (used for unlinked exits or fallback)
+            -- Default FIFO Order Consuming Oldest First (used for unlinked exits or cascade fallback)
             -- Secondary sort: qty_open ASC ensures smallest lots are consumed first when entry_time is identical
             IF v_remaining_qty > 0 THEN
                 FOR v_pos IN 
@@ -275,7 +296,7 @@ BEGIN
                         PERFORM public.reduce_position_internal(
                             v_pos.id, v_closed_qty, p_fill_price, p_ltp,
                             round((p_expected_brokerage * v_closed_qty) / p_qty, 2),
-                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text -- unique per lot
+                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text
                         );
                         v_remaining_qty := 0;
                     ELSE
@@ -284,16 +305,15 @@ BEGIN
                         PERFORM public.close_position_v2(
                             v_pos.id, v_closed_qty, p_fill_price,
                             'FIFO_EXIT', round((p_expected_brokerage * v_closed_qty) / p_qty, 2),
-                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text
+                            COALESCE(p_idempotency_key, v_order_id::text) || '_' || v_pos.id::text, true
                         );
                         v_remaining_qty := v_remaining_qty - v_closed_qty;
                     END IF;
                 END LOOP;
             END IF;
 
-
-            -- Lifecycle: Reverse Position (Create new opposite side position if remaining quantity exists)
-            IF v_remaining_qty > 0 THEN
+            -- Lifecycle: Reverse Position (Create new opposite side position if remaining quantity exists for non-exit orders)
+            IF (p_is_exit IS NOT TRUE) AND v_remaining_qty > 0 THEN
                 v_position_id := public.create_position_internal(
                     p_user_id, p_symbol, p_side, v_remaining_qty, p_fill_price, p_ltp,
                     p_product_type, p_segment, p_stop_loss, p_target,
@@ -319,6 +339,17 @@ BEGIN
         IF p_buffer_fee > 0 THEN
             INSERT INTO public.transactions (user_id, type, amount, status, ref_id)
             VALUES (p_user_id, 'BUFFER_FEE_DEBIT', p_buffer_fee, 'APPROVED', 'BUF_' || v_order_id::text);
+        END IF;
+
+        IF p_is_exit THEN
+            UPDATE public.orders
+            SET status = 'CANCELLED', updated_at = now()
+            WHERE user_id = p_user_id
+              AND UPPER(status) IN ('PENDING', 'OPEN', 'TRIGGER_PENDING', 'VALIDATION_PENDING')
+              AND (
+                info = p_linked_position_id::text 
+                OR symbol = p_symbol
+              );
         END IF;
     END IF;
 
