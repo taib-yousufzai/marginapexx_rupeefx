@@ -15,6 +15,22 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient } from '@/lib/redis';
 import { getCachedScriptSettings, getCachedUserProfile, getCachedUserSegmentSettings, invalidateUserPositionsCache, invalidateUserOrdersCache } from '@/lib/redisSettingsCache';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+import { getPlatformSetting } from '@/lib/getPlatformSetting';
+import { getSharedKiteSession } from '@/lib/kiteSession';
+import { parseOptionSymbol } from '@/lib/parseOptionSymbol';
+import type {
+  PlaceOrderRequest,
+  PlaceOrderResponse,
+  MyOrder,
+} from '@/lib/types/order';
+import { calculateSingleLegCharge, calculateOrderBrokerage } from '@/lib/trading/BrokerageCalculator';
+import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
+import { RiskValidation } from '@/lib/trading/RiskValidation';
+import { mapSymbolToSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
+import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
+import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
+import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
+import { OrderService } from '@/lib/trading/OrderService';
 
 function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[] | Record<string, number>): number {
   let n = symbol.toUpperCase();
@@ -62,23 +78,6 @@ function cleanSymHelper(s?: string | null): string {
   }
   return str;
 }
-import { getPlatformSetting } from '@/lib/getPlatformSetting';
-import { getSharedKiteSession } from '@/lib/kiteSession';
-import { parseOptionSymbol } from '@/lib/parseOptionSymbol';
-import type {
-  PlaceOrderRequest,
-  PlaceOrderResponse,
-  MyOrder,
-} from '@/lib/types/order';
-import { calculateSingleLegCharge, calculateOrderBrokerage } from '@/lib/trading/BrokerageCalculator';
-import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
-import { RiskValidation } from '@/lib/trading/RiskValidation';
-
-import { mapSymbolToSegment, mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
-import { calculateBufferedPrice } from '@/lib/trading/BufferCalculator';
-import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/OptionStrikeValidator';
-import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
-import { OrderService } from '@/lib/trading/OrderService';
 
 // In-memory cache for segment trading hours (avoids ~767ms serial Supabase round-trip on every order)
 const tradingHoursCache = new Map<string, { data: any; expiresAt: number }>();
@@ -701,7 +700,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Fetch active positions to verify total open lot limits (max_lot)
       admin.from('positions')
-        .select('id, symbol, settlement, qty_open, lots, status, entry_price, side, product_type, entry_time')
+        .select('id, symbol, settlement, qty_open, status, entry_price, side, product_type, entry_time')
         .eq('user_id', user.id)
         .in('status', ['open', 'OPEN', 'active', 'ACTIVE', 'PARTIALLY_CLOSED', 'PARTIAL_CLOSED']),
 
@@ -1041,9 +1040,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const refPrice = ['LIMIT', 'SL', 'GTT'].includes(order_type ?? 'MARKET') ? client_price : baseLtp;
 
     // Resolve reference entry price and position side (Long vs Short)
+    const targetClean = cleanSymHelper(symbol);
+    const matchingPositions = openPositions.filter((p: any) =>
+      (linked_position_id && p.id === linked_position_id) ||
+      (cleanSymHelper(p.symbol || p.kite_instrument) === targetClean && p.side !== side)
+    );
+
     const activePosition = openPositions.find((p: any) =>
       (linked_position_id && p.id === linked_position_id) ||
-      (cleanSymHelper(p.symbol) === cleanSymHelper(symbol) && (p.product_type || 'INTRADAY').toUpperCase() === (targetProductType || 'INTRADAY').toUpperCase()) ||
+      (cleanSymHelper(p.symbol || p.kite_instrument) === targetClean && p.side !== side && (p.product_type || 'INTRADAY').toUpperCase() === (targetProductType || 'INTRADAY').toUpperCase()) ||
+      (cleanSymHelper(p.symbol || p.kite_instrument) === targetClean && p.side !== side) ||
       (cleanSymHelper(p.symbol) === cleanSymHelper(symbol))
     );
 
@@ -1068,11 +1074,38 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
       estExitPrice = Math.round(estExitPrice * 100) / 100;
 
-      const pnlValue = activePosition.side === 'BUY'
-        ? (estExitPrice - Number(activePosition.entry_price)) * Number(qty)
-        : (Number(activePosition.entry_price) - estExitPrice) * Number(qty);
+      let pnlValue: number;
+      let durationSec: number;
 
-      const durationSec = Math.floor((Date.now() - new Date(activePosition.entry_time).getTime()) / 1000);
+      if (!linked_position_id && matchingPositions.length > 0) {
+        // Net aggregate PnL for cumulative exit
+        let totalEntryValue = 0;
+        let totalQty = 0;
+        let oldestEntryTime = Date.now();
+
+        for (const p of matchingPositions) {
+          const pQty = Number(p.qty_open || 0);
+          const pEntry = Number(p.entry_price || p.avg_price || 0);
+          totalEntryValue += pEntry * pQty;
+          totalQty += pQty;
+          const pTime = new Date(p.entry_time || (p as any).created_at || 0).getTime();
+          if (pTime < oldestEntryTime) oldestEntryTime = pTime;
+        }
+
+        const avgEntryPrice = totalQty > 0 ? totalEntryValue / totalQty : Number(activePosition.entry_price);
+        pnlValue = activePosition.side === 'BUY'
+          ? (estExitPrice - avgEntryPrice) * Number(qty)
+          : (avgEntryPrice - estExitPrice) * Number(qty);
+
+        durationSec = Math.floor((Date.now() - oldestEntryTime) / 1000);
+      } else {
+        pnlValue = activePosition.side === 'BUY'
+          ? (estExitPrice - Number(activePosition.entry_price)) * Number(qty)
+          : (Number(activePosition.entry_price) - estExitPrice) * Number(qty);
+
+        durationSec = Math.floor((Date.now() - new Date(activePosition.entry_time).getTime()) / 1000);
+      }
+
       const requiredHold = pnlValue >= 0 ? profitHoldSec : lossHoldSec;
 
       if (durationSec < requiredHold) {
@@ -1207,8 +1240,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const isIndianMarket = ['NSE', 'NFO', 'MCX', 'BSE', 'BFO', 'NCO'].includes(symbolExchange) ||
       symbol.startsWith('NSE:') || symbol.startsWith('NFO:') || symbol.startsWith('MCX:') || symbol.startsWith('MCX-');
 
-    const askBuf = isIndianMarket ? 0 : (buySetting?.entry_buffer ?? buySetting?.bid_buffer ?? 0);
-    const bidBuf = isIndianMarket ? 0 : (sellSetting?.entry_buffer ?? sellSetting?.bid_buffer ?? 0);
+    const askBuf = isIndianMarket ? 0 : (buySetting?.bid_buffer ?? 0);
+    const bidBuf = isIndianMarket ? 0 : (sellSetting?.bid_buffer ?? 0);
 
     const effective = resolveEffectivePrices({
       ltp: baseLtp,
@@ -1237,9 +1270,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         side: side as 'BUY' | 'SELL',
         isExit: is_exit ?? false,
         basePrice,
+        ltp: baseLtp,
         buySetting,
         sellSetting,
         exitPriceModeOverride: exitPriceMode,
+        isBasePriceRealBidAsk: true,
       });
     }
 
@@ -1304,12 +1339,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // exit, check whether an open opposite-side position already exists for this
     let resolvedIsExit: boolean = Boolean(is_exit);
     let resolvedLinkedPositionId: string | null = linked_position_id ?? null;
-
-    const targetClean = cleanSymHelper(symbol);
-    const matchingPositions = openPositions.filter((p: any) =>
-      cleanSymHelper(p.symbol || p.kite_instrument) === targetClean &&
-      p.side !== side // opposite side
-    );
 
     // If an order claims to be an exit, but no matching opposite open position exists in DB:
     // It cannot be an exit; treat it as a fresh new entry!

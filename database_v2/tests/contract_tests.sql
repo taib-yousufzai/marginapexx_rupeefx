@@ -69,7 +69,7 @@ BEGIN
     VALUES ('CT_SYM', 1) ON CONFLICT (symbol) DO NOTHING;
 
     v_user := gen_random_uuid();
-    INSERT INTO auth.users  (id, email) VALUES (v_user, 'ct@rupeefx.com');
+    INSERT INTO auth.users  (id, email) VALUES (v_user, 'ct@marginapex.com');
     INSERT INTO public.profiles (id, active, role, balance, settlement_amount, client_id)
     VALUES (v_user, true, 'user', v_initial_bal, v_initial_bal, 'CT_USR');
     INSERT INTO public.transactions (user_id, type, amount, status, ref_id)

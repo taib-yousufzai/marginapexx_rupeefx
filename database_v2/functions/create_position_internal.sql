@@ -35,8 +35,7 @@ BEGIN
     WHERE user_id = p_user_id
       AND (
         symbol = p_symbol 
-        OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-           UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+        OR public.clean_symbol_v2(symbol) = public.clean_symbol_v2(p_symbol)
       )
       AND LOWER(status) IN ('open', 'active')
       AND qty_open > 0
@@ -86,8 +85,7 @@ BEGIN
               AND side <> NEW.side
               AND (
                 symbol = NEW.symbol 
-                OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                   UPPER(regexp_replace(regexp_replace(regexp_replace(NEW.symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                OR public.clean_symbol_v2(symbol) = public.clean_symbol_v2(NEW.symbol)
               )
         ) INTO v_has_opposite;
 

@@ -1,6 +1,6 @@
 # Database API Contract Specification (v1.0.0)
 
-This document defines the immutable API contracts for the RupeeFX Trading transactional RPC interfaces. Any changes to these interfaces require a new version (e.g. `_v3`) to ensure backwards compatibility.
+This document defines the immutable API contracts for the MarginApex transactional RPC interfaces. Any changes to these interfaces require a new version (e.g. `_v3`) to ensure backwards compatibility.
 
 ---
 

@@ -750,15 +750,17 @@ export default function PositionPage() {
     for (const group of map.values()) {
       if (group.ids.length > 1) {
         // Multi-trade cumulative group:
-        // Only lock if the net group PnL is positive AND at least one constituent lot is still within its hold window
+        // Only lock if the net group PnL is positive AND the FIFO oldest constituent lot is still within its hold window
         const isGroupInProfit = group.total_pnl > 0;
         if (!isGroupInProfit) {
           group.hold_lock_active = false;
         } else {
-          group.hold_lock_active = group.ids.some(id => {
-            const p = openPositions.find(op => op.id === id);
-            return Boolean(p?.hold_lock_active);
-          });
+          const lots = group.ids
+            .map(id => openPositions.find(op => op.id === id))
+            .filter(Boolean)
+            .sort((a: any, b: any) => new Date(a.entry_time).getTime() - new Date(b.entry_time).getTime());
+          const fifoOldest = lots[0];
+          group.hold_lock_active = Boolean(fifoOldest?.hold_lock_active);
         }
       }
     }

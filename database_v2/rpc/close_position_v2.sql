@@ -120,8 +120,7 @@ BEGIN
           AND (
             info = p_position_id::text 
             OR symbol = v_symbol
-            OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-               UPPER(regexp_replace(regexp_replace(regexp_replace(v_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+            OR public.clean_symbol_v2(symbol) = public.clean_symbol_v2(v_symbol)
           );
     END IF;
 

@@ -129,8 +129,7 @@ BEGIN
         WHERE user_id = p_user_id 
           AND (
             symbol = v_target_symbol 
-            OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-               UPPER(regexp_replace(regexp_replace(regexp_replace(v_target_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+            OR public.clean_symbol_v2(symbol) = public.clean_symbol_v2(v_target_symbol)
           )
           AND LOWER(status) IN ('open', 'active')
           AND side <> p_side;
@@ -145,8 +144,7 @@ BEGIN
             WHERE user_id = p_user_id 
               AND (
                 symbol = v_target_symbol 
-                OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                   UPPER(regexp_replace(regexp_replace(regexp_replace(v_target_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                OR public.clean_symbol_v2(symbol) = public.clean_symbol_v2(v_target_symbol)
               )
               AND LOWER(status) IN ('open', 'active')
               AND side <> p_side
@@ -233,8 +231,7 @@ BEGIN
                     WHERE user_id = p_user_id 
                       AND (
                         symbol = v_target_symbol 
-                        OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                           UPPER(regexp_replace(regexp_replace(regexp_replace(v_target_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                        OR public.clean_symbol_v2(symbol) = public.clean_symbol_v2(v_target_symbol)
                       )
                       AND LOWER(status) IN ('open', 'active')
                       AND side = v_matched_pos_side
@@ -305,6 +302,7 @@ BEGIN
               AND (
                 info = p_linked_position_id::text 
                 OR symbol = p_symbol
+                OR public.clean_symbol_v2(symbol) = public.clean_symbol_v2(p_symbol)
               );
         END IF;
     END IF;
