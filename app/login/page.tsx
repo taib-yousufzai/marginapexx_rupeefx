@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { signIn, getSession, getRole } from '@/lib/auth';
 import RiskRulesPopup from '@/components/RiskRulesPopup';
 import AnimatedLoader from '@/components/AnimatedLoader';
-import SplashScreen from '@/components/SplashScreen';
 import { getSavedTheme, applyTheme } from '@/lib/theme';
 import './page.css';
 
@@ -28,14 +27,11 @@ export default function LoginPage() {
   const [passwordError, setPasswordError] = useState('');
   const [formError, setFormError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [showSplash, setShowSplash] = useState(true);
 
   const [showPopups, setShowPopups] = useState(false);
   const [pendingRoute, setPendingRoute] = useState<string | null>(null);
 
   const isLoggingInRef = useRef(false);
-
-
 
   // Redirect based on role if already authenticated
   useEffect(() => {
@@ -45,7 +41,8 @@ export default function LoginPage() {
     getSession().then((session) => {
       if (session && !isLoggingInRef.current) {
         const role = getRole(session.user);
-        router.replace(role === 'admin' ? '/admin' : '/');
+        const isAdmin = role === 'admin' || role === 'super_admin';
+        router.replace(isAdmin ? '/admin' : '/');
       }
     });
   }, [router]);
@@ -79,10 +76,9 @@ export default function LoginPage() {
       if (!result.error) {
         const role = getRole(result.user ?? null);
         const isAdmin = role === 'admin' || role === 'super_admin';
-        const isBroker = role === 'broker';
-        const route = isAdmin ? '/admin' : isBroker ? '/broker' : '/';
+        const route = isAdmin ? '/admin' : '/';
         
-        if (isAdmin || isBroker || result.user?.email === 'demo@gmail.com') {
+        if (isAdmin || result.user?.email === 'demo@gmail.com') {
           router.replace(route);
         } else {
           setPendingRoute(route);
@@ -128,10 +124,9 @@ export default function LoginPage() {
       if (!result.error) {
         const role = getRole(result.user ?? null);
         const isAdmin = role === 'admin' || role === 'super_admin';
-        const isBroker = role === 'broker';
-        const route = isAdmin ? '/admin' : isBroker ? '/broker' : '/';
+        const route = isAdmin ? '/admin' : '/';
         
-        if (isAdmin || isBroker || result.user?.email === 'demo@gmail.com') {
+        if (isAdmin || result.user?.email === 'demo@gmail.com') {
           router.replace(route);
         } else {
           setPendingRoute(route);
@@ -150,33 +145,17 @@ export default function LoginPage() {
   };
 
   return (
-    <>
-      {showSplash && (
-        <SplashScreen
-          onComplete={() => setShowSplash(false)}
-          duration={3200}
-        />
-      )}
     <div className="login-page">
-      {/* Subtle ambient light/dark glow effects */}
-      <div className="login-ambient-glow glow-top-right" />
-      <div className="login-ambient-glow glow-bottom-left" />
-
-      {/* Branding Header with 3D Logo */}
+      {/* Branding — matches nav bar style (Requirement 1.3) */}
       <div className="login-branding">
-        <img
-          src="/rupeefx-logo-transparent.png"
-          alt="RupeeFX Trading"
-          className="login-brand-logo-img"
-        />
+        <span className="login-brand-margin">MARGIN</span>
+        <span className="login-brand-apex">APEX</span>
       </div>
 
       {/* Auth card */}
       <div className="login-card">
-        <div className="login-card-header">
-          <h1 className="login-card-title">Welcome Back</h1>
-          <p className="login-card-subtitle">Sign in to your RupeeFX Trading account</p>
-        </div>
+        <h1 className="login-card-title">Sign in</h1>
+        <p className="login-card-subtitle">Enter your credentials to continue</p>
 
         {/* form onSubmit handles Enter-key submission (Requirement 7.3) */}
         <form className="login-form" onSubmit={handleSubmit} noValidate>
@@ -226,9 +205,6 @@ export default function LoginPage() {
                 value={password}
                 onChange={handlePasswordChange}
                 autoComplete="current-password"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
                 disabled={isLoading}
                 suppressHydrationWarning
               />
@@ -268,7 +244,7 @@ export default function LoginPage() {
             type="submit"
             className="login-submit-btn"
             disabled={isLoading}
-            aria-label="Log in to RupeeFX Trading"
+            aria-label="Log in to Margin Apex"
             suppressHydrationWarning
           >
             {isLoading ? (
@@ -318,6 +294,5 @@ export default function LoginPage() {
         />
       )}
     </div>
-    </>
   );
 }
