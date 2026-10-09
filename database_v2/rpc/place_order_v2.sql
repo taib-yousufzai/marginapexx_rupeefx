@@ -51,8 +51,11 @@ DECLARE
     v_profile_balance numeric;
     v_position_id uuid;
     v_pos RECORD;
-    v_pos_qty_open numeric;
-    v_pos_side text;
+    v_pos_qty_open numeric := 0;
+    v_target_symbol text := p_symbol;
+    v_target_product_type text := p_product_type;
+    v_matched_pos_id uuid := NULL;
+    v_matched_pos_side text := NULL;
     v_remaining_qty numeric;
     v_closed_qty numeric;
 BEGIN
@@ -111,52 +114,55 @@ BEGIN
     IF p_status = 'EXECUTED' THEN
         -- Check if linked_position_id is supplied to anchor position side & product_type & symbol
         IF p_linked_position_id IS NOT NULL THEN
-            SELECT side, product_type, symbol
-            INTO v_pos_side, p_product_type, p_symbol
+            SELECT id, side, product_type, symbol
+            INTO v_matched_pos_id, v_matched_pos_side, v_target_product_type, v_target_symbol
             FROM public.positions
-            WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active');
+            WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active')
+            LIMIT 1
+            FOR UPDATE;
         END IF;
 
-        -- Always calculate total open position quantity across all lots for this symbol & opposite side
-        SELECT side, COALESCE(SUM(qty_open), 0)
-        INTO v_pos_side, v_pos_qty_open
+        -- Calculate total open position quantity across all lots for this symbol & opposite side
+        SELECT COALESCE(SUM(qty_open), 0)
+        INTO v_pos_qty_open
         FROM public.positions
         WHERE user_id = p_user_id 
           AND (
-            symbol = p_symbol 
+            symbol = v_target_symbol 
             OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-               UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+               UPPER(regexp_replace(regexp_replace(regexp_replace(v_target_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
           )
           AND LOWER(status) IN ('open', 'active')
-          AND side <> p_side
-        GROUP BY side
-        LIMIT 1;
+          AND side <> p_side;
 
-        -- Fall back to any open position for this symbol with opposite side if product_type differed
-        IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
-            SELECT side, COALESCE(SUM(qty_open), 0), product_type
-            INTO v_pos_side, v_pos_qty_open, p_product_type
+        v_pos_qty_open := COALESCE(v_pos_qty_open, 0);
+
+        -- If not found via linked ID, look up any existing opposite position for automatic netting
+        IF v_matched_pos_id IS NULL AND v_pos_qty_open > 0 THEN
+            SELECT id, side, product_type, symbol
+            INTO v_matched_pos_id, v_matched_pos_side, v_target_product_type, v_target_symbol
             FROM public.positions
             WHERE user_id = p_user_id 
               AND (
-                symbol = p_symbol 
+                symbol = v_target_symbol 
                 OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                   UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                   UPPER(regexp_replace(regexp_replace(regexp_replace(v_target_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
               )
               AND LOWER(status) IN ('open', 'active')
               AND side <> p_side
-            GROUP BY side, product_type
-            LIMIT 1;
+            ORDER BY entry_time DESC
+            LIMIT 1
+            FOR UPDATE;
         END IF;
 
         -- Explicit exit order constraints
         IF p_is_exit THEN
-            IF v_pos_qty_open IS NULL OR v_pos_qty_open <= 0 THEN
+            IF v_pos_qty_open <= 0 THEN
                 RAISE EXCEPTION 'No open position exists to exit.';
             END IF;
 
-            IF v_pos_side = p_side THEN
-                RAISE EXCEPTION 'Exit order side (%) must be opposite of open position side (%).', p_side, v_pos_side;
+            IF v_matched_pos_side IS NOT NULL AND v_matched_pos_side = p_side THEN
+                RAISE EXCEPTION 'Exit order side (%) must be opposite of open position side (%).', p_side, v_matched_pos_side;
             END IF;
 
             IF p_qty > v_pos_qty_open THEN
@@ -164,40 +170,8 @@ BEGIN
             END IF;
         END IF;
 
-        -- Find if an open position exists for this symbol (anchor initial lot for routing)
-        IF p_linked_position_id IS NOT NULL THEN
-            SELECT id, side, product_type, symbol
-            INTO v_position_id, v_pos_side, p_product_type, p_symbol
-            FROM public.positions
-            WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active')
-            LIMIT 1
-            FOR UPDATE;
-        END IF;
-
-        IF v_position_id IS NULL THEN
-            -- Match any opposite side position for automatic netting
-            SELECT id, side, product_type, symbol
-            INTO v_position_id, v_pos_side, p_product_type, p_symbol
-            FROM public.positions
-            WHERE user_id = p_user_id 
-              AND (
-                symbol = p_symbol 
-                OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                   UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
-              )
-              AND LOWER(status) IN ('open', 'active')
-              AND side <> p_side
-            ORDER BY entry_time DESC
-            LIMIT 1
-            FOR UPDATE;
-
-            IF v_position_id IS NULL AND p_is_exit = true THEN
-                RAISE EXCEPTION 'Cannot place exit order: No matching open position found for symbol %.', p_symbol;
-            END IF;
-        END IF;
-
         -- IF no opposite-side position exists, create a new lot on p_side
-        IF (v_position_id IS NULL OR v_pos_side = p_side) THEN
+        IF (v_matched_pos_id IS NULL OR v_matched_pos_side = p_side OR v_pos_qty_open <= 0) THEN
             -- Lifecycle: Create Position Lot (Same-side additions create separate lots for FIFO)
             v_position_id := public.create_position_internal(
                 p_user_id, p_symbol, p_side, p_qty, p_fill_price, p_ltp,
@@ -221,7 +195,7 @@ BEGIN
                 FOR v_pos IN 
                     SELECT id, qty_open 
                     FROM public.positions
-                    WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active') AND side = v_pos_side
+                    WHERE id = p_linked_position_id AND LOWER(status) IN ('open', 'active') AND side = v_matched_pos_side
                     FOR UPDATE
                 LOOP
                     IF v_remaining_qty <= 0 THEN
@@ -258,12 +232,12 @@ BEGIN
                     FROM public.positions
                     WHERE user_id = p_user_id 
                       AND (
-                        symbol = p_symbol 
+                        symbol = v_target_symbol 
                         OR UPPER(regexp_replace(regexp_replace(regexp_replace(symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i')) =
-                           UPPER(regexp_replace(regexp_replace(regexp_replace(p_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
+                           UPPER(regexp_replace(regexp_replace(regexp_replace(v_target_symbol, '^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)', '', 'i'), '[\/\s\_\-]', '', 'g'), 'USDT$', '', 'i'))
                       )
                       AND LOWER(status) IN ('open', 'active')
-                      AND side = v_pos_side
+                      AND side = v_matched_pos_side
                       AND (p_linked_position_id IS NULL OR id != p_linked_position_id)
                     ORDER BY entry_time ASC, qty_open ASC, id ASC
                     FOR UPDATE
