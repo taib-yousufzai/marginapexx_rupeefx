@@ -1482,7 +1482,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    const executeDbCall = async () => {
+    const executeDbCall = async (retryCount = 0): Promise<string> => {
       const exitPos = resolvedLinkedPositionId
         ? openPositions.find((p: any) => p.id === resolvedLinkedPositionId)
         : (resolvedIsExit ? (openPositions.find((p: any) => cleanSymHelper(p.symbol || p.kite_instrument) === cleanSymHelper(symbol) && p.side !== side) || openPositions.find((p: any) => cleanSymHelper(p.symbol || p.kite_instrument) === cleanSymHelper(symbol))) : null);
@@ -1492,39 +1492,58 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ? (exitPos.side === 'BUY' ? 'SELL' : 'BUY')
         : side;
 
-      let oId: any = null;
-      let rpcErr: any = null;
+      try {
+        const resV2 = await admin.rpc('place_order_v2', {
+          p_user_id: user.id,
+          p_symbol: finalSymbol,
+          p_kite_inst: kiteInst,
+          p_segment: dbSegment,
+          p_side: finalSide,
+          p_order_type: rpcOrderType,
+          p_product_type: finalProductType,
+          p_qty: qty,
+          p_lots: lots ?? 0,
+          p_ltp: baseLtp,
+          p_fill_price: fillPrice,
+          p_is_exit: resolvedIsExit,
+          p_buffer_fee: 0,
+          p_status: isImmediate ? 'EXECUTED' : 'PENDING',
+          p_trigger_price: resolvedTriggerPrice,
+          p_stop_loss: resolvedStopLoss,
+          p_target: target ? parseFloat(target.toString()) : null,
+          p_info: resolvedLinkedPositionId,
+          p_expected_margin: requiredMargin,
+          p_expected_brokerage: expectedBrokerage,
+          p_idempotency_key: null,
+          p_linked_position_id: resolvedLinkedPositionId
+        });
 
-      const resV2 = await admin.rpc('place_order_v2', {
-        p_user_id: user.id,
-        p_symbol: finalSymbol,
-        p_kite_inst: kiteInst,
-        p_segment: dbSegment,
-        p_side: finalSide,
-        p_order_type: rpcOrderType,
-        p_product_type: finalProductType,
-        p_qty: qty,
-        p_lots: lots ?? 0,
-        p_ltp: baseLtp,
-        p_fill_price: fillPrice,
-        p_is_exit: resolvedIsExit,
-        p_buffer_fee: 0,
-        p_status: isImmediate ? 'EXECUTED' : 'PENDING',
-        p_trigger_price: resolvedTriggerPrice,
-        p_stop_loss: resolvedStopLoss,
-        p_target: target ? parseFloat(target.toString()) : null,
-        p_info: resolvedLinkedPositionId,
-        p_expected_margin: requiredMargin,
-        p_expected_brokerage: expectedBrokerage,
-        p_idempotency_key: null,
-        p_linked_position_id: resolvedLinkedPositionId
-      });
+        if (resV2.error) {
+          const errCode = (resV2.error as any)?.code;
+          const errMsg = (resV2.error.message || '').toLowerCase();
+          const isDeadlock = errCode === '40P01' || errCode === '55P03' || errCode === '40001' || errMsg.includes('deadlock') || errMsg.includes('lock_not_available');
 
-      if (resV2.error) {
-        console.error('[POST /api/orders] place_order_v2 error:', resV2.error);
-        throw new Error(resV2.error.message || 'Order execution failed. Please try again.');
+          if (isDeadlock && retryCount < 3) {
+            const jitterMs = 30 * (retryCount + 1) + Math.floor(Math.random() * 25);
+            console.warn(`[POST /api/orders] Transient DB deadlock on attempt ${retryCount + 1}. Retrying in ${jitterMs}ms...`);
+            await new Promise(r => setTimeout(r, jitterMs));
+            return executeDbCall(retryCount + 1);
+          }
+
+          console.error('[POST /api/orders] place_order_v2 error:', resV2.error);
+          throw new Error(resV2.error.message || 'Order execution failed. Please try again.');
+        }
+        return resV2.data as string;
+      } catch (err: any) {
+        const errMsg = (err.message || '').toLowerCase();
+        if ((errMsg.includes('deadlock') || errMsg.includes('40p01') || errMsg.includes('serialization')) && retryCount < 3) {
+          const jitterMs = 30 * (retryCount + 1) + Math.floor(Math.random() * 25);
+          console.warn(`[POST /api/orders] Transient DB deadlock error caught on attempt ${retryCount + 1}. Retrying in ${jitterMs}ms...`);
+          await new Promise(r => setTimeout(r, jitterMs));
+          return executeDbCall(retryCount + 1);
+        }
+        throw err;
       }
-      return resV2.data as string;
     };
 
     let orderId: string;
