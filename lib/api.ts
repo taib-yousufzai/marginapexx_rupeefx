@@ -193,13 +193,34 @@ async function apiCall<T>(
     } catch {
       details = rawText;
     }
+
+    // Automatic transparent retry for transient 503 / 502 / schema cache / deadlock errors
+    const retryCount = (options as any)?._retryCount ?? 0;
+    const errTextLower = (typeof details === 'string' ? details : (details && typeof details === 'object' && 'error' in details ? String((details as any).error) : rawText)).toLowerCase();
+    const isTransient =
+      res.status === 503 ||
+      res.status === 502 ||
+      errTextLower.includes('schema cache') ||
+      errTextLower.includes('deadlock') ||
+      errTextLower.includes('could not query the database');
+
+    if (isTransient && retryCount < 2) {
+      const delay = 100 * (retryCount + 1) + Math.floor(Math.random() * 50);
+      await new Promise(r => setTimeout(r, delay));
+      return apiCall<T>(method, path, body, { ...options, _retryCount: retryCount + 1 } as any);
+    }
+
     throw new ApiError(res.status, details, code);
   } catch (err) {
-    if (
-      err instanceof Error &&
-      (err.name === 'AbortError' || (err instanceof DOMException && err.name === 'AbortError'))
-    ) {
+    const retryCount = (options as any)?._retryCount ?? 0;
+    const isAbort = err instanceof Error && (err.name === 'AbortError' || (err instanceof DOMException && err.name === 'AbortError'));
+    if (isAbort) {
       aborted = true;
+    }
+    if (!isAbort && !(err instanceof ApiError) && retryCount < 2) {
+      const delay = 100 * (retryCount + 1) + Math.floor(Math.random() * 50);
+      await new Promise(r => setTimeout(r, delay));
+      return apiCall<T>(method, path, body, { ...options, _retryCount: retryCount + 1 } as any);
     }
     throw err;
   } finally {

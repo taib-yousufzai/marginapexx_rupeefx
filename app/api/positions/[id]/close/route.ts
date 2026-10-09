@@ -14,7 +14,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+import { getAdminClient, getUserFromRequest, isTransientDbError } from '@/lib/adminClient';
 import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import type { ClosePositionResponse } from '@/lib/types/order';
@@ -450,7 +450,7 @@ export async function POST(
   }
   const closeQty = requestedCloseQty > 0 ? requestedCloseQty : openQtyNum;
 
-  for (let retry = 0; retry < 3; retry++) {
+  for (let retry = 0; retry < 4; retry++) {
     const resV2 = await admin.rpc('close_position_v2', {
       p_position_id:        resolvedPositionId,
       p_close_qty:          closeQty,
@@ -462,13 +462,9 @@ export async function POST(
     });
 
     if (resV2.error) {
-      const errCode = (resV2.error as any)?.code;
-      const errMsg = (resV2.error.message || '').toLowerCase();
-      const isDeadlock = errCode === '40P01' || errCode === '55P03' || errCode === '40001' || errMsg.includes('deadlock') || errMsg.includes('lock_not_available');
-
-      if (isDeadlock && retry < 2) {
-        const jitterMs = 30 * (retry + 1) + Math.floor(Math.random() * 25);
-        console.warn(`[POST /api/positions/[id]/close] Transient deadlock on close attempt ${retry + 1}. Retrying in ${jitterMs}ms...`);
+      if (isTransientDbError(resV2.error) && retry < 3) {
+        const jitterMs = 40 * (retry + 1) + Math.floor(Math.random() * 35);
+        console.warn(`[POST /api/positions/[id]/close] Transient DB error (${resV2.error.message}) on close attempt ${retry + 1}. Retrying in ${jitterMs}ms...`);
         await new Promise(r => setTimeout(r, jitterMs));
         continue;
       }
@@ -481,6 +477,14 @@ export async function POST(
         p_exit_price:  exitPrice,
         p_closed_by:   'USER',
       });
+
+      if (resV1.error && isTransientDbError(resV1.error) && retry < 3) {
+        const jitterMs = 40 * (retry + 1) + Math.floor(Math.random() * 35);
+        console.warn(`[POST /api/positions/[id]/close] Transient DB error on v1 fallback (${resV1.error.message}). Retrying in ${jitterMs}ms...`);
+        await new Promise(r => setTimeout(r, jitterMs));
+        continue;
+      }
+
       pnl = resV1.data;
       rpcErr = resV1.error;
     } else {

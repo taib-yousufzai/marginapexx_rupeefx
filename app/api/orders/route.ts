@@ -14,7 +14,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient } from '@/lib/redis';
 import { getCachedScriptSettings, getCachedUserProfile, getCachedUserSegmentSettings, invalidateUserPositionsCache, invalidateUserOrdersCache } from '@/lib/redisSettingsCache';
-import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+import { getAdminClient, getUserFromRequest, isTransientDbError, withDbRetry } from '@/lib/adminClient';
 import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import { parseOptionSymbol } from '@/lib/parseOptionSymbol';
@@ -1519,13 +1519,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         });
 
         if (resV2.error) {
-          const errCode = (resV2.error as any)?.code;
-          const errMsg = (resV2.error.message || '').toLowerCase();
-          const isDeadlock = errCode === '40P01' || errCode === '55P03' || errCode === '40001' || errMsg.includes('deadlock') || errMsg.includes('lock_not_available');
-
-          if (isDeadlock && retryCount < 3) {
-            const jitterMs = 30 * (retryCount + 1) + Math.floor(Math.random() * 25);
-            console.warn(`[POST /api/orders] Transient DB deadlock on attempt ${retryCount + 1}. Retrying in ${jitterMs}ms...`);
+          if (isTransientDbError(resV2.error) && retryCount < 4) {
+            const jitterMs = 40 * (retryCount + 1) + Math.floor(Math.random() * 35);
+            console.warn(`[POST /api/orders] Transient DB error (${resV2.error.message}) on attempt ${retryCount + 1}. Retrying in ${jitterMs}ms...`);
             await new Promise(r => setTimeout(r, jitterMs));
             return executeDbCall(retryCount + 1);
           }
@@ -1535,10 +1531,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         }
         return resV2.data as string;
       } catch (err: any) {
-        const errMsg = (err.message || '').toLowerCase();
-        if ((errMsg.includes('deadlock') || errMsg.includes('40p01') || errMsg.includes('serialization')) && retryCount < 3) {
-          const jitterMs = 30 * (retryCount + 1) + Math.floor(Math.random() * 25);
-          console.warn(`[POST /api/orders] Transient DB deadlock error caught on attempt ${retryCount + 1}. Retrying in ${jitterMs}ms...`);
+        if (isTransientDbError(err) && retryCount < 4) {
+          const jitterMs = 40 * (retryCount + 1) + Math.floor(Math.random() * 35);
+          console.warn(`[POST /api/orders] Transient DB exception (${err.message || err}) caught on attempt ${retryCount + 1}. Retrying in ${jitterMs}ms...`);
           await new Promise(r => setTimeout(r, jitterMs));
           return executeDbCall(retryCount + 1);
         }

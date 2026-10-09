@@ -23,6 +23,86 @@ export function getAdminClient(): SupabaseClient {
   return _adminClient;
 }
 
+export function isTransientDbError(err: any): boolean {
+  if (!err) return false;
+  const msg = (err.message || (typeof err === 'string' ? err : '')).toLowerCase();
+  const code = (err.code || (err as any)?.details || '').toLowerCase();
+
+  // 1. PostgreSQL Deadlocks / Serialization failures / Lock contention
+  if (
+    code === '40p01' ||
+    code === '55p03' ||
+    code === '40001' ||
+    msg.includes('deadlock') ||
+    msg.includes('lock_not_available') ||
+    msg.includes('could not serialize access')
+  ) {
+    return true;
+  }
+
+  // 2. PostgREST Schema Cache / Connection Pool / 503 errors
+  if (
+    msg.includes('schema cache') ||
+    msg.includes('pgrst') ||
+    msg.includes('retrying') ||
+    msg.includes('503') ||
+    msg.includes('service unavailable') ||
+    msg.includes('502') ||
+    msg.includes('bad gateway')
+  ) {
+    return true;
+  }
+
+  // 3. Network / Transport blips
+  if (
+    msg.includes('fetch failed') ||
+    msg.includes('econnreset') ||
+    msg.includes('socket hang up') ||
+    msg.includes('etimedout') ||
+    msg.includes('network')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export async function withDbRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  baseDelayMs = 50
+): Promise<T> {
+  let lastErr: any;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fn();
+      if (res && typeof res === 'object' && 'error' in res && (res as any).error) {
+        const sbErr = (res as any).error;
+        if (isTransientDbError(sbErr) && attempt < maxRetries) {
+          const jitter = Math.floor(Math.random() * 30);
+          const delay = baseDelayMs * Math.pow(2, attempt) + jitter;
+          console.warn(`[withDbRetry] Transient Supabase error on attempt ${attempt + 1}: ${sbErr.message}. Retrying in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+      }
+      return res;
+    } catch (err: any) {
+      lastErr = err;
+      if (isTransientDbError(err) && attempt < maxRetries) {
+        const jitter = Math.floor(Math.random() * 30);
+        const delay = baseDelayMs * Math.pow(2, attempt) + jitter;
+        console.warn(`[withDbRetry] Transient DB exception on attempt ${attempt + 1}: ${err.message || err}. Retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+
 /**
  * Helper to parse and validate a Supabase JWT payload locally without HTTP requests.
  * Used as a zero-latency fallback during Supabase Cloud network degradation or Error 522 timeouts.
