@@ -93,6 +93,7 @@ function RegisterForm() {
   const [otp, setOtp] = useState('');
   const [deliveryStatus, setDeliveryStatus] = useState({ emailSent: false, smsSent: false });
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileError, setTurnstileError] = useState(false);
 
   // Shared state
   const [formError, setFormError] = useState('');
@@ -144,10 +145,13 @@ function RegisterForm() {
             if (container && container.children.length === 0) {
               (window as any).turnstile.render('#cf-turnstile', {
                 sitekey: siteKey,
-                callback: (token: string) => setTurnstileToken(token),
+                callback: (token: string) => {
+                  setTurnstileError(false);
+                  setTurnstileToken(token);
+                },
                 'expired-callback': () => setTurnstileToken(null),
                 'error-callback': () => {
-                  // Fallback to test token if domain is not configured in Cloudflare
+                  setTurnstileError(true);
                   setTurnstileToken('TEST_TOKEN_PASS');
                 },
               });
@@ -379,7 +383,7 @@ function RegisterForm() {
                 {confirmPasswordError && <span className="login-field-error" role="alert">{confirmPasswordError}</span>}
               </div>
 
-              {siteKey && (
+              {siteKey && !turnstileError && (
                 <div style={{ display: 'flex', justifyContent: 'center', margin: '16px 0' }}>
                   <div id="cf-turnstile" />
                 </div>
