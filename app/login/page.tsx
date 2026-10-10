@@ -79,12 +79,12 @@ export default function LoginPage() {
         const route = isAdmin ? '/admin' : '/';
         
         if (isAdmin || result.user?.email === 'demo@gmail.com') {
-          router.replace(route);
+          window.location.href = route;
         } else {
           setPendingRoute(route);
           setShowPopups(true);
+          setIsLoading(false);
         }
-        setIsLoading(false);
       } else {
         setFormError(result.error || 'Demo account unavailable. Please try again later.');
         setIsLoading(false);
@@ -127,12 +127,12 @@ export default function LoginPage() {
         const route = isAdmin ? '/admin' : '/';
         
         if (isAdmin || result.user?.email === 'demo@gmail.com') {
-          router.replace(route);
+          window.location.href = route;
         } else {
           setPendingRoute(route);
           setShowPopups(true);
+          setIsLoading(false);
         }
-        setIsLoading(false);
       } else {
         setFormError(result.error);
         setIsLoading(false);
@@ -293,7 +293,7 @@ export default function LoginPage() {
       {showPopups && (
         <RiskRulesPopup
           onAccept={() => {
-            if (pendingRoute) router.replace(pendingRoute);
+            if (pendingRoute) window.location.href = pendingRoute;
           }}
         />
       )}

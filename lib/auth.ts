@@ -5,6 +5,7 @@ import { clearSharedSession } from './sharedSession';
 export function clearAuthCache(): void {
   _cachedSession = null;
   _cacheTimestamp = 0;
+  _sessionPromise = null;
   clearSharedSession();
 }
 
@@ -63,20 +64,21 @@ export function getRole(user: User | null): AppRole {
  * Validates: Requirements 2.1, 2.3, 5.3
  */
 export async function signIn(email: string, password: string): Promise<SignInResult> {
-  let targetEmail = email.trim().toLowerCase();
+  const targetEmail = email.trim().toLowerCase();
+  const cleanPassword = password.trim();
 
   // Fast-path: non-email identifiers (client_id, phone), demo account, and RupeeFX admin bypass
   // browser Supabase SDK directly to /api/auth/login, avoiding invalid email format errors & timeouts.
   const isNonEmailOrDemo =
     !targetEmail.includes('@') ||
-    ((targetEmail.toLowerCase() === 'demo@gmail.com' || targetEmail.toUpperCase() === 'DEMO123') && password === 'demo123') ||
-    ((targetEmail.toLowerCase() === 'admin.rupeefx@gmail.com' || targetEmail.toUpperCase() === 'FOT290') && password === 'rupeefx.admin@123');
+    ((targetEmail === 'demo@gmail.com' || targetEmail === 'demo123') && cleanPassword === 'demo123') ||
+    ((targetEmail === 'admin.rupeefx@gmail.com' || targetEmail === 'fot290' || targetEmail === 'fot 290') && cleanPassword === 'rupeefx.admin@123');
 
   if (!isNonEmailOrDemo) {
     try {
-      const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password });
+      const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password: cleanPassword });
       const timeoutAuth = new Promise<any>((resolve) =>
-        setTimeout(() => resolve({ timeout: true }), 3500)
+        setTimeout(() => resolve({ timeout: true }), 3000)
       );
 
       const res = await Promise.race([authPromise, timeoutAuth]);
@@ -84,6 +86,7 @@ export async function signIn(email: string, password: string): Promise<SignInRes
       if (!res.timeout && res.data?.session && res.data?.user && !res.error) {
         _cachedSession = res.data.session;
         _cacheTimestamp = Date.now();
+        _sessionPromise = null;
         return { session: res.data.session, user: res.data.user };
       }
 
@@ -103,12 +106,13 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   // Fallback: Direct server auth via /api/auth/login
   // Handles: (a) non-email identifiers (client_id/phone) needing email resolution,
   //          (b) network issues where client SDK timed out but server can still reach Supabase,
-  //          (c) demo credentials.
+  //          (c) demo credentials,
+  //          (d) RupeeFX admin instant authentication.
   try {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: targetEmail, password }),
+      body: JSON.stringify({ email: targetEmail, password: cleanPassword }),
     });
 
     const data = await response.json();
@@ -119,6 +123,7 @@ export async function signIn(email: string, password: string): Promise<SignInRes
     if (data.session && data.user) {
       _cachedSession = data.session;
       _cacheTimestamp = Date.now();
+      _sessionPromise = null;
 
       if (typeof window !== 'undefined') {
         try {
@@ -130,6 +135,7 @@ export async function signIn(email: string, password: string): Promise<SignInRes
           if (projectRef) {
             localStorage.setItem(`sb-${projectRef}-auth-token`, JSON.stringify(data.session));
           }
+          localStorage.setItem('sb-auth-token', JSON.stringify(data.session));
         } catch (e) {
           console.warn('[signIn] Failed to persist fallback session to localStorage:', e);
         }
@@ -261,11 +267,11 @@ const SESSION_CACHE_TTL_MS = 60_000; // re-validate after 60 seconds
 // We listen for auth state changes to keep our cache in sync.
 if (typeof window !== 'undefined') {
   import('./supabaseClient').then(({ supabase: sb }) => {
-    sb.auth.onAuthStateChange((_event, session) => {
+    sb.auth.onAuthStateChange((event, session) => {
       if (session) {
         _cachedSession = session;
         _cacheTimestamp = Date.now();
-      } else {
+      } else if (event === 'SIGNED_OUT') {
         _cachedSession = null;
         _cacheTimestamp = 0;
       }
@@ -283,56 +289,60 @@ if (typeof window !== 'undefined') {
 let _sessionPromise: Promise<Session | null> | null = null;
 
 export async function getSession(): Promise<Session | null> {
+  // 1. Return cached session if still fresh in memory
+  if (_cachedSession && Date.now() - _cacheTimestamp < SESSION_CACHE_TTL_MS) {
+    return _cachedSession;
+  }
+
+  // 2. Instant localStorage lookup without network delay
+  if (typeof window !== 'undefined') {
+    try {
+      const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+      let storageKey = '';
+      try {
+        if (supabaseUrl) storageKey = new URL(supabaseUrl).hostname.split('.')[0];
+      } catch {}
+
+      let stored = storageKey ? localStorage.getItem(`sb-${storageKey}-auth-token`) : null;
+      if (!stored) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+            stored = localStorage.getItem(key);
+            if (stored) break;
+          }
+        }
+      }
+      if (!stored) {
+        stored = localStorage.getItem('sb-auth-token');
+      }
+
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && parsed.access_token && parsed.user) {
+          const expiresAt = parsed.expires_at;
+          if (!expiresAt || Date.now() / 1000 < expiresAt) {
+            _cachedSession = parsed;
+            _cacheTimestamp = Date.now();
+            return parsed;
+          }
+        }
+      }
+    } catch (storageErr) {
+      console.warn('[getSession] LocalStorage parse warning:', storageErr);
+    }
+  }
+
   if (_sessionPromise) {
     return _sessionPromise;
   }
 
   _sessionPromise = (async () => {
     try {
-      // 1. Return cached session if still fresh in memory
-      if (_cachedSession && Date.now() - _cacheTimestamp < SESSION_CACHE_TTL_MS) {
-        return _cachedSession;
-      }
-
-      // 2. Instant localStorage lookup without network delay
-      if (typeof window !== 'undefined') {
-        try {
-          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-          let storageKey = '';
-          try {
-            if (supabaseUrl) storageKey = new URL(supabaseUrl).hostname.split('.')[0];
-          } catch {}
-
-          let stored = storageKey ? localStorage.getItem(`sb-${storageKey}-auth-token`) : null;
-          if (!stored) {
-            for (let i = 0; i < localStorage.length; i++) {
-              const key = localStorage.key(i);
-              if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
-                stored = localStorage.getItem(key);
-                if (stored) break;
-              }
-            }
-          }
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (parsed && parsed.access_token && parsed.user) {
-              const expiresAt = parsed.expires_at;
-              if (!expiresAt || Date.now() / 1000 < expiresAt) {
-                _cachedSession = parsed;
-                _cacheTimestamp = Date.now();
-                return parsed;
-              }
-            }
-          }
-        } catch (storageErr) {
-          console.warn('[getSession] LocalStorage parse warning:', storageErr);
-        }
-      }
-
       // 3. Fallback to Supabase client SDK with short timeout
       const getSessionPromise = supabase.auth.getSession();
       const getSessionTimeout = new Promise<{ data: { session: null }; error: Error }>((resolve) =>
-        setTimeout(() => resolve({ data: { session: null }, error: new Error('getSession timeout') }), 1500)
+        setTimeout(() => resolve({ data: { session: null }, error: new Error('getSession timeout') }), 1200)
       );
       const { data: sessionData, error: sessionError } = await Promise.race([getSessionPromise, getSessionTimeout]);
       
@@ -340,7 +350,6 @@ export async function getSession(): Promise<Session | null> {
         if (_cachedSession) {
           return _cachedSession;
         }
-        _cachedSession = null;
         return null;
       }
 
@@ -349,7 +358,7 @@ export async function getSession(): Promise<Session | null> {
       try {
         const getUserPromise = supabase.auth.getUser();
         const getUserTimeout = new Promise<{ data: null; error: Error }>((resolve) =>
-          setTimeout(() => resolve({ data: null, error: new Error('getUser timeout') }), 1500)
+          setTimeout(() => resolve({ data: null, error: new Error('getUser timeout') }), 1000)
         );
         const { data: userData, error: userError } = await Promise.race([getUserPromise, getUserTimeout]);
         if (!userError && userData?.user) {
@@ -378,4 +387,3 @@ export async function getSession(): Promise<Session | null> {
 
   return _sessionPromise;
 }
-

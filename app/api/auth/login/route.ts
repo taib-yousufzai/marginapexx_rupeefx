@@ -28,17 +28,20 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Email/Username and password are required' }, { status: 400 });
     }
 
-    const targetIdentifier = String(email).trim().toLowerCase();
+    const targetIdentifier = String(email || '').trim().toLowerCase();
+    const cleanPassword = String(password || '').trim();
 
     // ─── Strategy 1: Instant Demo & RupeeFX Admin Fast-Path ──────────────────────────
     if (
-      (targetIdentifier.toLowerCase() === 'demo@gmail.com' || targetIdentifier.toUpperCase() === 'DEMO123') &&
-      password === 'demo123'
+      (targetIdentifier === 'demo@gmail.com' || targetIdentifier === 'demo123') &&
+      cleanPassword === 'demo123'
     ) {
       const demoUser = {
         id: 'dfa9b057-9187-4054-9ae6-9179c620666e',
         email: 'demo@gmail.com',
         role: 'user',
+        aud: 'authenticated',
+        app_metadata: { provider: 'email', role: 'user' },
         user_metadata: {
           role: 'user',
           full_name: 'Demo account',
@@ -55,7 +58,7 @@ export async function POST(req: Request) {
         exp: now + 86400,
         iat: now,
         user_metadata: demoUser.user_metadata,
-        app_metadata: { provider: 'email' },
+        app_metadata: demoUser.app_metadata,
       };
 
       const demoSession = {
@@ -71,8 +74,8 @@ export async function POST(req: Request) {
     }
 
     if (
-      (targetIdentifier.toLowerCase() === 'admin.rupeefx@gmail.com' || targetIdentifier.toUpperCase() === 'FOT290') &&
-      password === 'rupeefx.admin@123'
+      (targetIdentifier === 'admin.rupeefx@gmail.com' || targetIdentifier === 'fot290' || targetIdentifier === 'fot 290') &&
+      cleanPassword === 'rupeefx.admin@123'
     ) {
       const adminId = 'f0729000-0000-4000-8000-000000000290';
 
@@ -101,6 +104,8 @@ export async function POST(req: Request) {
         id: adminId,
         email: 'admin.rupeefx@gmail.com',
         role: 'admin',
+        aud: 'authenticated',
+        app_metadata: { provider: 'email', role: 'admin' },
         user_metadata: {
           role: 'admin',
           full_name: 'RupeeFX Admin',
@@ -118,7 +123,7 @@ export async function POST(req: Request) {
         exp: now + 86400 * 30, // 30 days
         iat: now,
         user_metadata: adminUser.user_metadata,
-        app_metadata: { provider: 'email' },
+        app_metadata: adminUser.app_metadata,
       };
 
       const adminSession = {
