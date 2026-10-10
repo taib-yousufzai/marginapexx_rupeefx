@@ -82,18 +82,77 @@ export function extractClientIp(headers: Headers): string {
 
 /**
  * Asynchronously logs an action to the database.
+ * Routes to Railway Postgres if configured, with automatic fallback to Supabase.
  * Does NOT throw errors, ensuring logging never breaks core app functionality.
  */
 export async function logAction(params: ActionLogParams): Promise<void> {
   try {
+    const payload = params.requestPayload ? sanitizePayload(params.requestPayload) : null;
+
+    // 1. Try Railway Postgres first if configured
+    try {
+      const { isRailwayDbConfigured, getRailwayPool, ensureActionLogsSchema } = await import('./railway-db');
+      if (isRailwayDbConfigured()) {
+        await ensureActionLogsSchema();
+        const pool = getRailwayPool();
+        if (pool) {
+          await pool.query(
+            `INSERT INTO action_logs (
+              user_id, username, role, session_id, ip_address, user_agent, device,
+              browser, platform, action_type, module, api_endpoint, http_method,
+              request_payload, response_status, is_success, error_message, stack_trace,
+              trade_id, order_id, position_id, wallet_before, wallet_after, margin_before,
+              margin_after, metadata
+            ) VALUES (
+              $1, $2, $3, $4, $5, $6, $7,
+              $8, $9, $10, $11, $12, $13,
+              $14, $15, $16, $17, $18,
+              $19, $20, $21, $22, $23, $24,
+              $25, $26
+            )`,
+            [
+              params.userId || null,
+              params.username || null,
+              params.role || null,
+              params.sessionId || null,
+              params.ipAddress || null,
+              params.userAgent || null,
+              params.device || null,
+              params.browser || null,
+              params.platform || null,
+              params.actionType,
+              params.module,
+              params.apiEndpoint || null,
+              params.httpMethod || null,
+              payload ? JSON.stringify(payload) : null,
+              params.responseStatus ?? null,
+              params.isSuccess ?? true,
+              params.errorMessage || null,
+              params.stackTrace || null,
+              params.tradeId || null,
+              params.orderId || null,
+              params.positionId || null,
+              params.walletBefore ?? null,
+              params.walletAfter ?? null,
+              params.marginBefore ?? null,
+              params.marginAfter ?? null,
+              params.metadata ? JSON.stringify(params.metadata) : null,
+            ]
+          );
+          return; // Successfully saved to Railway Postgres!
+        }
+      }
+    } catch (pgError) {
+      console.warn('[ActionLogger] Railway Postgres insert warning, falling back to Supabase:', pgError);
+    }
+
+    // 2. Fallback to Supabase
     const loggerClient = getLoggerClient();
     if (!loggerClient) {
       console.warn('[ActionLogger] Service key missing. Log skipped:', params.actionType);
       return;
     }
 
-    const payload = params.requestPayload ? sanitizePayload(params.requestPayload) : null;
-    
     const { error } = await loggerClient.from('action_logs').insert({
       user_id: params.userId,
       username: params.username,

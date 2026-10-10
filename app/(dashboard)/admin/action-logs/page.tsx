@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import { apiCall } from '@/components/admin/AdminUtils';
 
 interface ActionLog {
   id: string;
@@ -23,33 +23,30 @@ export default function ActionLogsPage() {
   const [search, setSearch] = useState('');
   const [filterModule, setFilterModule] = useState('ALL');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [dbSource, setDbSource] = useState<string>('');
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
-    let query = supabase
-      .from('action_logs')
-      .select('id, created_at, username, role, action_type, module, ip_address, is_success, error_message, wallet_before, wallet_after')
-      .order('created_at', { ascending: false })
-      .limit(100);
+    const params = new URLSearchParams();
+    if (filterModule !== 'ALL') params.set('module', filterModule);
+    if (search) params.set('search', search);
 
-    if (filterModule !== 'ALL') {
-      query = query.eq('module', filterModule);
+    try {
+      const { ok, data } = await apiCall(`/api/admin/action-logs?${params.toString()}`, { method: 'GET' });
+      if (!ok) {
+        setErrorMsg((data as any)?.error || 'Access Denied. You do not have permission to view Action Logs.');
+      } else if ((data as any)?.logs) {
+        setLogs((data as any).logs);
+        setDbSource((data as any).source || '');
+        setErrorMsg(null);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg('Failed to load Action Logs.');
+    } finally {
+      setLoading(false);
     }
-
-    if (search) {
-      query = query.or(`username.ilike.%${search}%,action_type.ilike.%${search}%,ip_address.ilike.%${search}%`);
-    }
-
-    const { data, error } = await query;
-    if (error) {
-      console.error(error);
-      setErrorMsg('Access Denied. You do not have permission to view Action Logs.');
-    } else if (data) {
-      setLogs(data);
-      setErrorMsg(null);
-    }
-    setLoading(false);
-  }, [search, filterModule, supabase]);
+  }, [search, filterModule]);
 
   useEffect(() => {
     fetchLogs();
@@ -58,7 +55,20 @@ export default function ActionLogsPage() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-2xl font-bold text-gray-100">Audit Trail (Action Logs)</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-gray-100">Audit Trail (Action Logs)</h1>
+          {dbSource && (
+            <span
+              className={`text-xs px-2.5 py-1 rounded-full font-medium ${
+                dbSource === 'railway_postgres'
+                  ? 'bg-purple-900/40 text-purple-300 border border-purple-700/50'
+                  : 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50'
+              }`}
+            >
+              Storage: {dbSource === 'railway_postgres' ? 'Railway Postgres' : 'Supabase'}
+            </span>
+          )}
+        </div>
         <button onClick={fetchLogs} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md">
           Refresh
         </button>
