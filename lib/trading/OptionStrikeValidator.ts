@@ -44,6 +44,11 @@ export function resolveTargetExchange(symbol: string, underlying: string): strin
   return 'NFO';
 }
 
+const instrRowCache = new Map<string, { data: any; expiresAt: number }>();
+const siblingStrikesCache = new Map<string, { data: any[]; expiresAt: number }>();
+const mcxUnderlyingCache = new Map<string, { tradingsymbol: string; expiresAt: number }>();
+const STRIKE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
 /**
  * Resolves the underlying Kite instrument key for an option symbol.
  */
@@ -53,6 +58,12 @@ export async function resolveUnderlyingKiteId(symbol: string, underlying: string
 
   if (isMcx) {
     const baseName = MCX_BASE_MAP[undUpper] || undUpper;
+    const now = Date.now();
+    const cachedMcx = mcxUnderlyingCache.get(baseName);
+    if (cachedMcx && cachedMcx.expiresAt > now) {
+      return cachedMcx.tradingsymbol;
+    }
+
     const admin = getAdminClient();
     const today = new Date().toISOString().split('T')[0];
 
@@ -66,7 +77,9 @@ export async function resolveUnderlyingKiteId(symbol: string, underlying: string
       .limit(1);
 
     if (mcxFuts?.[0]?.tradingsymbol) {
-      return `${mcxFuts[0].exchange || 'MCX'}:${mcxFuts[0].tradingsymbol}`;
+      const resSym = `${mcxFuts[0].exchange || 'MCX'}:${mcxFuts[0].tradingsymbol}`;
+      mcxUnderlyingCache.set(baseName, { tradingsymbol: resSym, expiresAt: now + STRIKE_CACHE_TTL_MS });
+      return resSym;
     }
     return `MCX:${baseName}`;
   }
@@ -118,17 +131,30 @@ export async function validateOptionStrike(params: {
     ? ['BFO', 'BSE']
     : [targetExchange];
 
-  // 1. Fetch contract instrument row filtering by exact exchange to prevent NCO/MCX collision
-  let query = admin
-    .from('instruments')
-    .select('name, expiry, exchange')
-    .or(`tradingsymbol.eq.${cleanSymbol},tradingsymbol.eq.${symbol},tradingsymbol.eq.${targetExchange}:${cleanSymbol}`);
+  const now = Date.now();
+  const instrCacheKey = `${cleanSymbol}:${targetExchange}`;
+  let instrRow: any = null;
+  const cachedInstr = instrRowCache.get(instrCacheKey);
 
-  if (targetExchange) {
-    query = query.in('exchange', allowedExchanges);
+  if (cachedInstr && cachedInstr.expiresAt > now) {
+    instrRow = cachedInstr.data;
+  } else {
+    // 1. Fetch contract instrument row filtering by exact exchange to prevent NCO/MCX collision
+    let query = admin
+      .from('instruments')
+      .select('name, expiry, exchange')
+      .or(`tradingsymbol.eq.${cleanSymbol},tradingsymbol.eq.${symbol},tradingsymbol.eq.${targetExchange}:${cleanSymbol}`);
+
+    if (targetExchange) {
+      query = query.in('exchange', allowedExchanges);
+    }
+
+    const { data: row } = await query.order('exchange', { ascending: true }).limit(1).maybeSingle();
+    instrRow = row;
+    if (instrRow) {
+      instrRowCache.set(instrCacheKey, { data: instrRow, expiresAt: now + STRIKE_CACHE_TTL_MS });
+    }
   }
-
-  const { data: instrRow } = await query.order('exchange', { ascending: true }).limit(1).maybeSingle();
 
   if (!instrRow?.expiry) {
     // Fail open if instrument details cannot be found
@@ -136,13 +162,25 @@ export async function validateOptionStrike(params: {
   }
 
   // 2. Fetch sibling contract strikes for the exact underlying, expiry, and exchange
-  const { data: siblingRows } = await admin
-    .from('instruments')
-    .select('strike_price')
-    .eq('name', instrRow.name || underlying)
-    .eq('expiry', instrRow.expiry)
-    .in('exchange', allowedExchanges)
-    .in('option_type', ['CE', 'PE']);
+  const siblingsCacheKey = `${instrRow.name || underlying}:${instrRow.expiry}:${targetExchange}`;
+  let siblingRows: any[] | null = null;
+  const cachedSiblings = siblingStrikesCache.get(siblingsCacheKey);
+
+  if (cachedSiblings && cachedSiblings.expiresAt > now) {
+    siblingRows = cachedSiblings.data;
+  } else {
+    const { data: rows } = await admin
+      .from('instruments')
+      .select('strike_price')
+      .eq('name', instrRow.name || underlying)
+      .eq('expiry', instrRow.expiry)
+      .in('exchange', allowedExchanges)
+      .in('option_type', ['CE', 'PE']);
+    siblingRows = rows ?? [];
+    if (siblingRows.length > 0) {
+      siblingStrikesCache.set(siblingsCacheKey, { data: siblingRows, expiresAt: now + STRIKE_CACHE_TTL_MS });
+    }
+  }
 
   if (!siblingRows || siblingRows.length === 0) {
     return { allowed: true, orderStrike, minAllowed: 0, maxAllowed: 0 };

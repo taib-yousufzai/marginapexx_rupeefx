@@ -676,6 +676,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const dbSegment = mapSegmentWithSymbol(segment, symbol);
     const admin = getAdminClient();
+    const useRailway = isRailwayDbConfigured();
 
     // Check market hours
     try {
@@ -693,14 +694,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         if (cachedHour && cachedHour.expiresAt > nowMs) {
           segmentHour = cachedHour.data;
         } else {
-          const res: any = await (admin
-            .from('trading_hours') as any)
-            .select('name, start_time, end_time, is_active')
-            .ilike('id', segmentId)
-            .maybeSingle();
-          segmentHour = res?.data;
-          hrError = res?.error;
-          if (!hrError && segmentHour) {
+          if (useRailway) {
+            try {
+              const rRows = await queryRailwayDb(
+                `SELECT name, start_time, end_time, is_active FROM public.trading_hours WHERE LOWER(id) = LOWER($1) LIMIT 1;`,
+                [segmentId]
+              );
+              if (rRows && rRows.length > 0) {
+                segmentHour = rRows[0];
+              }
+            } catch {}
+          }
+          if (!segmentHour) {
+            const res: any = await (admin
+              .from('trading_hours') as any)
+              .select('name, start_time, end_time, is_active')
+              .ilike('id', segmentId)
+              .maybeSingle();
+            segmentHour = res?.data;
+            hrError = res?.error;
+          }
+          if (segmentHour) {
             tradingHoursCache.set(segmentId, { data: segmentHour, expiresAt: nowMs + TRADING_HOURS_TTL_MS });
           }
         }
@@ -730,8 +744,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (isOption && underlyingId !== kiteInst) {
       instrumentsToFetch.push(underlyingId);
     }
-
-    const useRailway = isRailwayDbConfigured();
 
     // 4-6 + 8-9: Run cached profile / settings lookups AND independent DB queries in parallel.
     // When Railway Postgres is configured, reads complete in <1ms over private network.
