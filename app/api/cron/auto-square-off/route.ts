@@ -254,7 +254,8 @@ export async function GET(request: Request) {
         });
 
         if (!rpcErr) {
-          await admin.from('notifications').insert({
+          const { sendNotifications } = await import('@/lib/notifications');
+          await sendNotifications(admin, {
             user_id: userProfile.id,
             type: 'GENERAL',
             title: `[Auto Square Off] ${pos.symbol}`,

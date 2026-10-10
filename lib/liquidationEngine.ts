@@ -268,7 +268,8 @@ export async function checkAndExecuteAccountLiquidation(
       created_at: new Date().toISOString(),
     }));
 
-    await admin.from('notifications').insert(notifRows);
+    const { sendNotifications } = await import('./notifications');
+    await sendNotifications(admin, notifRows);
   }
 
   // ─── STEP 5: Settlement Loss Calculation & Accounting ──────────────────────

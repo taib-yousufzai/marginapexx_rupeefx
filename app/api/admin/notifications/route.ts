@@ -63,15 +63,10 @@ export async function POST(request: Request) {
       created_at: new Date().toISOString()
     }));
 
-    // Chunk size 100
-    const chunkSize = 100;
-    for (let i = 0; i < notifications.length; i += chunkSize) {
-      const chunk = notifications.slice(i, i + chunkSize);
-      const { error } = await adminClient.from('notifications').insert(chunk);
-      if (error) {
-        console.error('[POST notifications] Insert error:', error.message);
-        return Response.json({ error: 'Failed to send some notifications' }, { status: 500 });
-      }
+    const { sendNotifications } = await import('@/lib/notifications');
+    const sent = await sendNotifications(adminClient, notifications);
+    if (!sent) {
+      return Response.json({ error: 'Failed to send some notifications' }, { status: 500 });
     }
 
     return Response.json({ 

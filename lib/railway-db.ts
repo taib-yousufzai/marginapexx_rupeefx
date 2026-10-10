@@ -143,6 +143,32 @@ export async function ensureRailwaySchema(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_instruments_tradingsymbol ON instruments (tradingsymbol);
       CREATE INDEX IF NOT EXISTS idx_instruments_name ON instruments (name);
       CREATE INDEX IF NOT EXISTS idx_instruments_exchange_segment ON instruments (exchange, segment);
+
+      CREATE TABLE IF NOT EXISTS notifications (
+        id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+        user_id uuid NOT NULL,
+        type text NOT NULL,
+        title text NOT NULL,
+        message text NOT NULL,
+        read boolean DEFAULT false NOT NULL,
+        created_at timestamptz DEFAULT now() NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications (user_id);
+      CREATE INDEX IF NOT EXISTS idx_notifications_user_id_read ON notifications (user_id, read);
+      CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications (created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS dashboard_cache (
+        id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+        user_id uuid NOT NULL,
+        date_from date,
+        date_to date,
+        metrics jsonb NOT NULL,
+        computed_at timestamptz DEFAULT now() NOT NULL,
+        CONSTRAINT dashboard_cache_user_date_unique UNIQUE (user_id, date_from, date_to)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dashboard_cache_lookup ON dashboard_cache (user_id, date_from, date_to, computed_at DESC);
     `);
     initializedSchema = true;
   } catch (err: any) {
@@ -221,7 +247,6 @@ export async function persistCandlesToRailway(candles: CandleRow[]): Promise<boo
   try {
     await ensureRailwaySchema();
 
-    // Process in batches of 100 to stay well under query parameter limits
     const CHUNK_SIZE = 100;
     for (let i = 0; i < candles.length; i += CHUNK_SIZE) {
       const chunk = candles.slice(i, i + CHUNK_SIZE);
@@ -369,6 +394,188 @@ export async function upsertInstrumentsToRailway(instruments: any[]): Promise<bo
     return true;
   } catch (err: any) {
     console.warn('[Railway-Postgres] upsertInstruments error:', err.message);
+    return false;
+  }
+}
+
+export interface NotificationRow {
+  user_id: string;
+  type: string;
+  title: string;
+  message: string;
+  read?: boolean;
+  created_at?: string;
+}
+
+/**
+ * Inserts one or more notifications into Railway Postgres.
+ */
+export async function insertNotificationsToRailway(
+  notifications: NotificationRow | NotificationRow[]
+): Promise<boolean> {
+  const list = Array.isArray(notifications) ? notifications : [notifications];
+  if (list.length === 0) return true;
+  const db = getRailwayPool();
+  if (!db) return false;
+
+  try {
+    await ensureRailwaySchema();
+    const CHUNK_SIZE = 100;
+    for (let i = 0; i < list.length; i += CHUNK_SIZE) {
+      const chunk = list.slice(i, i + CHUNK_SIZE);
+      const values: any[] = [];
+      const placeholders: string[] = [];
+
+      chunk.forEach((n, idx) => {
+        const offset = idx * 6;
+        placeholders.push(`($${offset + 1}, $${offset + 2}, $${offset + 3}, $${offset + 4}, $${offset + 5}, $${offset + 6})`);
+        values.push(
+          n.user_id,
+          n.type || 'GENERAL',
+          n.title,
+          n.message,
+          Boolean(n.read),
+          n.created_at || new Date().toISOString()
+        );
+      });
+
+      const text = `
+        INSERT INTO notifications (user_id, type, title, message, read, created_at)
+        VALUES ${placeholders.join(', ')};
+      `;
+      await db.query(text, values);
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] insertNotifications error:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Fetches notifications for a user from Railway Postgres.
+ */
+export async function getUserNotificationsFromRailway(
+  userId: string,
+  limit: number = 50,
+  unreadOnly: boolean = false
+): Promise<any[] | null> {
+  const db = getRailwayPool();
+  if (!db) return null;
+
+  try {
+    await ensureRailwaySchema();
+    let text = `
+      SELECT id, type, title, message, read, created_at
+      FROM notifications
+      WHERE user_id = $1::uuid
+    `;
+    const params: any[] = [userId];
+
+    if (unreadOnly) {
+      text += ` AND read = false`;
+    }
+
+    text += ` ORDER BY created_at DESC LIMIT $${params.length + 1};`;
+    params.push(limit);
+
+    const res = await db.query(text, params);
+    return res.rows ?? [];
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] getUserNotifications error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Marks notifications as read in Railway Postgres.
+ */
+export async function markNotificationsReadInRailway(
+  userId: string,
+  id: string
+): Promise<boolean> {
+  const db = getRailwayPool();
+  if (!db) return false;
+
+  try {
+    await ensureRailwaySchema();
+    if (id === 'all') {
+      await db.query(
+        `UPDATE notifications SET read = true WHERE user_id = $1::uuid AND read = false;`,
+        [userId]
+      );
+    } else {
+      await db.query(
+        `UPDATE notifications SET read = true WHERE user_id = $1::uuid AND id = $2::uuid;`,
+        [userId, id]
+      );
+    }
+    return true;
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] markNotificationsRead error:', err.message);
+    return false;
+  }
+}
+
+/**
+ * Reads fresh cached metrics (< 5 minutes old) from Railway Postgres dashboard_cache.
+ */
+export async function getDashboardCacheFromRailway(
+  userId: string,
+  dateFrom: string | null,
+  dateTo: string | null
+): Promise<any | null> {
+  const db = getRailwayPool();
+  if (!db) return null;
+
+  try {
+    await ensureRailwaySchema();
+    const text = `
+      SELECT metrics
+      FROM dashboard_cache
+      WHERE user_id = $1::uuid
+        AND (date_from IS NOT DISTINCT FROM $2::date)
+        AND (date_to IS NOT DISTINCT FROM $3::date)
+        AND computed_at > (now() - interval '5 minutes')
+      ORDER BY computed_at DESC
+      LIMIT 1;
+    `;
+    const res = await db.query(text, [userId, dateFrom, dateTo]);
+    if (res.rows && res.rows.length > 0) {
+      return res.rows[0].metrics;
+    }
+    return null;
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] getDashboardCache error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Upserts computed metrics into Railway Postgres dashboard_cache.
+ */
+export async function upsertDashboardCacheToRailway(
+  userId: string,
+  dateFrom: string | null,
+  dateTo: string | null,
+  metrics: any
+): Promise<boolean> {
+  const db = getRailwayPool();
+  if (!db) return false;
+
+  try {
+    await ensureRailwaySchema();
+    const text = `
+      INSERT INTO dashboard_cache (user_id, date_from, date_to, metrics, computed_at)
+      VALUES ($1::uuid, $2::date, $3::date, $4::jsonb, now())
+      ON CONFLICT (user_id, date_from, date_to) DO UPDATE
+      SET metrics = EXCLUDED.metrics,
+          computed_at = now();
+    `;
+    await db.query(text, [userId, dateFrom, dateTo, JSON.stringify(metrics)]);
+    return true;
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] upsertDashboardCache error:', err.message);
     return false;
   }
 }

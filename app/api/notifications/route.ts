@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
-
-
+import { fetchUserNotifications } from '@/lib/notifications';
 
 /**
  * GET /api/notifications
@@ -17,28 +16,15 @@ export async function GET(request: NextRequest) {
     const unreadOnly = searchParams.get('unread_only') === 'true';
 
     const admin = getAdminClient();
+    const result = await fetchUserNotifications(admin, user.id, limit, unreadOnly);
 
-    let query = admin
-        .from('notifications')
-        .select('id, type, title, message, read, created_at')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(limit);
-
-    if (unreadOnly) query = query.eq('read', false);
-
-    const { data, error } = await query;
-    if (error) {
-        console.error('[GET /api/notifications]', error);
+    if (!result) {
         return NextResponse.json({ error: 'Failed to fetch notifications' }, { status: 500 });
     }
 
-    // Filter out old market open/close notifications
-    const filteredData = (data ?? []).filter(n => {
-        const t = n.title ?? '';
-        return !t.startsWith('[Market Open]') && !t.startsWith('[Market Close]') && !t.startsWith('[Market Closed]');
+    return NextResponse.json({
+        notifications: result.notifications,
+        unread_count: result.unread_count,
+        storage: result.storage
     });
-
-    const unreadCount = filteredData.filter(n => !n.read).length;
-    return NextResponse.json({ notifications: filteredData, unread_count: unreadCount });
 }

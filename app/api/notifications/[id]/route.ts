@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
+import { updateNotificationsRead } from '@/lib/notifications';
 
 /**
  * PATCH /api/notifications/[id]
@@ -18,24 +19,10 @@ export async function PATCH(
     const { id } = await params;
     const admin = getAdminClient();
 
-    if (id === 'all') {
-        const { error } = await admin
-            .from('notifications')
-            .update({ read: true })
-            .eq('user_id', user.id)
-            .eq('read', false);
-
-        if (error) return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
-        return NextResponse.json({ success: true });
+    const ok = await updateNotificationsRead(admin, user.id, id);
+    if (!ok) {
+        return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
     }
 
-    // Single notification — verify ownership via user_id filter
-    const { error } = await admin
-        .from('notifications')
-        .update({ read: true })
-        .eq('id', id)
-        .eq('user_id', user.id);
-
-    if (error) return NextResponse.json({ error: 'Failed to update' }, { status: 500 });
     return NextResponse.json({ success: true });
 }

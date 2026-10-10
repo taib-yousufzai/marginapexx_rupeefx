@@ -117,7 +117,20 @@ export async function GET(
     const date_to = url.searchParams.get('date_to') ?? null;
 
     // Step 4: Check dashboard_cache for a fresh entry (< 5 minutes old)
-    // Validates: Requirements 3.6, 3.7
+    // 4a. Check Railway Postgres first
+    try {
+      const { isRailwayDbConfigured, getDashboardCacheFromRailway } = await import('@/lib/railway-db');
+      if (isRailwayDbConfigured()) {
+        const cachedMetrics = await getDashboardCacheFromRailway(id, date_from, date_to);
+        if (cachedMetrics) {
+          return Response.json(cachedMetrics, { status: 200 });
+        }
+      }
+    } catch {
+      // Fallback continues to Supabase below
+    }
+
+    // 4b. Check Supabase
     const { data: cacheData, error: cacheError } = await adminClient
       .from('dashboard_cache')
       .select('metrics')
@@ -213,8 +226,16 @@ export async function GET(
       conversion: '0%',
     };
 
-    // Step 10: Upsert into dashboard_cache
-    // Validates: Requirement 3.6
+    // Step 10: Upsert into dashboard_cache (Railway Postgres first, fallback to Supabase)
+    try {
+      const { isRailwayDbConfigured, upsertDashboardCacheToRailway } = await import('@/lib/railway-db');
+      if (isRailwayDbConfigured()) {
+        await upsertDashboardCacheToRailway(id, date_from, date_to, fullMetrics);
+      }
+    } catch {
+      // ignore
+    }
+
     await adminClient.from('dashboard_cache').upsert(
       {
         user_id: id,
