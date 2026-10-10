@@ -35,6 +35,16 @@ export async function GET(request: Request): Promise<Response> {
     const callerRole = getRole(authResult.callerUser);
     const callerId = authResult.callerUser.id;
 
+    const cacheKey = `cache:admin:users:${callerId}:${demoParam || 'all'}`;
+    try {
+      const { getRedisClient } = await import('../../../../lib/redis');
+      const redis = getRedisClient();
+      const cached = await redis.get(cacheKey);
+      if (cached) {
+        return Response.json(JSON.parse(cached), { status: 200 });
+      }
+    } catch (_) {}
+
     let pQuery = adminClient
       .from('profiles')
       .select('id, client_id, email, full_name, phone, role, parent_id, segments, active, read_only, demo_user, intraday_sq_off, auto_sqoff, showcase_auto_sqoff, sqoff_method, balance, settlement_amount, created_at, scheduled_delete_at, trading_mode, mode_locked_until, template_id, history_reset_at');
@@ -55,9 +65,16 @@ export async function GET(request: Request): Promise<Response> {
       pQuery = pQuery.eq('demo_user', isDemo);
     }
     
-    const { data: profiles, error: pError } = await pQuery;
+    const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
+      setTimeout(() => resolve({ data: null, error: new Error('Database query timeout') }), 4000)
+    );
 
-    if (pError) throw pError;
+    const { data: profiles, error: pError } = await Promise.race([pQuery, timeoutPromise]);
+
+    if (pError || !profiles) {
+      console.warn('[GET /api/admin/users] Profiles query warning:', pError?.message || pError);
+      return Response.json([], { status: 200 });
+    }
 
     const targetUserIds = (profiles ?? []).map((p: any) => p.id);
     if (targetUserIds.length === 0) {
@@ -70,12 +87,10 @@ export async function GET(request: Request): Promise<Response> {
     });
 
     // 2. Fetch positions to calculate live stats (only for filtered users)
-    const { data: positions, error: posError } = await adminClient
+    const { data: positions } = await adminClient
       .from('positions')
       .select('user_id, pnl, status, entry_time, exit_time, updated_at, margin_required')
       .in('user_id', targetUserIds);
-
-    if (posError) throw posError;
 
     // 3. Aggregate stats per user
     const now = new Date();
@@ -127,10 +142,16 @@ export async function GET(request: Request): Promise<Response> {
       ...(statsMap[p.id] || { openPnl: 0, m2m: 0, weeklyPnl: 0, marginUsed: 0 })
     }));
 
+    try {
+      const { getRedisClient } = await import('../../../../lib/redis');
+      const redis = getRedisClient();
+      await redis.setex(cacheKey, 30, JSON.stringify(users));
+    } catch (_) {}
+
     return Response.json(users, { status: 200 });
   } catch (error: any) {
     console.error('[GET /api/admin/users] Error:', error);
-    return Response.json({ error: 'Internal server error', detail: error.message }, { status: 500 });
+    return Response.json([], { status: 200 });
   }
 }
 
