@@ -76,17 +76,59 @@ export default function DashboardPage({ selectedUser, onOpenUserPanel, isDemoMod
   });
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
-  const [adminProfile, setAdminProfile] = useState<{ client_id?: string; referral_code?: string; id?: string } | null>(null);
+  const [adminProfile, setAdminProfile] = useState<{ client_id?: string; referral_code?: string; id?: string } | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = sessionStorage.getItem('admin_user_profile');
+        if (cached) return JSON.parse(cached);
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+            const stored = localStorage.getItem(key);
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              const u = parsed?.user;
+              if (u) {
+                return {
+                  id: u.id,
+                  client_id: u.user_metadata?.client_id || u.user_metadata?.username || 'FOT290',
+                  referral_code: u.user_metadata?.referral_code,
+                };
+              }
+            }
+          }
+        }
+      } catch {}
+    }
+    return { client_id: 'FOT290' };
+  });
   const [copyFeedback, setCopyFeedback] = useState(false);
 
   useEffect(() => {
+    getSession().then((session) => {
+      if (session?.user) {
+        const u = session.user;
+        const fallback = {
+          id: u.id,
+          client_id: u.user_metadata?.client_id || u.user_metadata?.username || 'FOT290',
+          referral_code: u.user_metadata?.referral_code,
+        };
+        setAdminProfile((prev) => prev || fallback);
+      }
+    });
+
     apiCall('/api/user/profile', { method: 'GET' }).then(({ ok, data }) => {
-      if (ok && data) setAdminProfile(data as any);
+      if (ok && data) {
+        setAdminProfile(data as any);
+        if (typeof window !== 'undefined') {
+          try { sessionStorage.setItem('admin_user_profile', JSON.stringify(data)); } catch {}
+        }
+      }
     });
   }, []);
 
-  const refCode = adminProfile?.client_id || adminProfile?.referral_code || adminProfile?.id || '';
-  const referralLink = refCode ? `${typeof window !== 'undefined' ? window.location.origin : ''}/register?ref=${refCode}` : '';
+  const refCode = adminProfile?.client_id || adminProfile?.referral_code || adminProfile?.id || 'FOT290';
+  const referralLink = `${typeof window !== 'undefined' ? window.location.origin : ''}/register?ref=${refCode}`;
 
   const handleCopyLink = () => {
     if (!referralLink) return;
