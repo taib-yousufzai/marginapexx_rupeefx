@@ -263,7 +263,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ session: adminSession, user: adminUser });
     }
 
-    // ─── Strategy 2: Resolve non-email identifiers (client_id / phone) ───────
+    // ─── Strategy 2: Resolve non-email identifiers (client_id / phone / username) ───────
     let resolvedEmail = targetIdentifier;
 
     if (!targetIdentifier.includes('@')) {
@@ -272,49 +272,61 @@ export async function POST(req: Request) {
         const { data: prof } = await admin
           .from('profiles')
           .select('email')
-          .or(`client_id.eq.${targetIdentifier},phone.eq.${targetIdentifier}`)
+          .or(`client_id.ilike.${targetIdentifier},phone.eq.${targetIdentifier},full_name.ilike.${targetIdentifier}`)
+          .limit(1)
           .maybeSingle();
         if (prof?.email) {
-          resolvedEmail = prof.email;
+          resolvedEmail = String(prof.email).trim().toLowerCase();
         }
       } catch (lookupErr) {
         console.warn('[DirectAuth] Profile email lookup failed:', lookupErr);
       }
     }
 
-    // ─── Strategy 3: Supabase REST SDK — password verification ──────────────
+    // ─── Strategy 3: Direct Supabase REST token grant — fast password verification ───────
     try {
       const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
       const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-      if (supabaseUrl && anonKey) {
-        const { createClient } = await import('@supabase/supabase-js');
-        const supabase = createClient(supabaseUrl, anonKey);
+      if (supabaseUrl && anonKey && resolvedEmail.includes('@')) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
 
-        const authPromise = supabase.auth.signInWithPassword({
-          email: resolvedEmail,
-          password,
+        const res = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+          method: 'POST',
+          headers: {
+            'apikey': anonKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ email: resolvedEmail, password: cleanPassword }),
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
-        const timeoutPromise = new Promise<any>((resolve) =>
-          setTimeout(() => resolve({ timeout: true }), 4000)
-        );
-
-        const res = await Promise.race([authPromise, timeoutPromise]);
-
-        if (!res.timeout && res.data?.session && res.data?.user) {
+        const data = await res.json();
+        if (res.ok && data.access_token && data.user) {
+          const session = {
+            access_token: data.access_token,
+            token_type: data.token_type || 'bearer',
+            expires_in: data.expires_in || 3600,
+            expires_at: data.expires_at || (Math.floor(Date.now() / 1000) + (data.expires_in || 3600)),
+            refresh_token: data.refresh_token,
+            user: data.user,
+          };
           return NextResponse.json({
-            session: res.data.session,
-            user: res.data.user,
+            session,
+            user: data.user,
           });
         }
 
-        if (!res.timeout && res.error) {
-          return NextResponse.json({ error: res.error.message || 'Invalid credentials. Please try again.' }, { status: 401 });
+        if (data.error_description || data.msg || data.error) {
+          return NextResponse.json({
+            error: data.error_description || data.msg || data.error || 'Invalid credentials. Please try again.',
+          }, { status: 401 });
         }
       }
-    } catch (sdkErr: any) {
-      console.warn('[DirectAuth] Supabase REST SDK failed/timed out:', sdkErr?.message || sdkErr);
+    } catch (restErr: any) {
+      console.warn('[DirectAuth] Direct token grant failed/timed out:', restErr?.message || restErr);
     }
 
     return NextResponse.json({ error: 'Invalid credentials. Please try again.' }, { status: 401 });

@@ -67,50 +67,41 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   const targetEmail = email.trim().toLowerCase();
   const cleanPassword = password.trim();
 
-  // Fast-path: non-email identifiers (client_id, phone), demo account, and RupeeFX admin bypass
-  // browser Supabase SDK directly to /api/auth/login, avoiding invalid email format errors & timeouts.
-  const isNonEmailOrDemo =
-    !targetEmail.includes('@') ||
-    ((targetEmail === 'demo@gmail.com' || targetEmail === 'demo123') && cleanPassword === 'demo123') ||
-    ((targetEmail === 'admin.rupeefx@gmail.com' || targetEmail === 'fot290' || targetEmail === 'fot 290') && cleanPassword === 'rupeefx.admin@123') ||
-    ((targetEmail === 'niveshx@gmail.com' || targetEmail === 'ocx39z' || targetEmail === 'ocx 39z') && (cleanPassword === 'niveshx.admin@123' || cleanPassword === 'niveshx@123')) ||
-    ((targetEmail === 'admin@gmail.com' || targetEmail === '9a06b2' || targetEmail === '9a 06b2') && (cleanPassword === 'admin.apex@123' || cleanPassword === 'admin@password123'));
+  const saveSession = (session: any, user: any): SignInResult => {
+    _cachedSession = session;
+    _cacheTimestamp = Date.now();
+    _sessionPromise = null;
 
-  if (!isNonEmailOrDemo) {
-    try {
-      const authPromise = supabase.auth.signInWithPassword({ email: targetEmail, password: cleanPassword });
-      const timeoutAuth = new Promise<any>((resolve) =>
-        setTimeout(() => resolve({ timeout: true }), 3000)
-      );
-
-      const res = await Promise.race([authPromise, timeoutAuth]);
-
-      if (!res.timeout && res.data?.session && res.data?.user && !res.error) {
-        _cachedSession = res.data.session;
-        _cacheTimestamp = Date.now();
-        _sessionPromise = null;
-        return { session: res.data.session, user: res.data.user };
-      }
-
-      // Supabase returned a definitive auth error (e.g. wrong password, user not found).
-      if (!res.timeout && res.error) {
-        const errMsg = res.error.message || '';
-        const isNetworkErr = errMsg.includes('FetchError') || errMsg.includes('timeout') || errMsg.includes('fetch') || errMsg.includes('network');
-        if (!isNetworkErr) {
-          return { error: errMsg || 'Invalid credentials. Please try again.' };
+    if (typeof window !== 'undefined') {
+      try {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+        let projectRef = '';
+        if (supabaseUrl) {
+          try { projectRef = new URL(supabaseUrl).hostname.split('.')[0]; } catch {}
         }
+        if (projectRef) {
+          localStorage.setItem(`sb-${projectRef}-auth-token`, JSON.stringify(session));
+        }
+        localStorage.setItem('sb-auth-token', JSON.stringify(session));
+      } catch (e) {
+        console.warn('[signIn] Failed to persist session to localStorage:', e);
       }
-    } catch (e) {
-      console.warn('Supabase Auth SDK call failed/timed out, attempting server auth fallback:', e);
-    }
-  }
 
-  // Fallback: Direct server auth via /api/auth/login
-  // Handles: (a) non-email identifiers (client_id/phone) needing email resolution,
-  //          (b) network issues where client SDK timed out but server can still reach Supabase,
-  //          (c) demo credentials,
-  //          (d) RupeeFX admin instant authentication.
-  try {
+      try {
+        if (session.access_token && session.refresh_token) {
+          supabase.auth.setSession({
+            access_token: session.access_token,
+            refresh_token: session.refresh_token,
+          }).catch(() => {});
+        }
+      } catch {}
+    }
+
+    return { session, user };
+  };
+
+  // 1. Direct Server Authentication via /api/auth/login
+  const serverAuthPromise = (async () => {
     const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -119,37 +110,46 @@ export async function signIn(email: string, password: string): Promise<SignInRes
 
     const data = await response.json();
     if (!response.ok || data.error) {
-      return { error: data.error || 'Invalid credentials. Please try again.' };
+      throw new Error(data.error || 'Invalid credentials. Please try again.');
     }
-
     if (data.session && data.user) {
-      _cachedSession = data.session;
-      _cacheTimestamp = Date.now();
-      _sessionPromise = null;
-
-      if (typeof window !== 'undefined') {
-        try {
-          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
-          let projectRef = '';
-          if (supabaseUrl) {
-            try { projectRef = new URL(supabaseUrl).hostname.split('.')[0]; } catch {}
-          }
-          if (projectRef) {
-            localStorage.setItem(`sb-${projectRef}-auth-token`, JSON.stringify(data.session));
-          }
-          localStorage.setItem('sb-auth-token', JSON.stringify(data.session));
-        } catch (e) {
-          console.warn('[signIn] Failed to persist fallback session to localStorage:', e);
-        }
-      }
-
-      return { session: data.session, user: data.user };
+      return data;
     }
-  } catch (err: any) {
-    console.error('Direct auth fallback error:', err);
+    throw new Error('Authentication failed');
+  })();
+
+  // 2. If it is an email, race in parallel with client SDK — whichever finishes first wins immediately!
+  if (targetEmail.includes('@')) {
+    const clientAuthPromise = (async () => {
+      const res = await supabase.auth.signInWithPassword({
+        email: targetEmail,
+        password: cleanPassword,
+      });
+      if (res.error) {
+        throw new Error(res.error.message || 'Invalid credentials');
+      }
+      if (res.data?.session && res.data?.user) {
+        return { session: res.data.session, user: res.data.user };
+      }
+      throw new Error('No session returned');
+    })();
+
+    try {
+      const firstSuccess = await Promise.any([serverAuthPromise, clientAuthPromise]);
+      return saveSession(firstSuccess.session, firstSuccess.user);
+    } catch (aggregateErr: any) {
+      const firstErr = aggregateErr?.errors?.[0]?.message || aggregateErr?.message || 'Invalid credentials. Please try again.';
+      return { error: firstErr };
+    }
   }
 
-  return { error: 'Authentication failed. Please check credentials or network connection.' };
+  // Non-email identifier (client_id, phone, username): handled by server route
+  try {
+    const data = await serverAuthPromise;
+    return saveSession(data.session, data.user);
+  } catch (err: any) {
+    return { error: err?.message || 'Invalid credentials. Please try again.' };
+  }
 }
 
 /**
