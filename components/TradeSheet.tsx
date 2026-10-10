@@ -544,7 +544,9 @@ export default function TradeSheet({ item, side, onClose, onSuccess, exitMode = 
         setGttSubOption(isExitFlow ? 'TARGET' : 'LIMIT');
       }
     } else {
-      const initialExit = propInitialExitQty && propInitialExitQty > 0 ? propInitialExitQty : undefined;
+      const initialExit = propInitialExitQty && propInitialExitQty > 0
+        ? propInitialExitQty
+        : (effectiveExitMode ? (linkedPosId ? activePositions.find(p => p.id === linkedPosId)?.qty_open : (totalOpenQtyForSymbol || existingPos?.qty_open)) : undefined);
       const defaultQty = initialExit ?? (lotSize > 0 ? lotSize : 1);
       setOrderQty(defaultQty);
       setQtyInput(String(defaultQty));

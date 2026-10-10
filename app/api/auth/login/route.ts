@@ -30,7 +30,7 @@ export async function POST(req: Request) {
 
     const targetIdentifier = String(email).trim().toLowerCase();
 
-    // ─── Strategy 1: Instant Demo Account Fast-Path ──────────────────────────
+    // ─── Strategy 1: Instant Demo & RupeeFX Admin Fast-Path ──────────────────────────
     if (
       (targetIdentifier.toLowerCase() === 'demo@gmail.com' || targetIdentifier.toUpperCase() === 'DEMO123') &&
       password === 'demo123'
@@ -68,6 +68,69 @@ export async function POST(req: Request) {
       };
 
       return NextResponse.json({ session: demoSession, user: demoUser });
+    }
+
+    if (
+      (targetIdentifier.toLowerCase() === 'admin.rupeefx@gmail.com' || targetIdentifier.toUpperCase() === 'FOT290') &&
+      password === 'rupeefx.admin@123'
+    ) {
+      const adminId = 'f0729000-0000-4000-8000-000000000290';
+
+      // Background ensure profile in database without blocking login response
+      (async () => {
+        try {
+          const admin = getAdminClient();
+          await admin.from('profiles').upsert({
+            id: adminId,
+            email: 'admin.rupeefx@gmail.com',
+            client_id: 'FOT290',
+            full_name: 'RupeeFX Admin',
+            role: 'admin',
+            active: true,
+            read_only: false,
+            demo_user: false,
+            segments: ['INDEX-FUT', 'STOCK-OPT', 'STOCKS', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'],
+            balance: 1000000,
+          }, { onConflict: 'id' });
+        } catch (err) {
+          console.warn('[DirectAuth] Admin profile background sync:', err);
+        }
+      })();
+
+      const adminUser = {
+        id: adminId,
+        email: 'admin.rupeefx@gmail.com',
+        role: 'admin',
+        user_metadata: {
+          role: 'admin',
+          full_name: 'RupeeFX Admin',
+          client_id: 'FOT290',
+          username: 'FOT290',
+        },
+      };
+
+      const now = Math.floor(Date.now() / 1000);
+      const adminJwtPayload = {
+        sub: adminUser.id,
+        email: adminUser.email,
+        role: 'authenticated',
+        aud: 'authenticated',
+        exp: now + 86400 * 30, // 30 days
+        iat: now,
+        user_metadata: adminUser.user_metadata,
+        app_metadata: { provider: 'email' },
+      };
+
+      const adminSession = {
+        access_token: createSignedJwt(adminJwtPayload),
+        token_type: 'bearer',
+        expires_in: 86400 * 30,
+        expires_at: now + 86400 * 30,
+        refresh_token: `rupeefx-admin-refresh-${Date.now()}`,
+        user: adminUser,
+      };
+
+      return NextResponse.json({ session: adminSession, user: adminUser });
     }
 
     // ─── Strategy 2: Resolve non-email identifiers (client_id / phone) ───────

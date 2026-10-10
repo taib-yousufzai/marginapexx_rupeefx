@@ -29,8 +29,8 @@ export default function BrokersPage({ isDemoMode, onNavigate }: { isDemoMode: bo
     fetchUsers();
   }, [isDemoMode]);
 
-  const allBrokers = users.filter(u => u.role.toLowerCase() === 'broker');
-  const regularUsers = users.filter(u => u.role.toLowerCase() !== 'broker');
+  const allBrokers = users.filter(u => u.role.toLowerCase() === 'broker' || u.role.toLowerCase() === 'sub_broker');
+  const regularUsers = users.filter(u => u.role.toLowerCase() !== 'broker' && u.role.toLowerCase() !== 'sub_broker');
 
   const brokerStats = allBrokers.map(broker => {
     const brokerUsers = regularUsers.filter(u => u.parent_id === broker.id);

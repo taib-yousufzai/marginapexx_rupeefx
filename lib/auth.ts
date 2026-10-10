@@ -33,11 +33,11 @@ export type PasswordResetResult =
  * All valid application roles.
  * Stored in user.user_metadata.role.
  */
-export type AppRole = 'super_admin' | 'admin' | 'broker' | 'user';
+export type AppRole = 'super_admin' | 'admin' | 'broker' | 'sub_broker' | 'user';
 
 /**
  * Returns the role of the given Supabase user.
- * Uses strict equality checks for each of the four known role strings.
+ * Uses strict equality checks for each of the known role strings.
  * Returns 'user' for all other inputs (null user, missing field, any other value).
  *
  * Validates: Requirements 1.1, 1.2, 1.3, 1.4, 1.5, 1.6
@@ -47,6 +47,7 @@ export function getRole(user: User | null): AppRole {
   if (role === 'super_admin') return 'super_admin';
   if (role === 'admin') return 'admin';
   if (role === 'broker') return 'broker';
+  if (role === 'sub_broker') return 'sub_broker';
   return 'user';
 }
 
@@ -64,11 +65,12 @@ export function getRole(user: User | null): AppRole {
 export async function signIn(email: string, password: string): Promise<SignInResult> {
   let targetEmail = email.trim().toLowerCase();
 
-  // Fast-path: non-email identifiers (client_id, phone) and demo account bypass
+  // Fast-path: non-email identifiers (client_id, phone), demo account, and RupeeFX admin bypass
   // browser Supabase SDK directly to /api/auth/login, avoiding invalid email format errors & timeouts.
   const isNonEmailOrDemo =
     !targetEmail.includes('@') ||
-    ((targetEmail.toLowerCase() === 'demo@gmail.com' || targetEmail.toUpperCase() === 'DEMO123') && password === 'demo123');
+    ((targetEmail.toLowerCase() === 'demo@gmail.com' || targetEmail.toUpperCase() === 'DEMO123') && password === 'demo123') ||
+    ((targetEmail.toLowerCase() === 'admin.rupeefx@gmail.com' || targetEmail.toUpperCase() === 'FOT290') && password === 'rupeefx.admin@123');
 
   if (!isNonEmailOrDemo) {
     try {
@@ -128,10 +130,6 @@ export async function signIn(email: string, password: string): Promise<SignInRes
           if (projectRef) {
             localStorage.setItem(`sb-${projectRef}-auth-token`, JSON.stringify(data.session));
           }
-          await supabase.auth.setSession({
-            access_token: data.session.access_token,
-            refresh_token: data.session.refresh_token || '',
-          }).catch(() => {});
         } catch (e) {
           console.warn('[signIn] Failed to persist fallback session to localStorage:', e);
         }
@@ -291,16 +289,50 @@ export async function getSession(): Promise<Session | null> {
 
   _sessionPromise = (async () => {
     try {
-      // Return cached session if still fresh
+      // 1. Return cached session if still fresh in memory
       if (_cachedSession && Date.now() - _cacheTimestamp < SESSION_CACHE_TTL_MS) {
         return _cachedSession;
       }
 
-      // getSession() reads from localStorage — normally instant.
-      // But with a stale/invalid token it may make a network refresh call; cap at 6s.
+      // 2. Instant localStorage lookup without network delay
+      if (typeof window !== 'undefined') {
+        try {
+          const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+          let storageKey = '';
+          try {
+            if (supabaseUrl) storageKey = new URL(supabaseUrl).hostname.split('.')[0];
+          } catch {}
+
+          let stored = storageKey ? localStorage.getItem(`sb-${storageKey}-auth-token`) : null;
+          if (!stored) {
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+                stored = localStorage.getItem(key);
+                if (stored) break;
+              }
+            }
+          }
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && parsed.access_token && parsed.user) {
+              const expiresAt = parsed.expires_at;
+              if (!expiresAt || Date.now() / 1000 < expiresAt) {
+                _cachedSession = parsed;
+                _cacheTimestamp = Date.now();
+                return parsed;
+              }
+            }
+          }
+        } catch (storageErr) {
+          console.warn('[getSession] LocalStorage parse warning:', storageErr);
+        }
+      }
+
+      // 3. Fallback to Supabase client SDK with short timeout
       const getSessionPromise = supabase.auth.getSession();
       const getSessionTimeout = new Promise<{ data: { session: null }; error: Error }>((resolve) =>
-        setTimeout(() => resolve({ data: { session: null }, error: new Error('getSession timeout') }), 6000)
+        setTimeout(() => resolve({ data: { session: null }, error: new Error('getSession timeout') }), 1500)
       );
       const { data: sessionData, error: sessionError } = await Promise.race([getSessionPromise, getSessionTimeout]);
       
@@ -314,12 +346,10 @@ export async function getSession(): Promise<Session | null> {
 
       let user = sessionData.session.user;
 
-      // getUser() makes a live network call to Supabase Auth API.
-      // Guard it with a 5s timeout so a slow connection doesn't hang the page.
       try {
         const getUserPromise = supabase.auth.getUser();
         const getUserTimeout = new Promise<{ data: null; error: Error }>((resolve) =>
-          setTimeout(() => resolve({ data: null, error: new Error('getUser timeout') }), 5000)
+          setTimeout(() => resolve({ data: null, error: new Error('getUser timeout') }), 1500)
         );
         const { data: userData, error: userError } = await Promise.race([getUserPromise, getUserTimeout]);
         if (!userError && userData?.user) {

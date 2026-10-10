@@ -150,6 +150,7 @@ export default function CreateUserForm({ onBack, onCreated, isDemoMode, callerRo
           <select className="adm-cu-input adm-cu-select" value={role} onChange={e => setRole(e.target.value)}>
             {callerRole === 'super_admin' && <option>Admin</option>}
             {(callerRole === 'super_admin' || callerRole === 'admin') && <option>Broker</option>}
+            {(callerRole === 'super_admin' || callerRole === 'admin' || callerRole === 'broker') && <option>Sub Broker</option>}
             <option>User</option>
           </select>
         </div>

@@ -378,7 +378,7 @@ export default function PositionPage() {
         setTradeSheetProductType(pos.product_type as 'INTRADAY' | 'CARRY');
         setTradeSheetIsAddMore(false);
         setTradeSheetLinkedPosId(pos.id);
-        setTradeSheetInitialExitQty(isPartial ? (pos.qty_open || pos.qty_total || (pos as any).qty) : undefined);
+        setTradeSheetInitialExitQty(pos.qty_open || pos.qty_total || (pos as any).qty || 1);
         requestAnimationFrame(() => { isOpeningTradeSheetRef.current = false; });
       });
       return;
@@ -402,7 +402,7 @@ export default function PositionPage() {
     setTradeSheetProductType(pos.product_type as 'INTRADAY' | 'CARRY');
     setTradeSheetIsAddMore(false);
     setTradeSheetLinkedPosId(pos.id);
-    setTradeSheetInitialExitQty(isPartial ? (pos.qty_open || pos.qty_total || (pos as any).qty) : undefined);
+    setTradeSheetInitialExitQty(pos.qty_open || pos.qty_total || (pos as any).qty || 1);
 
     // Release guard after the next paint — by that point React has committed
     // the state update and the TradeSheet is visible.
@@ -488,7 +488,7 @@ export default function PositionPage() {
         setTradeSheetProductType(pos.product_type as 'INTRADAY' | 'CARRY');
         setTradeSheetIsAddMore(false);
         setTradeSheetLinkedPosId(isCumulative ? null : pos.id);
-        setTradeSheetInitialExitQty(totalQty);
+        setTradeSheetInitialExitQty(totalQty ?? (pos.qty_open || pos.qty_total || (pos as any).qty || 1));
       });
       return;
     }
@@ -507,7 +507,7 @@ export default function PositionPage() {
     setTradeSheetProductType(pos.product_type as 'INTRADAY' | 'CARRY');
     setTradeSheetIsAddMore(false);
     setTradeSheetLinkedPosId(isCumulative ? null : pos.id);
-    setTradeSheetInitialExitQty(totalQty);
+    setTradeSheetInitialExitQty(totalQty ?? (pos.qty_open || pos.qty_total || (pos as any).qty || 1));
   };
 
   const showToast = (msg: string, isError = false) => {

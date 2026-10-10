@@ -33,7 +33,7 @@ export default function AdminsPage({ isDemoMode, onNavigate }: { isDemoMode: boo
   }, [isDemoMode]);
 
   const allAdmins = users.filter(u => u.role.toLowerCase() === 'admin');
-  const allBrokers = users.filter(u => u.role.toLowerCase() === 'broker');
+  const allBrokers = users.filter(u => u.role.toLowerCase() === 'broker' || u.role.toLowerCase() === 'sub_broker');
   const allEndUsers = users.filter(u => u.role.toLowerCase() === 'user');
 
   // Stats calculation

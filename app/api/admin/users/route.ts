@@ -181,6 +181,9 @@ export async function POST(request: Request): Promise<Response> {
     if (requestedRole === 'broker' && !['super_admin', 'admin'].includes(callerRole)) {
       return Response.json({ error: 'Only Admins and Super Admins can create Brokers' }, { status: 403 });
     }
+    if (requestedRole === 'sub_broker' && !['super_admin', 'admin', 'broker'].includes(callerRole)) {
+      return Response.json({ error: 'Only Admins, Super Admins, and Brokers can create Sub-Brokers' }, { status: 403 });
+    }
 
     // Step 3: Validate required fields
     // Validates: Requirement 3.8
