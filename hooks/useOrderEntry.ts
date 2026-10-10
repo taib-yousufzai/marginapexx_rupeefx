@@ -158,8 +158,25 @@ export function useOrderEntry() {
         } else if (positionsContext?.addOptimisticPosition) {
           positionsContext.addOptimisticPosition(result.position);
         }
-      } else if (effectiveIsExit && effectiveLinkedPosId && positionsContext?.removePositionLocally) {
-        positionsContext.removePositionLocally(effectiveLinkedPosId);
+      } else if (effectiveIsExit && positionsContext?.removePositionLocally) {
+        if (effectiveLinkedPosId) {
+          positionsContext.removePositionLocally(effectiveLinkedPosId);
+        }
+        // Cleanup all matched positions for symbol locally so UI does not show stale open positions
+        const currentPositions = positionsContext?.positions || [];
+        const cleanTarget = (state.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_\-]/g, '').toUpperCase();
+        let remainingCloseQty = Number(state.qty || 0);
+
+        for (const p of currentPositions) {
+          if (remainingCloseQty <= 0) break;
+          const pSym = (p.symbol || p.kite_instrument || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_\-]/g, '').toUpperCase();
+          if (pSym === cleanTarget && p.side !== state.side) {
+            const pOpenQty = Number(p.qty_open || 0);
+            positionsContext.removePositionLocally(p.id, p);
+            remainingCloseQty -= pOpenQty;
+          }
+        }
+        positionsContext?.refresh?.();
       }
 
       // 2. Build confirmed order representation

@@ -324,7 +324,7 @@ BEGIN
             user_id, symbol, side, status, qty, lots, price, fill_price,
             order_type, product_type, info, is_exit, buffer_fee, brokerage, idempotency_key, ltp_at_entry
         ) VALUES (
-            v_user_id, v_symbol, v_symbol, v_exit_side, 'EXECUTED', p_close_qty, 0, p_close_price, p_close_price,
+            v_user_id, v_symbol, v_exit_side, 'EXECUTED', p_close_qty, 0, p_close_price, p_close_price,
             'MARKET', COALESCE(v_product_type, 'INTRADAY'), p_position_id::text, true, 0, p_expected_brokerage,
             COALESCE(p_idempotency_key, p_position_id::text || '_' || now()::text), p_close_price
         );

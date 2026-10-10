@@ -5,23 +5,73 @@ import path from 'path';
 let pool: Pool | null = null;
 let initializedSchema = false;
 let initializedTradingEngineSchema = false;
+let railwayCircuitOpenUntil = 0;
+
+export function tripRailwayCircuitBreaker(reason?: string): void {
+  railwayCircuitOpenUntil = Date.now() + 60_000; // 60s cooldown
+  console.warn(`[Railway-Postgres] Circuit breaker tripped for 60s (${reason || 'Connection/Query failure'}). Bypassing Railway DB.`);
+  if (pool) {
+    try {
+      pool.end().catch(() => {});
+    } catch {}
+    pool = null;
+  }
+}
+
+export function isRailwayCircuitOpen(): boolean {
+  return Date.now() < railwayCircuitOpenUntil;
+}
+
+export function isRailwayConnectionError(err: any): boolean {
+  if (!err) return false;
+  const msg = (err.message || '').toLowerCase();
+  const code = (err.code || '').toLowerCase();
+  return (
+    code === 'econnrefused' ||
+    code === 'etimedout' ||
+    code === 'enotfound' ||
+    code === '57p01' ||
+    code === '57p02' ||
+    code === '57p03' ||
+    msg.includes('timeout') ||
+    msg.includes('connection') ||
+    msg.includes('enotfound') ||
+    msg.includes('network') ||
+    msg.includes('could not connect') ||
+    msg.includes('client has encountered a connection error')
+  );
+}
+
+export function reportRailwayDbError(action: string, err: any): void {
+  console.warn(`[Railway-Postgres] ${action} error:`, err?.message || err);
+  if (isRailwayConnectionError(err)) {
+    tripRailwayCircuitBreaker(err?.message || 'Connection failure');
+  }
+}
 
 /**
  * Returns the configured Railway Postgres database connection URL.
  */
 export function getRailwayDbUrl(): string | null {
-  return (
+  const url = (
     process.env.RAILWAY_DATABASE_URL ||
     process.env.DATABASE_URL ||
     process.env.POSTGRES_URL ||
     null
   );
+  if (!url) return null;
+  // If running in a non-Railway environment (e.g. VERCEL or local), internal railway domains cannot resolve
+  if (url.includes('railway.internal') && (process.env.VERCEL || !process.env.RAILWAY_ENVIRONMENT)) {
+    return null;
+  }
+  return url;
 }
 
 /**
  * Returns true if a Railway Postgres database URL is available.
  */
 export function isRailwayDbConfigured(): boolean {
+  if (isRailwayCircuitOpen()) return false;
   return Boolean(getRailwayDbUrl());
 }
 
@@ -29,6 +79,7 @@ export function isRailwayDbConfigured(): boolean {
  * Returns or initializes the pg connection pool for Railway Postgres.
  */
 export function getRailwayPool(): Pool | null {
+  if (isRailwayCircuitOpen()) return null;
   const connectionString = getRailwayDbUrl();
   if (!connectionString) return null;
 
@@ -38,7 +89,7 @@ export function getRailwayPool(): Pool | null {
       connectionString,
       max: 10,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
+      connectionTimeoutMillis: 800, // fast timeout: 800ms max to establish connection
     };
 
     // For external/proxied connections, enable SSL without strict certificate validation
@@ -50,6 +101,9 @@ export function getRailwayPool(): Pool | null {
 
     pool.on('error', (err) => {
       console.warn('[Railway-Postgres] Idle client error:', err.message);
+      if (isRailwayConnectionError(err)) {
+        tripRailwayCircuitBreaker(err.message);
+      }
     });
   }
 
@@ -175,7 +229,7 @@ export async function ensureRailwaySchema(): Promise<void> {
     `);
     initializedSchema = true;
   } catch (err: any) {
-    console.warn('[Railway-Postgres] Schema init warning:', err.message);
+    reportRailwayDbError('ensureRailwaySchema', err);
   }
 }
 
@@ -195,10 +249,11 @@ export async function queryRailwayDb<T = any>(text: string, params: any[] = []):
 
   try {
     await ensureRailwaySchema();
+    if (isRailwayCircuitOpen()) return null;
     const res = await db.query(text, params);
     return res.rows as T[];
   } catch (err: any) {
-    console.warn('[Railway-Postgres] Query error:', err.message);
+    reportRailwayDbError('queryRailwayDb', err);
     return null;
   }
 }
@@ -612,6 +667,7 @@ export async function ensureTradingEngineSchema(): Promise<void> {
 
   try {
     await ensureRailwaySchema();
+    if (isRailwayCircuitOpen()) return;
 
     // Check if place_order_v2 exists
     const checkRes = await db.query(`
@@ -633,7 +689,7 @@ export async function ensureTradingEngineSchema(): Promise<void> {
       console.log('[Railway-Postgres] Trading engine schema & functions initialized successfully');
     }
   } catch (err: any) {
-    console.warn('[Railway-Postgres] Trading engine schema init warning:', err.message);
+    reportRailwayDbError('ensureTradingEngineSchema', err);
   }
 }
 
@@ -681,7 +737,7 @@ export async function getRailwayUserBalance(userId: string): Promise<number | nu
     }
     return null;
   } catch (err: any) {
-    console.warn('[Railway-Postgres] getRailwayUserBalance error:', err.message);
+    reportRailwayDbError('getRailwayUserBalance', err);
     return null;
   }
 }
@@ -695,6 +751,7 @@ export async function getRailwayOpenPositions(userId: string): Promise<any[] | n
 
   try {
     await ensureTradingEngineSchema();
+    if (isRailwayCircuitOpen()) return null;
     const res = await db.query(`
       SELECT 
         id, user_id, symbol, side, status, pnl, qty_open, qty_total, avg_price,
@@ -710,7 +767,7 @@ export async function getRailwayOpenPositions(userId: string): Promise<any[] | n
     `, [userId]);
     return res.rows ?? [];
   } catch (err: any) {
-    console.warn('[Railway-Postgres] getRailwayOpenPositions error:', err.message);
+    reportRailwayDbError('getRailwayOpenPositions', err);
     return null;
   }
 }
@@ -724,6 +781,7 @@ export async function getRailwayPendingOrders(userId: string): Promise<any[] | n
 
   try {
     await ensureTradingEngineSchema();
+    if (isRailwayCircuitOpen()) return null;
     const res = await db.query(`
       SELECT 
         id, user_id, symbol, kite_instrument, segment, side, status, qty, lots,
@@ -737,7 +795,7 @@ export async function getRailwayPendingOrders(userId: string): Promise<any[] | n
     `, [userId]);
     return res.rows ?? [];
   } catch (err: any) {
-    console.warn('[Railway-Postgres] getRailwayPendingOrders error:', err.message);
+    reportRailwayDbError('getRailwayPendingOrders', err);
     return null;
   }
 }
@@ -755,6 +813,7 @@ export async function getRailwayExistingExitOrders(
 
   try {
     await ensureTradingEngineSchema();
+    if (isRailwayCircuitOpen()) return null;
     const res = await db.query(`
       SELECT id, symbol, side, status, is_exit, info, linked_position_id
       FROM public.orders
@@ -767,7 +826,7 @@ export async function getRailwayExistingExitOrders(
     `, [userId, symbol, side]);
     return res.rows ?? [];
   } catch (err: any) {
-    console.warn('[Railway-Postgres] getRailwayExistingExitOrders error:', err.message);
+    reportRailwayDbError('getRailwayExistingExitOrders', err);
     return null;
   }
 }
@@ -786,6 +845,7 @@ export async function cancelRailwayOrders(
 
   try {
     await ensureTradingEngineSchema();
+    if (isRailwayCircuitOpen()) return false;
     await db.query(`
       UPDATE public.orders
       SET status = 'CANCELLED',
@@ -796,7 +856,7 @@ export async function cancelRailwayOrders(
     `, [userId, orderIds, reason]);
     return true;
   } catch (err: any) {
-    console.warn('[Railway-Postgres] cancelRailwayOrders error:', err.message);
+    reportRailwayDbError('cancelRailwayOrders', err);
     return false;
   }
 }
@@ -892,7 +952,7 @@ export async function executePlaceOrderInRailway(
     }
     return null;
   } catch (err: any) {
-    console.error('[Railway-Postgres] executePlaceOrder error:', err.message);
+    reportRailwayDbError('executePlaceOrderInRailway', err);
     throw err;
   }
 }
@@ -943,7 +1003,7 @@ export async function executeClosePositionInRailway(
     }
     return null;
   } catch (err: any) {
-    console.error('[Railway-Postgres] executeClosePosition error:', err.message);
+    reportRailwayDbError('executeClosePositionInRailway', err);
     throw err;
   }
 }
