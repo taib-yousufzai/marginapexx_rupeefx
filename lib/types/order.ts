@@ -52,6 +52,8 @@ export interface PlaceOrderResponse {
   status: OrderStatus;
   fill_price: number;
   message: string;
+  order?: any;
+  position?: any;
 }
 
 // ─── Platform order row (GET /api/orders) ────────────────────────────────────

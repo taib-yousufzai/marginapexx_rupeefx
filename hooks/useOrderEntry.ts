@@ -184,24 +184,9 @@ export function useOrderEntry() {
         }
       }
 
-      // Optimistically add position if entry order, or remove/reduce if exit order
+      // For entry orders, the real server-confirmed position is mounted directly upon response (<100ms)
       if (!effectiveIsExit) {
-        if (positionsContext?.addOptimisticPosition) {
-          positionsContext.addOptimisticPosition({
-            symbol: state.symbol,
-            settlement: state.segment,
-            side: state.side,
-            qty_open: state.qty,
-            entry_price: state.client_price,
-            ltp: state.client_price,
-            product_type: state.product_type,
-            kite_instrument: state.kite_instrument,
-            opt_id: tempId,
-            brokerage: calculatedExpectedBrokerage,
-            entry_brokerage: calculatedExpectedBrokerage,
-            expected_brokerage: calculatedExpectedBrokerage,
-          } as any);
-        }
+        // No optimistic injection needed — server responds in ~50ms
       } else if (effectiveIsExit) {
         if (matchingOppositePositions.length > 0) {
           let remExit = state.qty || 1;
@@ -437,7 +422,7 @@ export function useOrderEntry() {
 
     const backgroundPromise = (async () => {
       try {
-        const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string }>(
+        const result = await api.post<{ order_id: string; status: string; fill_price: number; message: string; order?: any; position?: any }>(
           '/api/orders',
           submitPayload,
           { timeout: 25000 }
@@ -445,6 +430,15 @@ export function useOrderEntry() {
 
         if (balanceContext?.releaseOptimisticMargin) {
           balanceContext.releaseOptimisticMargin(tempId);
+        }
+
+        // Mount server-confirmed position directly without optimistic guesses
+        if (result.position) {
+          if ((positionsContext as any)?.mountServerPosition) {
+            (positionsContext as any).mountServerPosition(result.position);
+          } else if (positionsContext?.addOptimisticPosition) {
+            positionsContext.addOptimisticPosition(result.position);
+          }
         }
 
         // Create confirmed order representation

@@ -45,6 +45,7 @@ export interface PositionsContextType {
   endConversion: (posId: string) => void;
   addOptimisticPosition: (pos: Partial<MyPosition>) => void;
   removeOptimisticPosition: (optIdOrTempId: string) => void;
+  mountServerPosition: (pos: MyPosition) => void;
 }
 
 const PositionsContext = createContext<PositionsContextType | null>(null);
@@ -169,6 +170,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
   const staticPositionPropsRef = useRef<Record<string, { entryTimeMs: number; dbSeg: string; resolvedKiteSymbol: string; isCrypto: boolean; isComex: boolean; binanceSymbol: string }>>({});
 
   const abortControllerRef = useRef<AbortController | null>(null);
+  const fetchInProgressRef = useRef<boolean>(false);
   const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const updatePositionLocally = useCallback((posId: string, updatedFields: Partial<MyPosition>) => {
@@ -313,8 +315,27 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     });
   }, []);
 
+  const mountServerPosition = useCallback((serverPos: MyPosition) => {
+    if (!serverPos || !serverPos.id) return;
+    recentlyClosedTimesRef.current.delete(serverPos.id);
+
+    setRawPositions(prev => {
+      const idx = prev.findIndex(p => p.id === serverPos.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...serverPos };
+        return next;
+      }
+      return [serverPos, ...prev];
+    });
+  }, []);
+
   const addOptimisticPosition = useCallback((partialPos: Partial<MyPosition> & { opt_id?: string }) => {
-    const tempId = partialPos.opt_id || (partialPos.id ? partialPos.id : `__optimistic__${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
+    if (partialPos.id && !partialPos.id.startsWith('__optimistic__') && !partialPos.id.startsWith('opt_')) {
+      mountServerPosition(partialPos as MyPosition);
+      return;
+    }
+    const tempId = partialPos.opt_id || (partialPos.id ? partialPos.id : `__pos__${Date.now()}_${Math.random().toString(36).slice(2, 7)}`);
     const now = Date.now();
     const cleanSymbol = (partialPos.symbol || '').trim();
     if (!cleanSymbol) return;
@@ -355,33 +376,14 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
     optimisticPositionsRef.current.set(tempId, newPos);
 
-    // Persist to localStorage to survive page refresh
-    try {
-      const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
-      stored[tempId] = { ...newPos, created_time_ms: now };
-      localStorage.setItem('optimistic_positions', JSON.stringify(stored));
-    } catch (e) {
-      console.error('Failed to persist optimistic position:', e);
-    }
-
     setRawPositions(prev => {
       if (prev.some(p => p.id === tempId)) return prev;
       return [newPos, ...prev];
     });
-  }, []);
+  }, [mountServerPosition]);
 
   const removeOptimisticPosition = useCallback((optIdOrTempId: string) => {
     optimisticPositionsRef.current.delete(optIdOrTempId);
-    
-    // Remove from localStorage
-    try {
-      const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
-      delete stored[optIdOrTempId];
-      localStorage.setItem('optimistic_positions', JSON.stringify(stored));
-    } catch (e) {
-      console.error('Failed to remove optimistic position from storage:', e);
-    }
-    
     setRawPositions(prev => prev.filter(p => p.id !== optIdOrTempId));
   }, []);
 
@@ -398,13 +400,23 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
   }, []);
 
   const fetchPositions = useCallback(async (options?: { fresh?: boolean }) => {
+    // Prevent concurrent fetches to avoid race conditions
+    if (fetchInProgressRef.current) {
+      return;
+    }
+    
+    fetchInProgressRef.current = true;
+    
     try {
       let { token } = getSharedSessionSync();
       if (!token) {
         const session = await getSharedSession();
         token = session?.token || null;
       }
-      if (!token) return;
+      if (!token) {
+        fetchInProgressRef.current = false;
+        return;
+      }
 
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -454,73 +466,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         });
 
       setRawPositions(prev => {
-        const activeOptPositions: MyPosition[] = [];
-        const consumedServerQty = new Map<string, number>();
-
-        // Sort optimistic positions chronologically
-        const sortedOptPositions = Array.from(optimisticPositionsRef.current.values()).sort((a, b) => {
-          const tA = (a as any).created_time_ms || (a.entry_time ? new Date(a.entry_time).getTime() : 0);
-          const tB = (b as any).created_time_ms || (b.entry_time ? new Date(b.entry_time).getTime() : 0);
-          return tA - tB;
-        });
-
-        for (const optPos of sortedOptPositions) {
-          const optId = optPos.id;
-          const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
-
-          // Keep optimistic positions longer to avoid flickering
-          // Only delete if explicitly closed or very old (10s timeout)
-          if (recentlyClosedTimesRef.current.has(optId) || (now - createdTime > 10000)) {
-            optimisticPositionsRef.current.delete(optId);
-            
-            // Clean up localStorage
-            try {
-              const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
-              delete stored[optId];
-              localStorage.setItem('optimistic_positions', JSON.stringify(stored));
-            } catch (e) {
-              // Ignore localStorage errors
-            }
-            
-            continue;
-          }
-
-          const optSym = cleanSym(optPos.symbol || optPos.kite_instrument);
-          const optSide = (optPos.side || '').toUpperCase();
-          const optQty = optPos.qty_open || optPos.qty_total || 0;
-
-          // Check if server has matching position (same symbol/side/qty)
-          const serverHasMatching = basePositions.some(sp => {
-            // Exact ID match
-            if (optPos.id === sp.id) return true;
-            
-            // Or same symbol/side with matching quantity
-            const spSym = cleanSym(sp.symbol || sp.kite_instrument);
-            const spSide = (sp.side || '').toUpperCase();
-            const spQty = sp.qty_open || sp.qty_total || 0;
-            
-            return spSym === optSym && spSide === optSide && spQty === optQty;
-          });
-
-          if (serverHasMatching) {
-            // Delete immediately - server has this position
-            optimisticPositionsRef.current.delete(optId);
-            
-            // Remove from localStorage
-            try {
-              const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
-              delete stored[optId];
-              localStorage.setItem('optimistic_positions', JSON.stringify(stored));
-            } catch (e) {
-              // Ignore localStorage errors
-            }
-          } else {
-            // Server doesn't have this yet - keep showing optimistic
-            activeOptPositions.push(optPos);
-          }
-        }
-
-        const merged = [...activeOptPositions, ...basePositions];
+        const merged = basePositions;
 
         // Precompute static properties for newly loaded positions
         const staticProps = staticPositionPropsRef.current;
@@ -558,12 +504,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         return merged;
       });
     } catch (err: any) {
-      if (err instanceof Error && err.name === 'AbortError') return;
+      if (err instanceof Error && err.name === 'AbortError') {
+        fetchInProgressRef.current = false;
+        return;
+      }
       if (!err?.message?.includes('aborted')) {
         console.warn('[PositionsContext] Transient error fetching positions:', err);
       }
       setError(null);
     } finally {
+      fetchInProgressRef.current = false;
       setLoading(false);
     }
   }, []);
@@ -585,32 +535,9 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
   }, [fetchPositions]);
 
   useEffect(() => {
-    // One-shot eviction: clear the legacy localStorage cache written by the old code.
+    // One-shot eviction: clear legacy localStorage caches written by old code
     try { localStorage.removeItem('cached_open_positions'); } catch (_) { }
-
-    // Load optimistic positions from localStorage on mount
-    try {
-      const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
-      const now = Date.now();
-      
-      // Only load positions less than 30 seconds old
-      Object.entries(stored).forEach(([id, pos]: [string, any]) => {
-        const age = now - (pos.created_time_ms || 0);
-        if (age < 30000) {
-          optimisticPositionsRef.current.set(id, pos);
-        }
-      });
-      
-      // Clean up old positions from localStorage
-      const fresh: any = {};
-      Object.entries(stored).forEach(([id, pos]: [string, any]) => {
-        const age = now - (pos.created_time_ms || 0);
-        if (age < 30000) fresh[id] = pos;
-      });
-      localStorage.setItem('optimistic_positions', JSON.stringify(fresh));
-    } catch (e) {
-      console.error('Failed to load optimistic positions:', e);
-    }
+    try { localStorage.removeItem('optimistic_positions'); } catch (_) { }
 
     fetchPositions({ fresh: true });
     let isSubscribed = false;
@@ -935,6 +862,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       endConversion,
       addOptimisticPosition,
       removeOptimisticPosition,
+      mountServerPosition,
     }}>
       {children}
     </PositionsContext.Provider>
@@ -956,7 +884,8 @@ export const usePositionsData = () => {
       startConversion: () => {},
       endConversion: () => {},
       addOptimisticPosition: () => {},
-      removeOptimisticPosition: () => {}
+      removeOptimisticPosition: () => {},
+      mountServerPosition: () => {},
     };
   }
   return context;

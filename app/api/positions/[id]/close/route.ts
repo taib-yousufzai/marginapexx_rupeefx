@@ -17,7 +17,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest, isTransientDbError, withDbRetry } from '@/lib/adminClient';
 import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
+import { calculateCarryBrokerage } from '@/lib/trading/BrokerageCalculator';
 import type { ClosePositionResponse } from '@/lib/types/order';
+import { isRailwayDbConfigured, executeClosePositionInRailway } from '@/lib/railway-db';
 
 function cleanSym(s?: string | null): string {
   if (!s) return '';
@@ -437,6 +439,23 @@ export async function POST(
     }, { status: 403 });
   }
 
+  // Carry brokerage: only for CARRY positions where it wasn't charged at entry
+  let carryBrokerage = 0;
+  if (!pos.carry_brokerage_paid) {
+    carryBrokerage = calculateCarryBrokerage({
+      productType: pos.product_type,
+      qty: Number(pos.qty_open || pos.qty_total || 1),
+      entryPrice: Number(pos.entry_price),
+      lots: Number(pos.lots || 0) || undefined,
+      carryCommissionType: segSetting?.carry_commission_type,
+      carryCommissionValue: segSetting?.carry_commission_value != null ? Number(segSetting.carry_commission_value) : null,
+      commissionType: segSetting?.commission_type,
+      commissionValue: segSetting?.commission_value != null ? Number(segSetting.commission_value) : null,
+    });
+  }
+
+  const totalBrokerage = Number(pos.brokerage || pos.entry_brokerage || 0) + carryBrokerage;
+
   // Call the atomic RPC (v2 with v1 fallback)
   let pnl: any;
   let rpcErr: any;
@@ -450,48 +469,79 @@ export async function POST(
   }
   const closeQty = requestedCloseQty > 0 ? requestedCloseQty : openQtyNum;
 
-  for (let retry = 0; retry < 4; retry++) {
-    const resV2 = await admin.rpc('close_position_v2', {
-      p_position_id:        resolvedPositionId,
-      p_close_qty:          closeQty,
-      p_close_price:        exitPrice,
-      p_closed_by:          'USER',
-      p_expected_brokerage: 0,
-      p_idempotency_key:    null,
-      p_skip_cancel_orders: false,
-    });
-
-    if (resV2.error) {
-      if (isTransientDbError(resV2.error) && retry < 3) {
-        const jitterMs = 40 * (retry + 1) + Math.floor(Math.random() * 35);
-        console.warn(`[POST /api/positions/[id]/close] Transient DB error (${resV2.error.message}) on close attempt ${retry + 1}. Retrying in ${jitterMs}ms...`);
-        await new Promise(r => setTimeout(r, jitterMs));
-        continue;
-      }
-
-      console.warn('[POST /api/positions/[id]/close] v2 RPC error, falling back to v1:', resV2.error);
-      const resV1 = await admin.rpc('close_position', {
-        p_position_id: resolvedPositionId,
-        p_user_id:     user.id,
-        p_ltp:         baseLtp,
-        p_exit_price:  exitPrice,
-        p_closed_by:   'USER',
+  const useRailway = isRailwayDbConfigured();
+  if (useRailway) {
+    try {
+      const railwayRes = await executeClosePositionInRailway({
+        positionId: resolvedPositionId,
+        closeQty,
+        closePrice: exitPrice,
+        closedBy: 'USER',
+        expectedBrokerage: carryBrokerage,
+        idempotencyKey: null,
+        skipCancelOrders: false,
       });
 
-      if (resV1.error && isTransientDbError(resV1.error) && retry < 3) {
-        const jitterMs = 40 * (retry + 1) + Math.floor(Math.random() * 35);
-        console.warn(`[POST /api/positions/[id]/close] Transient DB error on v1 fallback (${resV1.error.message}). Retrying in ${jitterMs}ms...`);
-        await new Promise(r => setTimeout(r, jitterMs));
-        continue;
+      if (railwayRes && typeof railwayRes.pnl === 'number') {
+        pnl = railwayRes.pnl;
+        rpcErr = null;
       }
-
-      pnl = resV1.data;
-      rpcErr = resV1.error;
-    } else {
-      pnl = resV2.data;
-      rpcErr = null;
+    } catch (railwayErr: any) {
+      console.warn('[POST /api/positions/[id]/close] Railway close error, falling back to Supabase:', railwayErr.message);
+      if (railwayErr.message && (
+        railwayErr.message.includes('already closed') ||
+        railwayErr.message.includes('not found') ||
+        railwayErr.message.includes('Cannot close more')
+      )) {
+        rpcErr = railwayErr;
+      }
     }
-    break;
+  }
+
+  if (pnl === null && !rpcErr) {
+    for (let retry = 0; retry < 4; retry++) {
+      const resV2 = await admin.rpc('close_position_v2', {
+        p_position_id:        resolvedPositionId,
+        p_close_qty:          closeQty,
+        p_close_price:        exitPrice,
+        p_closed_by:          'USER',
+        p_expected_brokerage: carryBrokerage,
+        p_idempotency_key:    null,
+        p_skip_cancel_orders: false,
+      });
+
+      if (resV2.error) {
+        if (isTransientDbError(resV2.error) && retry < 3) {
+          const jitterMs = 40 * (retry + 1) + Math.floor(Math.random() * 35);
+          console.warn(`[POST /api/positions/[id]/close] Transient DB error (${resV2.error.message}) on close attempt ${retry + 1}. Retrying in ${jitterMs}ms...`);
+          await new Promise(r => setTimeout(r, jitterMs));
+          continue;
+        }
+
+        console.warn('[POST /api/positions/[id]/close] v2 RPC error, falling back to v1:', resV2.error);
+        const resV1 = await admin.rpc('close_position', {
+          p_position_id: resolvedPositionId,
+          p_user_id:     user.id,
+          p_ltp:         baseLtp,
+          p_exit_price:  exitPrice,
+          p_closed_by:   'USER',
+        });
+
+        if (resV1.error && isTransientDbError(resV1.error) && retry < 3) {
+          const jitterMs = 40 * (retry + 1) + Math.floor(Math.random() * 35);
+          console.warn(`[POST /api/positions/[id]/close] Transient DB error on v1 fallback (${resV1.error.message}). Retrying in ${jitterMs}ms...`);
+          await new Promise(r => setTimeout(r, jitterMs));
+          continue;
+        }
+
+        pnl = resV1.data;
+        rpcErr = resV1.error;
+      } else {
+        pnl = resV2.data;
+        rpcErr = null;
+      }
+      break;
+    }
   }
 
   if (rpcErr) {
@@ -510,6 +560,16 @@ export async function POST(
     }
     console.error('[POST /api/positions/[id]/close] RPC error:', rpcErr);
     return NextResponse.json({ error: rpcErr.message || 'Failed to close position. Please try again.' }, { status: 400 });
+  }
+
+  // close_position_v2 does NOT update positions.brokerage — patch it now so the
+  // history page reads the correct total brokerage after refresh.
+  if (totalBrokerage > 0) {
+    admin.from('positions')
+      .update({ brokerage: totalBrokerage })
+      .eq('id', resolvedPositionId)
+      .then(() => {}) // fire-and-forget, non-blocking
+      .catch((e: any) => console.warn('[POST /api/positions/[id]/close] brokerage patch warning:', e));
   }
 
   // Update caches synchronously so subsequent client polls receive clean updated state instantly (<5ms)
@@ -533,7 +593,7 @@ export async function POST(
       closed_by: 'USER',
       qty_open: 0,
       locked_margin: 0,
-      brokerage: Number(pos.brokerage || pos.entry_brokerage || 0),
+      brokerage: totalBrokerage,
     };
 
     const exitOrderRecord = {
@@ -553,12 +613,16 @@ export async function POST(
       created_at: new Date().toISOString(),
     };
 
+    // Invalidate balance cache so wallet updates immediately after profit/loss
+    const redis = getRedisClient();
     await Promise.all([
       appendClosedPositionToCache(user.id, closedPosRecord),
       appendOrderToCache(user.id, exitOrderRecord),
       invalidateUserOpenPositionsCache(user.id),
       invalidateUserActiveOrdersCache(user.id),
-      invalidateUserHistoryCache(user.id),
+      redis.del(`user_balance:${user.id}`).catch(() => {}),
+      // Note: do NOT call invalidateUserHistoryCache here — it would race with
+      // appendClosedPositionToCache and delete the keys we just wrote.
     ]);
   } catch (cacheErr) {
     console.warn('[POST /api/positions/[id]/close] Cache update warning:', cacheErr);
@@ -574,9 +638,10 @@ export async function POST(
     }
   })();
 
-  const response: ClosePositionResponse = {
+  const response: ClosePositionResponse & { brokerage?: number } = {
     pnl:        Number(pnl),
     exit_price: exitPrice,
+    brokerage:  totalBrokerage,
     message:    `Position closed at ₹${exitPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}. P&L: ₹${Number(pnl).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
   };
 

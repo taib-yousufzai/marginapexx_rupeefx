@@ -32,6 +32,18 @@ import { resolveUnderlyingKiteId, validateOptionStrike } from '@/lib/trading/Opt
 import { sanitizeOrderInfo } from '@/lib/trading/orderSanitizer';
 import { OrderService } from '@/lib/trading/OrderService';
 import { generateRealisticFallbackQuote } from '@/lib/quoteFallback';
+import {
+  isRailwayDbConfigured,
+  getRailwayUserBalance,
+  getRailwayOpenPositions,
+  getRailwayPendingOrders,
+  getRailwayExistingExitOrders,
+  cancelRailwayOrders,
+  executePlaceOrderInRailway,
+  getRailwayOrderAndPosition,
+  syncProfileBalanceToRailway,
+  queryRailwayDb,
+} from '@/lib/railway-db';
 
 function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[] | Record<string, number>): number {
   let n = symbol.toUpperCase();
@@ -687,29 +699,55 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       instrumentsToFetch.push(underlyingId);
     }
 
+    const useRailway = isRailwayDbConfigured();
+
     // 4-6 + 8-9: Run cached profile / settings lookups AND independent DB queries in parallel.
-    // This reduces multi-table Postgres round-trips to an instant hot memory/Redis lookup.
+    // When Railway Postgres is configured, reads complete in <1ms over private network.
     const [cachedProfile, balanceResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult] = await Promise.all([
       // Profile (Cached in L1/Redis for instant permissions & trading mode)
       getCachedUserProfile(user.id, () => admin),
 
-      // Fresh balance from profiles
-      withDbRetry(() => admin.from('profiles')
-        .select('balance')
-        .eq('id', user.id)
-        .single()),
+      // Fresh balance from profiles (<1ms on Railway, fallback to Supabase)
+      (async () => {
+        if (useRailway) {
+          try {
+            const bal = await getRailwayUserBalance(user.id);
+            if (bal !== null) return { data: { balance: bal } };
+          } catch { /* fallback */ }
+        }
+        return withDbRetry(() => admin.from('profiles')
+          .select('balance')
+          .eq('id', user.id)
+          .single());
+      })(),
 
-      // Fetch active positions to verify total open lot limits (max_lot)
-      withDbRetry(() => admin.from('positions')
-        .select('id, symbol, settlement, qty_open, status, entry_price, side, product_type, entry_time')
-        .eq('user_id', user.id)
-        .in('status', ['open', 'OPEN', 'active', 'ACTIVE', 'PARTIALLY_CLOSED', 'PARTIAL_CLOSED'])),
+      // Fetch active positions to verify total open lot limits (max_lot) (<1ms on Railway, fallback to Supabase)
+      (async () => {
+        if (useRailway) {
+          try {
+            const pos = await getRailwayOpenPositions(user.id);
+            if (pos !== null) return { data: pos };
+          } catch { /* fallback */ }
+        }
+        return withDbRetry(() => admin.from('positions')
+          .select('id, symbol, settlement, qty_open, status, entry_price, side, product_type, entry_time')
+          .eq('user_id', user.id)
+          .in('status', ['open', 'OPEN', 'active', 'ACTIVE', 'PARTIALLY_CLOSED', 'PARTIAL_CLOSED']));
+      })(),
 
-      // Fetch pending orders to verify total open lot limits
-      withDbRetry(() => admin.from('orders')
-        .select('symbol, qty, lots, is_exit, status')
-        .eq('user_id', user.id)
-        .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending'])),
+      // Fetch pending orders to verify total open lot limits (<1ms on Railway, fallback to Supabase)
+      (async () => {
+        if (useRailway) {
+          try {
+            const ord = await getRailwayPendingOrders(user.id);
+            if (ord !== null) return { data: ord };
+          } catch { /* fallback */ }
+        }
+        return withDbRetry(() => admin.from('orders')
+          .select('symbol, qty, lots, is_exit, status')
+          .eq('user_id', user.id)
+          .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending']));
+      })(),
 
       // Fetch quotes — either Kite or Binance depending on segment (with 2.0s fast timeout guard)
       (async () => {
@@ -801,6 +839,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         const { data: bData } = await admin.from('profiles').select('balance').eq('id', user.id).single();
         if (bData?.balance !== undefined && bData?.balance !== null) {
           userBalance = Number(bData.balance);
+          if (useRailway) {
+            syncProfileBalanceToRailway(user.id, userBalance).catch(() => {});
+          }
         }
       } catch {}
     }
@@ -1447,15 +1488,25 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const linkedPosIdForCheck = resolvedLinkedPositionId;
       const exitSideForCheck = side; // exit order's own side (opposite of position)
 
-      const { data: existingExitOrders } = await admin
-        .from('orders')
-        .select('*')
-        .eq('user_id', user.id)
-        .eq('symbol', symbol)
-        .eq('side', exitSideForCheck)
-        .eq('is_exit', true)
-        .in('status', ['PENDING', 'TRIGGER_PENDING'])
-        .limit(5);
+      let existingExitOrders: any[] | null = null;
+      if (useRailway) {
+        try {
+          existingExitOrders = await getRailwayExistingExitOrders(user.id, symbol, exitSideForCheck);
+        } catch { /* fallback */ }
+      }
+
+      if (!existingExitOrders) {
+        const { data } = await admin
+          .from('orders')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('symbol', symbol)
+          .eq('side', exitSideForCheck)
+          .eq('is_exit', true)
+          .in('status', ['PENDING', 'TRIGGER_PENDING'])
+          .limit(5);
+        existingExitOrders = data ?? [];
+      }
 
       if (existingExitOrders && existingExitOrders.length > 0) {
         // Filter the fetched orders to only cancel those that actually conflict
@@ -1483,11 +1534,15 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
         if (conflictingOrders.length > 0) {
           const idsToCancel = conflictingOrders.map((o: any) => o.id);
-          await admin
-            .from('orders')
-            .update({ status: 'CANCELLED', updated_at: new Date().toISOString(), info: 'Replaced by new exit order' })
-            .eq('user_id', user.id)
-            .in('id', idsToCancel);
+          if (useRailway) {
+            await cancelRailwayOrders(user.id, idsToCancel, 'Replaced by new exit order');
+          } else {
+            await admin
+              .from('orders')
+              .update({ status: 'CANCELLED', updated_at: new Date().toISOString(), info: 'Replaced by new exit order' })
+              .eq('user_id', user.id)
+              .in('id', idsToCancel);
+          }
           console.log(`[POST /api/orders] Duplicate exit guard: cancelled ${idsToCancel.length} conflicting PENDING exit order(s) for ${symbol} before placing new exit.`);
         }
       }
@@ -1503,6 +1558,50 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ? (exitPos.side === 'BUY' ? 'SELL' : 'BUY')
         : side;
 
+      // ── Railway Postgres in-cluster execution (< 5ms) ───────────────────
+      if (useRailway) {
+        try {
+          const railwayRes = await executePlaceOrderInRailway({
+            userId: user.id,
+            symbol: finalSymbol,
+            kiteInst: kiteInst,
+            segment: dbSegment,
+            side: finalSide,
+            orderType: rpcOrderType,
+            productType: finalProductType,
+            qty: qty,
+            lots: lots ?? 0,
+            ltp: baseLtp,
+            fillPrice: fillPrice,
+            isExit: resolvedIsExit,
+            bufferFee: 0,
+            status: isImmediate ? 'EXECUTED' : 'PENDING',
+            triggerPrice: resolvedTriggerPrice,
+            stopLoss: resolvedStopLoss,
+            target: target ? parseFloat(target.toString()) : null,
+            info: resolvedLinkedPositionId,
+            expectedMargin: requiredMargin,
+            expectedBrokerage: expectedBrokerage,
+            idempotencyKey: null,
+            linkedPositionId: resolvedLinkedPositionId,
+          });
+
+          if (railwayRes?.orderId) {
+            return railwayRes.orderId;
+          }
+        } catch (rErr: any) {
+          if (rErr.message && (
+            rErr.message.includes('Insufficient balance') ||
+            rErr.message.includes('No open position') ||
+            rErr.message.includes('Cannot close more')
+          )) {
+            throw rErr;
+          }
+          console.warn('[POST /api/orders] Railway execution error, falling back to Supabase:', rErr.message);
+        }
+      }
+
+      // ── Supabase Fallback ────────────────────────────────────────────────
       try {
         const resV2 = await admin.rpc('place_order_v2', {
           p_user_id: user.id,
@@ -1564,60 +1663,106 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: err.message || 'Order execution failed. Please try again.' }, { status: 400 });
     }
 
+    // ── Instant server-confirmed order & position lookup (< 1ms on Railway) ──
+    let confirmedOrder: any = null;
+    let confirmedPosition: any = null;
+    if (useRailway) {
+      try {
+        const confirmedData = await getRailwayOrderAndPosition(orderId, user.id);
+        if (confirmedData) {
+          confirmedOrder = confirmedData.order;
+          confirmedPosition = confirmedData.position;
+        }
+      } catch { /* ignore */ }
+    }
+
     // ── SLM entry: insert a linked pending SL exit order ─────────────────────
     // SLM = market entry now + protective SL exit order that auto-fires when
     // stop_loss price is hit, closing the position at market.
     if (order_type === 'SLM' && !resolvedIsExit && resolvedStopLoss && resolvedStopLoss > 0) {
       try {
-        // Fetch the newly created position for this order so we can link the SL
-        const { data: newPos } = await admin
-          .from('positions')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('symbol', symbol)
-          .in('status', ['open', 'OPEN', 'active'])
-          .order('created_at', { ascending: false })
-          .maybeSingle();
-
-        const linkedPosId = newPos?.id ?? resolvedLinkedPositionId ?? null;
         const slSide = side === 'BUY' ? 'SELL' : 'BUY';
+        if (useRailway) {
+          const linkedPosId = confirmedPosition?.id ?? resolvedLinkedPositionId ?? null;
+          await executePlaceOrderInRailway({
+            userId: user.id,
+            symbol: symbol,
+            kiteInst: kiteInst,
+            segment: dbSegment,
+            side: slSide,
+            orderType: 'SL',
+            productType: product_type ?? 'INTRADAY',
+            qty: qty,
+            lots: lots ?? 0,
+            ltp: baseLtp,
+            fillPrice: resolvedStopLoss,
+            isExit: true,
+            bufferFee: 0,
+            status: 'PENDING',
+            triggerPrice: resolvedStopLoss,
+            stopLoss: resolvedStopLoss,
+            target: null,
+            info: linkedPosId,
+            expectedMargin: 0,
+            expectedBrokerage: 0,
+            idempotencyKey: null,
+            linkedPositionId: linkedPosId,
+          });
 
-        await admin.rpc('place_order_v2', {
-          p_user_id: user.id,
-          p_symbol: symbol,
-          p_kite_inst: kiteInst,
-          p_segment: dbSegment,
-          p_side: slSide,
-          p_order_type: 'SL',
-          p_product_type: product_type ?? 'INTRADAY',
-          p_qty: qty,
-          p_lots: lots ?? 0,
-          p_ltp: baseLtp,
-          p_fill_price: resolvedStopLoss,
-          p_is_exit: true,
-          p_buffer_fee: 0,
-          p_status: 'PENDING',
-          p_trigger_price: resolvedStopLoss,
-          p_stop_loss: resolvedStopLoss,
-          p_target: null,
-          p_info: linkedPosId,
-          p_expected_margin: 0,
-          p_expected_brokerage: 0,
-          p_idempotency_key: null,
-          p_linked_position_id: linkedPosId,
-        });
-        console.log(`[POST /api/orders] SLM: linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
-
-        // Also stamp stop_loss on the position row so that:
-        // (a) the virtual pos-sl-* dedup key fires correctly in GET /api/orders,
-        // (b) if the real SL order is later cancelled the position still carries the price.
-        if (linkedPosId) {
-          await admin
+          if (linkedPosId) {
+            queryRailwayDb(
+              `UPDATE public.positions SET stop_loss = $1, updated_at = now() WHERE id = $2 AND user_id = $3`,
+              [resolvedStopLoss, linkedPosId, user.id]
+            ).catch(() => {});
+          }
+          console.log(`[POST /api/orders] SLM (Railway): linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
+        } else {
+          // Fetch the newly created position for this order so we can link the SL
+          const { data: newPos } = await admin
             .from('positions')
-            .update({ stop_loss: resolvedStopLoss, updated_at: new Date().toISOString() })
-            .eq('id', linkedPosId)
+            .select('id')
             .eq('user_id', user.id)
-            .in('status', ['open', 'OPEN', 'active']);
+            .eq('symbol', symbol)
+            .in('status', ['open', 'OPEN', 'active'])
+            .order('created_at', { ascending: false })
+            .maybeSingle();
+
+          const linkedPosId = newPos?.id ?? resolvedLinkedPositionId ?? null;
+
+          await admin.rpc('place_order_v2', {
+            p_user_id: user.id,
+            p_symbol: symbol,
+            p_kite_inst: kiteInst,
+            p_segment: dbSegment,
+            p_side: slSide,
+            p_order_type: 'SL',
+            p_product_type: product_type ?? 'INTRADAY',
+            p_qty: qty,
+            p_lots: lots ?? 0,
+            p_ltp: baseLtp,
+            p_fill_price: resolvedStopLoss,
+            p_is_exit: true,
+            p_buffer_fee: 0,
+            p_status: 'PENDING',
+            p_trigger_price: resolvedStopLoss,
+            p_stop_loss: resolvedStopLoss,
+            p_target: null,
+            p_info: linkedPosId,
+            p_expected_margin: 0,
+            p_expected_brokerage: 0,
+            p_idempotency_key: null,
+            p_linked_position_id: linkedPosId,
+          });
+          console.log(`[POST /api/orders] SLM: linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
+
+          if (linkedPosId) {
+            await admin
+              .from('positions')
+              .update({ stop_loss: resolvedStopLoss, updated_at: new Date().toISOString() })
+              .eq('id', linkedPosId)
+              .eq('user_id', user.id)
+              .in('status', ['open', 'OPEN', 'active']);
+          }
         }
       } catch (slErr) {
         // Non-fatal: SLM entry already executed; log but don't block response
@@ -1626,12 +1771,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     // ── Fix 3.1c: Market exit — fully await orphan order cleanup ─────────────
-    // When a MARKET exit executes, process_executed_position closes the position
-    // via the RPC.  Any remaining pending SL/Target/GTT exit orders attached to
-    // that position become orphaned.  Cancel them here, fully awaited (not
-    // fire-and-forget) so the response is only sent after cleanup completes.
     if (isImmediate && resolvedIsExit) {
-      // Run cleanup asynchronously without blocking the response
       (async () => {
         try {
           const { PositionService } = await import('@/lib/trading/PositionService');
@@ -1654,6 +1794,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       message: isImmediate
         ? `${side} order executed at ₹${fillPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
         : `${side} ${order_type} order placed (Pending) at ₹${fillPrice.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+      order: confirmedOrder,
+      position: confirmedPosition,
     };
 
     // Decoupled asynchronous post-processing (zero blocking latency on HTTP response)
