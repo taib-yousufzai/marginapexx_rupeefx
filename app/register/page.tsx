@@ -238,15 +238,16 @@ function RegisterForm() {
         '/api/register/verify-otp',
         { email: email.trim(), otp, password },
       );
-      // Sign in the newly created user
-      await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      // Auto sign-in the newly created user using robust signIn helper with server fallback
+      const { signIn } = await import('@/lib/auth');
+      await signIn(email.trim(), password).catch(() => null);
       setIsSuccess(true);
-    } catch (err) {
+    } catch (err: any) {
       if (err instanceof ApiError) {
         const body = err.details as Record<string, unknown> | undefined;
-        setFormError((body?.error as string) || 'Verification failed');
+        setFormError((body?.error as string) || err.message || 'Verification failed. Please check the code.');
       } else {
-        setFormError('Verification failed');
+        setFormError(err?.message || 'Verification failed. Please check the code.');
       }
     } finally {
       setIsLoading(false);
