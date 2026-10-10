@@ -449,29 +449,53 @@ export async function GET(request: Request) {
     // Fallback 1: Query local historical_candles DB table (highly useful for MCX Options and Kite outages)
     if (!candlesData || candlesData.length === 0) {
       console.warn(`[historical] Kite fetch unavailable or returned empty for ${canonicalSymbol} (Reason: ${kiteError}). Falling back to local DB historical_candles.`);
+      
+      // 1a. Try Railway Postgres first
       try {
-        const { data: dbData, error: dbError } = await getSupabase()
-          .from('historical_candles')
-          .select('timestamp, open, high, low, close, volume')
-          .or(`symbol.eq.${canonicalSymbol},symbol.eq.${symbol}`)
-          .eq('interval', interval)
-          .gte('timestamp', from)
-          .lte('timestamp', to)
-          .order('timestamp', { ascending: true })
-          .limit(1000);
-        
-        if (!dbError && dbData && dbData.length > 0) {
-          candlesData = dbData.map((c: any) => [
-            c.timestamp,
-            c.open,
-            c.high,
-            c.low,
-            c.close,
-            c.volume
-          ]);
+        const { isRailwayDbConfigured, getCandlesFromRailway } = await import('@/lib/railway-db');
+        if (isRailwayDbConfigured()) {
+          const rRows = await getCandlesFromRailway([canonicalSymbol, symbol], interval, from, to, 1000);
+          if (rRows && rRows.length > 0) {
+            candlesData = rRows.map((c: any) => [
+              c.timestamp,
+              c.open,
+              c.high,
+              c.low,
+              c.close,
+              c.volume
+            ]);
+          }
         }
-      } catch (dbErr) {
-        console.error('[historical] Failed to query local fallback candles:', dbErr);
+      } catch (rErr: any) {
+        // Fallback continues to Supabase below
+      }
+
+      // 1b. Fallback to Supabase historical_candles
+      if (!candlesData || candlesData.length === 0) {
+        try {
+          const { data: dbData, error: dbError } = await getSupabase()
+            .from('historical_candles')
+            .select('timestamp, open, high, low, close, volume')
+            .or(`symbol.eq.${canonicalSymbol},symbol.eq.${symbol}`)
+            .eq('interval', interval)
+            .gte('timestamp', from)
+            .lte('timestamp', to)
+            .order('timestamp', { ascending: true })
+            .limit(1000);
+          
+          if (!dbError && dbData && dbData.length > 0) {
+            candlesData = dbData.map((c: any) => [
+              c.timestamp,
+              c.open,
+              c.high,
+              c.low,
+              c.close,
+              c.volume
+            ]);
+          }
+        } catch (dbErr) {
+          console.error('[historical] Failed to query local fallback candles:', dbErr);
+        }
       }
     }
 

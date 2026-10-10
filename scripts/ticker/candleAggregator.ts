@@ -121,10 +121,9 @@ export class CandleAggregator {
   }
 
   /**
-   * Persists completed candles to Supabase.
+   * Persists completed candles to Railway Postgres (first) or Supabase (fallback).
    */
   private async saveCandles(candles: Candle[]) {
-    const admin = getAdminClient();
     const rows = candles.map(c => ({
       symbol: c.symbol,
       timestamp: new Date(c.periodStart).toISOString(),
@@ -136,6 +135,22 @@ export class CandleAggregator {
       volume: c.volume,
     }));
 
+    // 1. Try persisting to Railway Postgres first
+    try {
+      const { isRailwayDbConfigured, persistCandlesToRailway } = await import('../../lib/railway-db');
+      if (isRailwayDbConfigured()) {
+        const ok = await persistCandlesToRailway(rows);
+        if (ok) {
+          logger.info({ count: rows.length }, 'Persisted completed candles to Railway Postgres');
+          return;
+        }
+      }
+    } catch (railwayErr: any) {
+      logger.warn({ err: railwayErr?.message }, 'Railway candle persistence failed, falling back to Supabase');
+    }
+
+    // 2. Fallback to Supabase
+    const admin = getAdminClient();
     try {
       logger.info({ count: rows.length }, 'Persisting completed candles to Supabase');
       const { error } = await admin

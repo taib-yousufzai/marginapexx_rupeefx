@@ -37,6 +37,29 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  // 1. Try Railway Postgres first
+  try {
+    const { isRailwayDbConfigured, getCandlesFromRailway } = await import('@/lib/railway-db');
+    if (isRailwayDbConfigured()) {
+      const railwayCandles = await getCandlesFromRailway(symbol, interval, from, to, limit);
+      if (railwayCandles && railwayCandles.length > 0) {
+        return NextResponse.json({
+          success: true,
+          symbol,
+          interval,
+          count: railwayCandles.length,
+          from,
+          to,
+          candles: railwayCandles,
+          storage: 'railway',
+        });
+      }
+    }
+  } catch (railwayErr: any) {
+    console.warn('[/api/market/candles] Railway lookup failed, falling back to Supabase:', railwayErr?.message);
+  }
+
+  // 2. Fallback to Supabase
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
   if (!url || !key) {

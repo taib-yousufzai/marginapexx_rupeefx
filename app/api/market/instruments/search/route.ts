@@ -386,6 +386,14 @@ async function fetchLivePrices(
           } catch (err) {
             console.error('[fetchLivePrices] Background cache error:', err);
           }
+          try {
+            const { isRailwayDbConfigured, upsertInstrumentsToRailway } = await import('@/lib/railway-db');
+            if (isRailwayDbConfigured()) {
+              await upsertInstrumentsToRailway(instrumentUpserts);
+            }
+          } catch {
+            // ignore Railway cache error
+          }
         })();
       }
     }
@@ -1119,16 +1127,16 @@ export async function GET(request: NextRequest) {
     // Append matching COMEX items if tab is All or COMEX
     if (tab === 'All' || tab === 'COMEX') {
       const comexSearchItems = [
-        { name: 'GOLD', symbol: 'XAUUSD', comexSymbol: 'XAUUSD', segment: 'COMEX - Futures' },
-        { name: 'SILVER', symbol: 'XAGUSD', comexSymbol: 'XAGUSD', segment: 'COMEX - Futures' },
-        { name: 'CRUDE OIL', symbol: 'XTIUSD', comexSymbol: 'XTIUSD', segment: 'COMEX - Futures' },
-        { name: 'COPPER', symbol: 'XCUUSD', comexSymbol: 'XCUUSD', segment: 'COMEX - Futures' },
-        { name: 'NATURAL GAS', symbol: 'XNGUSD', comexSymbol: 'XNGUSD', segment: 'COMEX - Futures' },
+        { name: 'XAUUSD', symbol: 'XAUUSD', comexSymbol: 'XAUUSD', segment: 'COMEX - Futures', aliases: 'gold spot' },
+        { name: 'XAGUSD', symbol: 'XAGUSD', comexSymbol: 'XAGUSD', segment: 'COMEX - Futures', aliases: 'silver spot' },
+        { name: 'XTIUSD', symbol: 'XTIUSD', comexSymbol: 'XTIUSD', segment: 'COMEX - Futures', aliases: 'crude oil wti spot' },
+        { name: 'XCUUSD', symbol: 'XCUUSD', comexSymbol: 'XCUUSD', segment: 'COMEX - Futures', aliases: 'copper spot' },
+        { name: 'XNGUSD', symbol: 'XNGUSD', comexSymbol: 'XNGUSD', segment: 'COMEX - Futures', aliases: 'natural gas spot' },
       ];
       const comexSearchTerms = q.toLowerCase().split(/\s+/).filter(Boolean);
       const matchingComex = comexSearchItems
         .filter(item => {
-          const itemText = `${item.name} ${item.symbol} ${item.segment} comex`.toLowerCase();
+          const itemText = `${item.name} ${item.symbol} ${item.aliases} ${item.segment} comex`.toLowerCase();
           return comexSearchTerms.every(term => itemText.includes(term));
         })
         .map(item => ({
