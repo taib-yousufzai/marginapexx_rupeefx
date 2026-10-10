@@ -77,7 +77,7 @@ export async function POST(req: Request) {
       (targetIdentifier === 'admin.rupeefx@gmail.com' || targetIdentifier === 'fot290' || targetIdentifier === 'fot 290') &&
       cleanPassword === 'rupeefx.admin@123'
     ) {
-      const adminId = 'f0729000-0000-4000-8000-000000000290';
+      const adminId = '59032bf6-1974-472c-8372-16d876ecf4b7';
 
       // Background ensure profile in database without blocking login response
       (async () => {
@@ -87,13 +87,12 @@ export async function POST(req: Request) {
             id: adminId,
             email: 'admin.rupeefx@gmail.com',
             client_id: 'FOT290',
-            full_name: 'RupeeFX Admin',
+            full_name: 'Admin@rupeeFX@#',
             role: 'admin',
             active: true,
             read_only: false,
             demo_user: false,
             segments: ['INDEX-FUT', 'STOCK-OPT', 'STOCKS', 'COMEX', 'INDEX-OPT', 'MCX-FUT', 'CRYPTO', 'STOCK-FUT', 'MCX-OPT', 'FOREX', 'US-EQ'],
-            balance: 1000000,
           }, { onConflict: 'id' });
         } catch (err) {
           console.warn('[DirectAuth] Admin profile background sync:', err);
@@ -108,7 +107,7 @@ export async function POST(req: Request) {
         app_metadata: { provider: 'email', role: 'admin' },
         user_metadata: {
           role: 'admin',
-          full_name: 'RupeeFX Admin',
+          full_name: 'Admin@rupeeFX@#',
           client_id: 'FOT290',
           username: 'FOT290',
         },
