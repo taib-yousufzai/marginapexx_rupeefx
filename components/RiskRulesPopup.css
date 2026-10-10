@@ -1,0 +1,137 @@
+/* ===== RISK & TRADING RULES POPUP ===== */
+.risk-popup-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  box-sizing: border-box;
+}
+
+.risk-popup-content {
+  background: #1A1A24;
+  border: 1px solid #374151;
+  border-radius: 1.25rem;
+  max-width: 44rem;
+  width: 100%;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  padding: 1.75rem;
+  box-sizing: border-box;
+  box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.6);
+  color: #F3F4F6;
+  animation: riskPopupFadeIn 0.25s ease-out;
+}
+
+@keyframes riskPopupFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.risk-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  margin: 0 0 0.4rem 0;
+  color: #FFFFFF;
+  letter-spacing: -0.01em;
+}
+
+.risk-subtitle {
+  font-size: 0.92rem;
+  font-weight: 600;
+  margin: 0 0 1rem 0;
+  color: #9CA3AF;
+}
+
+.risk-text-scroll {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid #2D3748;
+  border-radius: 0.75rem;
+  padding: 1.2rem;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: #D1D5DB;
+  background: #0D0E15;
+  margin-bottom: 1.25rem;
+}
+
+.risk-text-scroll p {
+  margin-top: 0;
+  margin-bottom: 0.85rem;
+}
+
+.risk-text-scroll h4 {
+  color: #60A5FA;
+  margin: 1.2rem 0 0.5rem 0;
+  font-size: 0.95rem;
+}
+
+.risk-highlight {
+  color: #FBBF24;
+  font-weight: 600;
+}
+
+.risk-popup-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.risk-checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #E5E7EB;
+  cursor: pointer;
+  user-select: none;
+}
+
+.risk-checkbox-label input {
+  margin-top: 0.2rem;
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: #00AA00;
+  cursor: pointer;
+}
+
+.risk-submit-btn {
+  padding: 0.9rem;
+  background: #00AA00;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 0.75rem;
+  font-size: 1rem;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.risk-submit-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #374151;
+}
+
+.risk-submit-btn:not(:disabled):hover {
+  background: #00CC00;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 170, 0, 0.3);
+}
