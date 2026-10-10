@@ -229,7 +229,7 @@ export async function POST(request: Request): Promise<Response> {
         profileFields[field] = body[field];
       }
     }
-    profileFields['role'] = requestedRole;
+    profileFields['role'] = requestedRole === 'sub_broker' ? 'broker' : requestedRole;
 
     if (!profileFields.parent_id && (callerRole === 'admin' || callerRole === 'broker')) {
       profileFields.parent_id = callerUser.id;
@@ -279,11 +279,12 @@ export async function POST(request: Request): Promise<Response> {
 
     // Step 5: Create auth user
     // Validates: Requirements 3.2, 3.4
+    const authRole = requestedRole === 'sub_broker' ? 'broker' : requestedRole;
     const { data: createData, error: createError } = await adminClient.auth.admin.createUser({
       email: (email as string).trim(),
       password: password as string,
       email_confirm: true,
-      user_metadata: { role: requestedRole, username: client_id },
+      user_metadata: { role: authRole, username: client_id },
     });
 
     if (createError || !createData?.user) {
@@ -298,7 +299,7 @@ export async function POST(request: Request): Promise<Response> {
 
     // Ensure role and username in user_metadata are synced
     await adminClient.auth.admin.updateUserById(newUser.id, {
-      user_metadata: { role: requestedRole, username: client_id }
+      user_metadata: { role: authRole, username: client_id }
     });
 
     // Step 6: Upsert profile row

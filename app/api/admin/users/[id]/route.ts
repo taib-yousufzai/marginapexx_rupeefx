@@ -122,6 +122,10 @@ export async function PATCH(
       }
     }
 
+    if (profileFields.role === 'sub_broker') {
+      profileFields.role = 'broker';
+    }
+
     if (profileFields.parent_id === '') {
       profileFields.parent_id = null;
     }
