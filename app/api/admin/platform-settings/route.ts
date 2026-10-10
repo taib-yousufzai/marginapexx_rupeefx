@@ -34,9 +34,35 @@ export async function GET(request: Request) {
   const auth = await requireAuth(request, ['VIEW_USERS']);
   if (auth instanceof Response) return auth;
 
+  const adminId = auth.callerUser.id;
   const settings: Record<string, string> = {};
   for (const key of ALLOWED_SETTINGS) {
-    settings[key] = await getPlatformSetting(key, DEFAULTS[key]);
+    if (key === 'SUPPORT_WHATSAPP_NUMBER' || key === 'WHATSAPP_COMMUNITY_LINK') {
+      // 1. Check scoped setting for this admin ID
+      let val = await getPlatformSetting(`${key}:${adminId}`, '');
+
+      // 2. If phone number and not found, check admin profile phone
+      if (!val && key === 'SUPPORT_WHATSAPP_NUMBER') {
+        try {
+          const { data: prof } = await auth.adminClient
+            .from('profiles')
+            .select('phone')
+            .eq('id', adminId)
+            .maybeSingle();
+          if (prof?.phone && prof.phone.trim()) {
+            val = prof.phone.trim();
+          }
+        } catch {}
+      }
+
+      // 3. Fallback to global setting / default
+      if (!val) {
+        val = await getPlatformSetting(key, DEFAULTS[key]);
+      }
+      settings[key] = val;
+    } else {
+      settings[key] = await getPlatformSetting(key, DEFAULTS[key]);
+    }
   }
 
   return Response.json({ settings });
@@ -46,6 +72,10 @@ export async function GET(request: Request) {
 export async function PUT(request: Request) {
   const auth = await requireAuth(request, ['VIEW_USERS']);
   if (auth instanceof Response) return auth;
+
+  const adminId = auth.callerUser.id;
+  const isSuperAdmin = auth.callerRole === 'super_admin';
+  const metaClientId = (auth.callerUser.user_metadata?.client_id || auth.callerUser.user_metadata?.username || '').trim();
 
   let body: Record<string, string>;
   try {
@@ -75,7 +105,35 @@ export async function PUT(request: Request) {
         continue;
       }
     }
-    await setPlatformSetting(key, value);
+
+    if (key === 'SUPPORT_WHATSAPP_NUMBER' || key === 'WHATSAPP_COMMUNITY_LINK') {
+      // 1. Save scoped setting for this admin ID
+      await setPlatformSetting(`${key}:${adminId}`, value);
+
+      // 2. Also save scoped for client ID if present (e.g. FOT290, OCX39Z)
+      if (metaClientId) {
+        await setPlatformSetting(`${key}:${metaClientId}`, value);
+      }
+
+      // 3. Sync profile phone for this admin
+      if (key === 'SUPPORT_WHATSAPP_NUMBER') {
+        try {
+          await auth.adminClient
+            .from('profiles')
+            .update({ phone: value })
+            .eq('id', adminId);
+        } catch (err) {
+          console.warn('[platform-settings] Failed to sync profile phone:', err);
+        }
+      }
+
+      // 4. If super_admin, also update the global fallback key
+      if (isSuperAdmin) {
+        await setPlatformSetting(key, value);
+      }
+    } else {
+      await setPlatformSetting(key, value);
+    }
     updated.push(key);
   }
 

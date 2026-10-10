@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { logAction, extractClientIp } from '@/lib/actionLogger';
 import { getPlatformSetting } from '@/lib/getPlatformSetting';
+import { getRedisClient } from '@/lib/redis';
 
 const ALLOWED_FIELDS = [
     'full_name', 'phone', 'date_of_birth',
@@ -9,13 +10,72 @@ const ALLOWED_FIELDS = [
     'bank_name', 'account_no', 'ifsc',
 ] as const;
 
+// Module-level cache for the broker/whitelabel UUID — resolved once per process lifetime
+// since it comes from env vars which never change at runtime.
+let _brokerCache: { id: string | null; resolvedAt: number } | null = null;
+
+async function resolveBrokerParentId(admin: ReturnType<typeof getAdminClient>): Promise<string | null> {
+  // Return cached value if resolved in the last 10 minutes
+  if (_brokerCache && (Date.now() - _brokerCache.resolvedAt) < 10 * 60 * 1000) {
+    return _brokerCache.id;
+  }
+
+  const brokerIdentifier = process.env.WHITELABEL_BROKER_ID
+    || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID
+    || process.env.WHITELABEL_BROKER_USERNAME
+    || process.env.ADMIN_ID
+    || process.env.NEXT_PUBLIC_ADMIN_ID
+    || process.env.SUPER_ADMIN_ID;
+
+  if (!brokerIdentifier) {
+    _brokerCache = { id: null, resolvedAt: Date.now() };
+    return null;
+  }
+
+  const cleanIdentifier = brokerIdentifier.trim();
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanIdentifier);
+
+  let resolvedId: string | null = null;
+  if (isUuid) {
+    // Already a UUID — no DB round-trip needed
+    resolvedId = cleanIdentifier;
+  } else {
+    const { data } = await admin
+      .from('profiles')
+      .select('id')
+      .or(`client_id.ilike.${cleanIdentifier},email.ilike.${cleanIdentifier}`)
+      .maybeSingle();
+    resolvedId = data?.id ?? null;
+  }
+
+  _brokerCache = { id: resolvedId, resolvedAt: Date.now() };
+  return resolvedId;
+}
+
 export async function GET(request: NextRequest) {
     const user = await getUserFromRequest(request);
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    // --- Redis cache: 60s TTL ---
+    let redis: ReturnType<typeof getRedisClient> | null = null;
+    const cacheKey = `user_profile:${user.id}`;
+    try {
+      redis = getRedisClient();
+      const cached = await Promise.race([
+        redis.get(cacheKey),
+        new Promise<null>(r => setTimeout(() => r(null), 150)),
+      ]) as string | null;
+      if (cached) {
+        return NextResponse.json(JSON.parse(cached));
+      }
+    } catch { /* Redis unavailable — fall through to DB */ }
+
     const admin = getAdminClient();
-    
-    // Fetch profile, primary bank account, and platform support settings in parallel
+
+    // Resolve static broker parent ID (module-level cached — near-instant on repeat calls)
+    const envBrokerId = await resolveBrokerParentId(admin);
+
+    // Fetch profile, bank, and platform settings all in parallel — single round-trip
     const [profileRes, bankRes, supportPhone, whatsappCommunityLink] = await Promise.all([
         admin
             .from('profiles')
@@ -40,60 +100,64 @@ export async function GET(request: NextRequest) {
     if (Array.isArray(profile.segments)) {
       profile.segments = profile.segments.map((s: string) => (s === 'NSE-EQ' || s === 'NSE - EQUITY' || s === 'Equity') ? 'STOCKS' : s);
     }
-    
-    // Override with primary bank account if it exists
+
     if (bankRes.data) {
         profile.bank_name = bankRes.data.bank_name || profile.bank_name;
         profile.account_no = bankRes.data.account_no || profile.account_no;
         profile.ifsc = bankRes.data.ifsc || profile.ifsc;
     }
 
-    // Resolve Support Phone based on assigned Broker / Whitelabel hierarchy (matching bank details resolution)
-    let parentId = profile.parent_id;
-    const brokerIdentifier = process.env.WHITELABEL_BROKER_ID
-      || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID
-      || process.env.WHITELABEL_BROKER_USERNAME
-      || process.env.ADMIN_ID
-      || process.env.NEXT_PUBLIC_ADMIN_ID
-      || process.env.SUPER_ADMIN_ID;
-
-    if (!parentId && brokerIdentifier) {
-      const cleanIdentifier = brokerIdentifier.trim();
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanIdentifier);
-      if (isUuid) {
-        const { data } = await admin
-          .from('profiles')
-          .select('id, phone')
-          .eq('id', cleanIdentifier)
-          .maybeSingle();
-        if (data?.id) parentId = data.id;
-      } else {
-        const { data } = await admin
-          .from('profiles')
-          .select('id, phone')
-          .or(`client_id.ilike.${cleanIdentifier},email.ilike.${cleanIdentifier}`)
-          .maybeSingle();
-        if (data?.id) parentId = data.id;
-      }
-    }
-
+    const parentId = profile.parent_id || envBrokerId;
     let finalSupportPhone = supportPhone ? String(supportPhone).trim() : '';
+    let finalCommunityLink = whatsappCommunityLink ? String(whatsappCommunityLink).trim() : '';
+
     if (parentId) {
-      const { data: brokerProfile } = await admin
-        .from('profiles')
-        .select('phone')
-        .eq('id', parentId)
-        .maybeSingle();
-      if (brokerProfile?.phone && brokerProfile.phone.trim()) {
-        finalSupportPhone = brokerProfile.phone.trim();
+      // 1. Check scoped platform settings for this broker parentId
+      const [scopedPhone, scopedCommunity] = await Promise.all([
+        getPlatformSetting(`SUPPORT_WHATSAPP_NUMBER:${parentId}`, ''),
+        getPlatformSetting(`WHATSAPP_COMMUNITY_LINK:${parentId}`, ''),
+      ]);
+
+      if (scopedPhone && scopedPhone.trim()) {
+        finalSupportPhone = scopedPhone.trim();
+      } else {
+        // Fallback to broker's profile phone
+        const { data: brokerProfile } = await admin
+          .from('profiles')
+          .select('phone')
+          .eq('id', parentId)
+          .maybeSingle();
+        if (brokerProfile?.phone?.trim()) {
+          finalSupportPhone = brokerProfile.phone.trim();
+        }
       }
+
+      if (scopedCommunity && scopedCommunity.trim()) {
+        finalCommunityLink = scopedCommunity.trim();
+      }
+    } else if (process.env.WHITELABEL_BROKER_ID) {
+      // Direct env fallback for whitelabels
+      const envRef = process.env.WHITELABEL_BROKER_ID.trim();
+      const [scopedPhone, scopedCommunity] = await Promise.all([
+        getPlatformSetting(`SUPPORT_WHATSAPP_NUMBER:${envRef}`, ''),
+        getPlatformSetting(`WHATSAPP_COMMUNITY_LINK:${envRef}`, ''),
+      ]);
+      if (scopedPhone && scopedPhone.trim()) finalSupportPhone = scopedPhone.trim();
+      if (scopedCommunity && scopedCommunity.trim()) finalCommunityLink = scopedCommunity.trim();
     }
 
-    return NextResponse.json({
+    const responseData = {
         ...profile,
         support_phone: finalSupportPhone || '',
-        whatsapp_community_link: (whatsappCommunityLink ? String(whatsappCommunityLink).trim() : ''),
-    });
+        whatsapp_community_link: finalCommunityLink || '',
+    };
+
+    // Cache in Redis for 60s (fire-and-forget)
+    if (redis) {
+      redis.set(cacheKey, JSON.stringify(responseData), 'EX', 60).catch(() => {});
+    }
+
+    return NextResponse.json(responseData);
 }
 
 export async function PATCH(request: NextRequest) {
@@ -126,8 +190,7 @@ export async function PATCH(request: NextRequest) {
     if (updates.bank_name) bankUpdate.bank_name = updates.bank_name;
     if (updates.account_no) bankUpdate.account_no = updates.account_no;
     if (updates.ifsc) bankUpdate.ifsc = updates.ifsc;
-    
-    // Remove bank fields from profile update payload (sync only to bank accounts)
+
     delete updates.bank_name;
     delete updates.account_no;
     delete updates.ifsc;
@@ -140,7 +203,6 @@ export async function PATCH(request: NextRequest) {
         }
     }
 
-    // Also update primary bank account if bank fields are present
     if (Object.keys(bankUpdate).length > 0) {
         const { data: updatedBank, error: bankUpdateError } = await admin
             .from('user_bank_accounts')
@@ -148,14 +210,13 @@ export async function PATCH(request: NextRequest) {
             .eq('user_id', user.id)
             .eq('is_primary', true)
             .select('id');
-            
+
         if (bankUpdateError) {
             console.error('[PATCH /api/user/profile] Bank update error:', bankUpdateError);
             return NextResponse.json({ error: 'Failed to update bank details' }, { status: 500 });
         }
-        
+
         if (!updatedBank || updatedBank.length === 0) {
-            // No primary bank account exists, insert one
             const { error: bankInsertError } = await admin
                 .from('user_bank_accounts')
                 .insert({
@@ -165,13 +226,19 @@ export async function PATCH(request: NextRequest) {
                     ifsc: bankUpdate.ifsc || null,
                     is_primary: true
                 });
-                
+
             if (bankInsertError) {
                 console.error('[PATCH /api/user/profile] Bank insert error:', bankInsertError);
                 return NextResponse.json({ error: 'Failed to insert bank details' }, { status: 500 });
             }
         }
     }
+
+    // Invalidate profile cache so next GET returns fresh data
+    try {
+      const redis = getRedisClient();
+      await redis.del(`user_profile:${user.id}`);
+    } catch { /* ignore */ }
 
     logAction({
       actionType: 'UPDATE_PROFILE',
