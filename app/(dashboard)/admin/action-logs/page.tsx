@@ -52,40 +52,119 @@ export default function ActionLogsPage() {
     fetchLogs();
   }, [fetchLogs]);
 
+  const isRailway = dbSource === 'railway_postgres';
+
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold text-gray-100">Audit Trail (Action Logs)</h1>
+    <div style={{
+      minHeight: '100vh',
+      backgroundColor: '#070a12',
+      color: '#e2e8f0',
+      padding: '28px 32px',
+      fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
+    }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '24px',
+        flexWrap: 'wrap',
+        gap: '16px'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+          <h1 style={{
+            fontSize: '22px',
+            fontWeight: '700',
+            letterSpacing: '-0.02em',
+            color: '#f8fafc',
+            margin: 0
+          }}>
+            Audit Trail (Action Logs)
+          </h1>
           {dbSource && (
-            <span
-              className={`text-xs px-2.5 py-1 rounded-full font-medium ${
-                dbSource === 'railway_postgres'
-                  ? 'bg-purple-900/40 text-purple-300 border border-purple-700/50'
-                  : 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/50'
-              }`}
-            >
-              Storage: {dbSource === 'railway_postgres' ? 'Railway Postgres' : 'Supabase'}
+            <span style={{
+              fontSize: '12px',
+              fontWeight: '600',
+              padding: '4px 12px',
+              borderRadius: '20px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              background: isRailway ? 'rgba(147, 51, 234, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+              color: isRailway ? '#c084fc' : '#34d399',
+              border: isRailway ? '1px solid rgba(168, 85, 247, 0.4)' : '1px solid rgba(16, 185, 129, 0.4)'
+            }}>
+              <span style={{
+                width: '6px',
+                height: '6px',
+                borderRadius: '50%',
+                background: isRailway ? '#a855f7' : '#10b981',
+                boxShadow: isRailway ? '0 0 8px #a855f7' : '0 0 8px #10b981'
+              }} />
+              Storage: {isRailway ? 'Railway Postgres' : 'Supabase'}
             </span>
           )}
         </div>
-        <button onClick={fetchLogs} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md">
-          Refresh
+
+        <button
+          onClick={fetchLogs}
+          disabled={loading}
+          style={{
+            background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+            color: '#ffffff',
+            border: 'none',
+            padding: '8px 18px',
+            borderRadius: '8px',
+            fontSize: '13px',
+            fontWeight: '600',
+            cursor: loading ? 'not-allowed' : 'pointer',
+            boxShadow: '0 2px 8px rgba(37, 99, 235, 0.3)',
+            transition: 'all 0.2s ease',
+            opacity: loading ? 0.7 : 1
+          }}
+        >
+          {loading ? 'Refreshing...' : '↻ Refresh'}
         </button>
       </div>
 
-      <div className="flex gap-4">
-        <input 
-          type="text" 
-          placeholder="Search username, action, or IP..." 
-          className="bg-gray-800 border border-gray-700 text-white px-4 py-2 rounded-md flex-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      {/* Filter Toolbar */}
+      <div style={{
+        display: 'flex',
+        gap: '12px',
+        marginBottom: '20px',
+        flexWrap: 'wrap'
+      }}>
+        <input
+          type="text"
+          placeholder="Search username, action, or IP address..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          style={{
+            flex: 1,
+            minWidth: '240px',
+            backgroundColor: '#0f172a',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '8px',
+            padding: '10px 14px',
+            fontSize: '13.5px',
+            color: '#f8fafc',
+            outline: 'none'
+          }}
         />
-        <select 
-          className="bg-gray-800 border border-gray-700 text-white px-4 py-2 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+
+        <select
           value={filterModule}
           onChange={(e) => setFilterModule(e.target.value)}
+          style={{
+            backgroundColor: '#0f172a',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '8px',
+            padding: '10px 16px',
+            fontSize: '13.5px',
+            color: '#f8fafc',
+            outline: 'none',
+            cursor: 'pointer'
+          }}
         >
           <option value="ALL">All Modules</option>
           <option value="TRADING">Trading</option>
@@ -95,72 +174,150 @@ export default function ActionLogsPage() {
         </select>
       </div>
 
-      <div className="overflow-x-auto rounded-lg border border-gray-700">
-        <table className="min-w-full divide-y divide-gray-700 text-sm text-left">
-          <thead className="bg-gray-800 text-gray-400">
-            <tr>
-              <th className="px-4 py-3 font-semibold">Timestamp</th>
-              <th className="px-4 py-3 font-semibold">User</th>
-              <th className="px-4 py-3 font-semibold">Module</th>
-              <th className="px-4 py-3 font-semibold">Action</th>
-              <th className="px-4 py-3 font-semibold">Status</th>
-              <th className="px-4 py-3 font-semibold">IP Address</th>
-              <th className="px-4 py-3 font-semibold">Wallet Change</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-800 bg-gray-900 text-gray-300">
-            {loading ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500">Loading logs...</td>
+      {/* Logs Table Card */}
+      <div style={{
+        backgroundColor: '#0b1120',
+        borderRadius: '12px',
+        border: '1px solid rgba(255, 255, 255, 0.08)',
+        overflow: 'hidden',
+        boxShadow: '0 8px 30px rgba(0, 0, 0, 0.4)'
+      }}>
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            fontSize: '13px',
+            textAlign: 'left'
+          }}>
+            <thead>
+              <tr style={{
+                backgroundColor: 'rgba(15, 23, 42, 0.9)',
+                borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                color: '#94a3b8',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                fontSize: '11px',
+                fontWeight: '600'
+              }}>
+                <th style={{ padding: '14px 18px' }}>Timestamp</th>
+                <th style={{ padding: '14px 18px' }}>User</th>
+                <th style={{ padding: '14px 18px' }}>Module</th>
+                <th style={{ padding: '14px 18px' }}>Action</th>
+                <th style={{ padding: '14px 18px' }}>Status</th>
+                <th style={{ padding: '14px 18px' }}>IP Address</th>
+                <th style={{ padding: '14px 18px', textAlign: 'right' }}>Wallet Change</th>
               </tr>
-            ) : errorMsg ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-rose-500 font-medium">{errorMsg}</td>
-              </tr>
-            ) : logs.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-gray-500">No action logs found.</td>
-              </tr>
-            ) : (
-              logs.map((log) => (
-                <tr key={log.id} className="hover:bg-gray-800/50 transition-colors">
-                  <td className="px-4 py-3 whitespace-nowrap text-gray-400">{new Date(log.created_at).toLocaleString()}</td>
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-200">{log.username || 'System'}</div>
-                    <div className="text-xs text-gray-500 uppercase tracking-wider">{log.role || 'GUEST'}</div>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className="px-2 py-1 bg-gray-800 rounded-md text-xs border border-gray-700">{log.module}</span>
-                  </td>
-                  <td className="px-4 py-3 font-medium text-gray-200">{log.action_type}</td>
-                  <td className="px-4 py-3">
-                    {log.is_success ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                        Success
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20" title={log.error_message || 'Failed'}>
-                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                        Failed
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-500">{log.ip_address}</td>
-                  <td className="px-4 py-3 text-right">
-                    {log.wallet_before !== null && log.wallet_after !== null ? (
-                      <span className={log.wallet_after > log.wallet_before ? 'text-emerald-400' : log.wallet_after < log.wallet_before ? 'text-rose-400' : 'text-gray-500'}>
-                        {log.wallet_after > log.wallet_before ? '+' : ''}{(log.wallet_after - log.wallet_before).toFixed(2)}
-                      </span>
-                    ) : (
-                      <span className="text-gray-600">-</span>
-                    )}
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                    Loading action logs...
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : errorMsg ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: '#f43f5e', fontWeight: '500' }}>
+                    {errorMsg}
+                  </td>
+                </tr>
+              ) : logs.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
+                    No action logs found.
+                  </td>
+                </tr>
+              ) : (
+                logs.map((log, idx) => (
+                  <tr
+                    key={log.id}
+                    style={{
+                      borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
+                      backgroundColor: idx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.015)',
+                      transition: 'background-color 0.15s ease'
+                    }}
+                  >
+                    <td style={{ padding: '13px 18px', color: '#94a3b8', whiteSpace: 'nowrap' }}>
+                      {new Date(log.created_at).toLocaleString()}
+                    </td>
+                    <td style={{ padding: '13px 18px' }}>
+                      <div style={{ fontWeight: '600', color: '#f1f5f9' }}>{log.username || 'System'}</div>
+                      <div style={{ fontSize: '11px', color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        {log.role || 'GUEST'}
+                      </div>
+                    </td>
+                    <td style={{ padding: '13px 18px' }}>
+                      <span style={{
+                        padding: '3px 8px',
+                        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        borderRadius: '4px',
+                        fontSize: '11.5px',
+                        fontWeight: '500',
+                        color: '#cbd5e1'
+                      }}>
+                        {log.module}
+                      </span>
+                    </td>
+                    <td style={{ padding: '13px 18px', fontWeight: '600', color: '#f8fafc' }}>
+                      {log.action_type}
+                    </td>
+                    <td style={{ padding: '13px 18px' }}>
+                      {log.is_success ? (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          fontSize: '11.5px',
+                          fontWeight: '600',
+                          backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                          color: '#34d399',
+                          border: '1px solid rgba(16, 185, 129, 0.25)'
+                        }}>
+                          <span style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: '#10b981' }} />
+                          Success
+                        </span>
+                      ) : (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '5px',
+                          padding: '2px 8px',
+                          borderRadius: '12px',
+                          fontSize: '11.5px',
+                          fontWeight: '600',
+                          backgroundColor: 'rgba(244, 63, 94, 0.1)',
+                          color: '#fb7185',
+                          border: '1px solid rgba(244, 63, 94, 0.25)'
+                        }} title={log.error_message || 'Failed'}>
+                          <span style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: '#f43f5e' }} />
+                          Failed
+                        </span>
+                      )}
+                    </td>
+                    <td style={{ padding: '13px 18px', fontFamily: 'monospace', fontSize: '11.5px', color: '#64748b' }}>
+                      {log.ip_address || '-'}
+                    </td>
+                    <td style={{ padding: '13px 18px', textAlign: 'right', fontWeight: '600' }}>
+                      {log.wallet_before !== null && log.wallet_after !== null ? (
+                        <span style={{
+                          color: log.wallet_after > log.wallet_before ? '#34d399' : log.wallet_after < log.wallet_before ? '#fb7185' : '#64748b'
+                        }}>
+                          {log.wallet_after > log.wallet_before ? '+' : ''}
+                          {(log.wallet_after - log.wallet_before).toFixed(2)}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#475569' }}>-</span>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
