@@ -190,6 +190,7 @@ export async function checkAndExecuteAccountLiquidation(
     });
 
     const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
+    let closedThisPos = false;
 
     // 1. Attempt close natively in Railway Postgres first (< 5ms)
     if (isRailwayDbConfigured()) {

@@ -180,9 +180,20 @@ export async function POST(
         const db = getRailwayPool();
         if (db) {
           await db.query(
-            `UPDATE public.positions SET product_type = $1, margin_required = $2, updated_at = now() WHERE id = $3::uuid AND user_id = $4::uuid;`,
-            [product_type, newMarginRequired, positionId, user.id]
+            `UPDATE public.positions 
+             SET product_type = $1, 
+                 margin_required = $2, 
+                 carry_brokerage_paid = CASE WHEN $3::numeric > 0 THEN true ELSE carry_brokerage_paid END,
+                 updated_at = now() 
+             WHERE id = $4::uuid AND user_id = $5::uuid;`,
+            [product_type, newMarginRequired, carryBrokerageToCharge, positionId, user.id]
           );
+          if (carryBrokerageToCharge > 0) {
+            await db.query(
+              `UPDATE public.profiles SET balance = balance - $1::numeric WHERE id = $2::uuid;`,
+              [carryBrokerageToCharge, user.id]
+            );
+          }
         }
       }
     } catch (rErr) {

@@ -619,6 +619,9 @@ export async function ensureTradingEngineSchema(): Promise<void> {
     `);
 
     if (checkRes.rows && checkRes.rows.length > 0) {
+      await db.query(`
+        ALTER TABLE public.positions ADD COLUMN IF NOT EXISTS carry_brokerage_paid boolean DEFAULT false;
+      `).catch(() => {});
       initializedTradingEngineSchema = true;
       return;
     }
@@ -698,6 +701,7 @@ export async function getRailwayOpenPositions(userId: string): Promise<any[] | n
         entry_price, ltp, exit_price, duration_seconds, brokerage, entry_brokerage,
         sl, tp, stop_loss, target, locked_margin, margin_required, lots,
         product_type, settlement, closed_by, is_closed, entry_time, exit_time,
+        carry_brokerage_paid,
         created_at, updated_at
       FROM public.positions
       WHERE user_id = $1::uuid
@@ -1224,7 +1228,7 @@ export async function cancelRailwayOrderById(
         if (linkedId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(linkedId))) {
           await db.query(`
             UPDATE public.positions
-            SET stop_loss = NULL, target = NULL, updated_at = now()
+            SET stop_loss = NULL, target = NULL, sl = NULL, tp = NULL, updated_at = now()
             WHERE id = $1::uuid AND user_id = $2::uuid;
           `, [linkedId, userId]);
         }
@@ -1256,6 +1260,8 @@ export async function updateRailwayPositionSlTarget(
       UPDATE public.positions
       SET stop_loss = $3,
           target = $4,
+          sl = $3,
+          tp = $4,
           updated_at = now()
       WHERE id = $1::uuid
         AND user_id = $2::uuid

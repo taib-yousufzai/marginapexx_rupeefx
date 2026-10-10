@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS public.positions (
   lots numeric DEFAULT 0,
   product_type text DEFAULT 'INTRADAY',
   settlement text,
+  carry_brokerage_paid boolean DEFAULT false,
   closed_by text DEFAULT 'USER',
   is_closed boolean DEFAULT false,
   entry_time timestamptz NOT NULL DEFAULT now(),
@@ -87,6 +88,8 @@ CREATE TABLE IF NOT EXISTS public.positions (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.positions ADD COLUMN IF NOT EXISTS carry_brokerage_paid boolean DEFAULT false;
 
 CREATE INDEX IF NOT EXISTS idx_railway_positions_user_id ON public.positions (user_id);
 CREATE INDEX IF NOT EXISTS idx_railway_positions_status ON public.positions (status);
