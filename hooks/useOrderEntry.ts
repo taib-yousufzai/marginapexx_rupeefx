@@ -843,7 +843,9 @@ export function useOrderEntry() {
     }
 
     try {
-      const result = await api.post<{ success: boolean; results: any[]; message?: string }>('/api/positions/close', { positionIds: ids }, { timeout: 45000 });
+      // Increased timeout for large batches (100+ positions)
+      const timeoutMs = Math.max(60000, ids.length * 100); // 100ms per position, min 60s
+      const result = await api.post<{ success: boolean; results: any[]; message?: string }>('/api/positions/close', { positionIds: ids }, { timeout: timeoutMs });
 
       const confirmedHistoryItems: HistoryItem[] = [];
       const confirmedClosedPositions: any[] = [];

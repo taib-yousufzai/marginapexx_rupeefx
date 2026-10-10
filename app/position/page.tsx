@@ -922,7 +922,9 @@ export default function PositionPage() {
   }, [rawOrders]);
 
   const handleExitAllConfirm = () => {
-    if (!hasOpenPositions) return;
+    if (!hasOpenPositions || isExitingAll) return; // Prevent double-click
+    
+    setIsExitingAll(true); // Lock the button immediately
     setIsExitAllModalOpen(false); // Close modal immediately for instant UX
 
     let successCount = 0;
@@ -984,6 +986,8 @@ export default function PositionPage() {
       }
       showToast(`Bulk exit failed: ${err?.message || 'Unknown'}`, true);
       refresh();
+    }).finally(() => {
+      setIsExitingAll(false); // Unlock button after completion
     });
   };
 
@@ -1089,7 +1093,7 @@ export default function PositionPage() {
               <div className="pos-header mobile-only">
                 <div className="pos-header-left">
                   <div className="pos-brand">
-                    <span>RUPEE<span className="apex-text">FX</span></span>
+                    <span>MARGIN<span className="apex-text">APEX</span></span>
                   </div>
 
                 </div>

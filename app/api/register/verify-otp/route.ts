@@ -182,6 +182,20 @@ export async function POST(req: NextRequest) {
 
     console.info('[verify-otp] Account created:', userId, '| parent_id:', assignedParentId);
     
+    if (assignedParentId) {
+      try {
+        const { getRedisClient } = await import('@/lib/redis');
+        const redis = getRedisClient();
+        if (redis) {
+          await Promise.all([
+            redis.del(`cache:admin:users:${assignedParentId}:all`),
+            redis.del(`cache:admin:users:${assignedParentId}:true`),
+            redis.del(`cache:admin:users:${assignedParentId}:false`),
+          ]);
+        }
+      } catch (_) {}
+    }
+    
     logAction({
       actionType: 'REGISTER_USER',
       module: 'AUTH',

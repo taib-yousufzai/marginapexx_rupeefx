@@ -355,6 +355,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
     optimisticPositionsRef.current.set(tempId, newPos);
 
+    // Persist to localStorage to survive page refresh
+    try {
+      const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
+      stored[tempId] = { ...newPos, created_time_ms: now };
+      localStorage.setItem('optimistic_positions', JSON.stringify(stored));
+    } catch (e) {
+      console.error('Failed to persist optimistic position:', e);
+    }
+
     setRawPositions(prev => {
       if (prev.some(p => p.id === tempId)) return prev;
       return [newPos, ...prev];
@@ -363,6 +372,16 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
   const removeOptimisticPosition = useCallback((optIdOrTempId: string) => {
     optimisticPositionsRef.current.delete(optIdOrTempId);
+    
+    // Remove from localStorage
+    try {
+      const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
+      delete stored[optIdOrTempId];
+      localStorage.setItem('optimistic_positions', JSON.stringify(stored));
+    } catch (e) {
+      console.error('Failed to remove optimistic position from storage:', e);
+    }
+    
     setRawPositions(prev => prev.filter(p => p.id !== optIdOrTempId));
   }, []);
 
@@ -408,13 +427,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         }
       }
 
-      // Positions from the database are authoritative, excluding IDs closed within the last 60s (unless re-entered)
+      // Positions from the database are authoritative, excluding IDs closed within the last 60s
+      // Only restore if entry_time is significantly newer (>5s gap) to avoid flickering
       const basePositions: MyPosition[] = rawPositionsFromServer
         .filter(p => {
           const closedAt = recentlyClosedTimesRef.current.get(p.id);
           if (!closedAt) return true;
           const entryTime = new Date(p.entry_time || (p as any).created_at || 0).getTime();
-          if (entryTime > closedAt) {
+          // Only restore if entry is >5 seconds after close (genuine re-entry)
+          if (entryTime > closedAt + 5000) {
             recentlyClosedTimesRef.current.delete(p.id);
             return true;
           }
@@ -447,25 +468,54 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           const optId = optPos.id;
           const createdTime = (optPos as any).created_time_ms || (optPos.entry_time ? new Date(optPos.entry_time).getTime() : 0);
 
-          if (recentlyClosedTimesRef.current.has(optId) || (now - createdTime > 2500)) {
+          // Keep optimistic positions longer to avoid flickering
+          // Only delete if explicitly closed or very old (10s timeout)
+          if (recentlyClosedTimesRef.current.has(optId) || (now - createdTime > 10000)) {
             optimisticPositionsRef.current.delete(optId);
+            
+            // Clean up localStorage
+            try {
+              const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
+              delete stored[optId];
+              localStorage.setItem('optimistic_positions', JSON.stringify(stored));
+            } catch (e) {
+              // Ignore localStorage errors
+            }
+            
             continue;
           }
 
           const optSym = cleanSym(optPos.symbol || optPos.kite_instrument);
           const optSide = (optPos.side || '').toUpperCase();
+          const optQty = optPos.qty_open || optPos.qty_total || 0;
 
-          // If server already returned positions for this symbol/side, server DB is authoritative
+          // Check if server has matching position (same symbol/side/qty)
           const serverHasMatching = basePositions.some(sp => {
+            // Exact ID match
             if (optPos.id === sp.id) return true;
+            
+            // Or same symbol/side with matching quantity
             const spSym = cleanSym(sp.symbol || sp.kite_instrument);
             const spSide = (sp.side || '').toUpperCase();
-            return spSym === optSym && spSide === optSide;
+            const spQty = sp.qty_open || sp.qty_total || 0;
+            
+            return spSym === optSym && spSide === optSide && spQty === optQty;
           });
 
           if (serverHasMatching) {
+            // Delete immediately - server has this position
             optimisticPositionsRef.current.delete(optId);
+            
+            // Remove from localStorage
+            try {
+              const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
+              delete stored[optId];
+              localStorage.setItem('optimistic_positions', JSON.stringify(stored));
+            } catch (e) {
+              // Ignore localStorage errors
+            }
           } else {
+            // Server doesn't have this yet - keep showing optimistic
             activeOptPositions.push(optPos);
           }
         }
@@ -537,6 +587,30 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
   useEffect(() => {
     // One-shot eviction: clear the legacy localStorage cache written by the old code.
     try { localStorage.removeItem('cached_open_positions'); } catch (_) { }
+
+    // Load optimistic positions from localStorage on mount
+    try {
+      const stored = JSON.parse(localStorage.getItem('optimistic_positions') || '{}');
+      const now = Date.now();
+      
+      // Only load positions less than 30 seconds old
+      Object.entries(stored).forEach(([id, pos]: [string, any]) => {
+        const age = now - (pos.created_time_ms || 0);
+        if (age < 30000) {
+          optimisticPositionsRef.current.set(id, pos);
+        }
+      });
+      
+      // Clean up old positions from localStorage
+      const fresh: any = {};
+      Object.entries(stored).forEach(([id, pos]: [string, any]) => {
+        const age = now - (pos.created_time_ms || 0);
+        if (age < 30000) fresh[id] = pos;
+      });
+      localStorage.setItem('optimistic_positions', JSON.stringify(fresh));
+    } catch (e) {
+      console.error('Failed to load optimistic positions:', e);
+    }
 
     fetchPositions({ fresh: true });
     let isSubscribed = false;

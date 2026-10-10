@@ -214,6 +214,13 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'Missing or empty positionIds array' }, { status: 400 });
     }
 
+    // Limit check for safety
+    if (positionIdsList.length > 500) {
+      return NextResponse.json({ error: 'Maximum 500 positions can be closed at once' }, { status: 400 });
+    }
+
+    console.log(`[BATCH-CLOSE] Processing ${positionIdsList.length} positions for user ${user.id}`);
+
     const admin = getAdminClient();
     const validUuids = positionIdsList.filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
 

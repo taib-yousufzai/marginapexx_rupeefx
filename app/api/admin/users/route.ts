@@ -35,15 +35,19 @@ export async function GET(request: Request): Promise<Response> {
     const callerRole = getRole(authResult.callerUser);
     const callerId = authResult.callerUser.id;
 
+    const cacheControl = (request.headers.get('cache-control') || '').toLowerCase();
+    const isHardRefresh = cacheControl.includes('no-cache') || (request.headers.get('pragma') || '').toLowerCase().includes('no-cache');
     const cacheKey = `cache:admin:users:${callerId}:${demoParam || 'all'}`;
-    try {
-      const { getRedisClient } = await import('../../../../lib/redis');
-      const redis = getRedisClient();
-      const cached = await redis.get(cacheKey);
-      if (cached) {
-        return Response.json(JSON.parse(cached), { status: 200 });
-      }
-    } catch (_) {}
+    if (!isHardRefresh) {
+      try {
+        const { getRedisClient } = await import('../../../../lib/redis');
+        const redis = getRedisClient();
+        const cached = await redis.get(cacheKey);
+        if (cached) {
+          return Response.json(JSON.parse(cached), { status: 200 });
+        }
+      } catch (_) {}
+    }
 
     let pQuery = adminClient
       .from('profiles')
@@ -451,6 +455,18 @@ export async function POST(request: Request): Promise<Response> {
       email: email,
       client_id: client_id
     });
+    try {
+      const { getRedisClient } = await import('../../../../lib/redis');
+      const redis = getRedisClient();
+      if (redis) {
+        await Promise.all([
+          redis.del(`cache:admin:users:${callerUser.id}:all`),
+          redis.del(`cache:admin:users:${callerUser.id}:true`),
+          redis.del(`cache:admin:users:${callerUser.id}:false`),
+        ]);
+      }
+    } catch (_) {}
+
     return Response.json({ id: newUser.id, client_id: client_id, email: newUser.email }, { status: 201 });
   } catch (err: any) {
     // Outer catch: unhandled exceptions

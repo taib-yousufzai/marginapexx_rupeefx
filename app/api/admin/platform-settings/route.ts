@@ -38,11 +38,11 @@ export async function GET(request: Request) {
   const settings: Record<string, string> = {};
   for (const key of ALLOWED_SETTINGS) {
     if (key === 'SUPPORT_WHATSAPP_NUMBER' || key === 'WHATSAPP_COMMUNITY_LINK') {
-      // 1. Check scoped setting for this admin ID
-      let val = await getPlatformSetting(`${key}:${adminId}`, '');
+      // 1. Check scoped setting for this admin ID (use __NOT_SET__ sentinel to distinguish empty string from unset)
+      let val = await getPlatformSetting(`${key}:${adminId}`, '__NOT_SET__');
 
-      // 2. If phone number and not found, check admin profile phone
-      if (!val && key === 'SUPPORT_WHATSAPP_NUMBER') {
+      // 2. If phone number and not yet configured, check admin profile phone
+      if (val === '__NOT_SET__' && key === 'SUPPORT_WHATSAPP_NUMBER') {
         try {
           const { data: prof } = await auth.adminClient
             .from('profiles')
@@ -55,8 +55,8 @@ export async function GET(request: Request) {
         } catch {}
       }
 
-      // 3. Fallback to global setting / default
-      if (!val) {
+      // 3. Fallback to global setting / default only if genuinely not set
+      if (val === '__NOT_SET__') {
         val = await getPlatformSetting(key, DEFAULTS[key]);
       }
       settings[key] = val;
@@ -115,7 +115,13 @@ export async function PUT(request: Request) {
         await setPlatformSetting(`${key}:${metaClientId}`, value);
       }
 
-      // 3. Sync profile phone for this admin
+      // 3. Also save scoped for WHITELABEL_BROKER_ID if present in environment
+      const brokerEnvId = (process.env.WHITELABEL_BROKER_ID || process.env.NEXT_PUBLIC_WHITELABEL_BROKER_ID || '').trim();
+      if (brokerEnvId) {
+        await setPlatformSetting(`${key}:${brokerEnvId}`, value);
+      }
+
+      // 4. Sync profile phone for this admin
       if (key === 'SUPPORT_WHATSAPP_NUMBER') {
         try {
           await auth.adminClient
@@ -127,7 +133,7 @@ export async function PUT(request: Request) {
         }
       }
 
-      // 4. If super_admin, also update the global fallback key
+      // 5. If super_admin, also update the global fallback key
       if (isSuperAdmin) {
         await setPlatformSetting(key, value);
       }

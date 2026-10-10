@@ -114,11 +114,11 @@ export async function GET(request: NextRequest) {
     if (parentId) {
       // 1. Check scoped platform settings for this broker parentId
       const [scopedPhone, scopedCommunity] = await Promise.all([
-        getPlatformSetting(`SUPPORT_WHATSAPP_NUMBER:${parentId}`, ''),
-        getPlatformSetting(`WHATSAPP_COMMUNITY_LINK:${parentId}`, ''),
+        getPlatformSetting(`SUPPORT_WHATSAPP_NUMBER:${parentId}`, '__NOT_SET__'),
+        getPlatformSetting(`WHATSAPP_COMMUNITY_LINK:${parentId}`, '__NOT_SET__'),
       ]);
 
-      if (scopedPhone && scopedPhone.trim()) {
+      if (scopedPhone !== '__NOT_SET__') {
         finalSupportPhone = scopedPhone.trim();
       } else {
         // Fallback to broker's profile phone
@@ -132,18 +132,18 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      if (scopedCommunity && scopedCommunity.trim()) {
+      if (scopedCommunity !== '__NOT_SET__') {
         finalCommunityLink = scopedCommunity.trim();
       }
     } else if (process.env.WHITELABEL_BROKER_ID) {
       // Direct env fallback for whitelabels
       const envRef = process.env.WHITELABEL_BROKER_ID.trim();
       const [scopedPhone, scopedCommunity] = await Promise.all([
-        getPlatformSetting(`SUPPORT_WHATSAPP_NUMBER:${envRef}`, ''),
-        getPlatformSetting(`WHATSAPP_COMMUNITY_LINK:${envRef}`, ''),
+        getPlatformSetting(`SUPPORT_WHATSAPP_NUMBER:${envRef}`, '__NOT_SET__'),
+        getPlatformSetting(`WHATSAPP_COMMUNITY_LINK:${envRef}`, '__NOT_SET__'),
       ]);
-      if (scopedPhone && scopedPhone.trim()) finalSupportPhone = scopedPhone.trim();
-      if (scopedCommunity && scopedCommunity.trim()) finalCommunityLink = scopedCommunity.trim();
+      if (scopedPhone !== '__NOT_SET__') finalSupportPhone = scopedPhone.trim();
+      if (scopedCommunity !== '__NOT_SET__') finalCommunityLink = scopedCommunity.trim();
     }
 
     const responseData = {
