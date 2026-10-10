@@ -113,13 +113,39 @@ export async function POST(
       });
     }
 
-    const { data: pnl, error: rpcErr } = await adminClient.rpc('close_position_v2', {
-      p_position_id:        id,
-      p_close_qty:          Number(position.qty_open),
-      p_close_price:        exitPrice,
-      p_closed_by:          'ADMIN',
-      p_expected_brokerage: carryBrokerage,
-    });
+    const closeQty = Number(position.qty_open !== undefined && position.qty_open !== null && Number(position.qty_open) > 0 ? position.qty_open : (position.qty_total || 1));
+    let pnl: number | null = null;
+    let rpcErr: any = null;
+
+    const { isRailwayDbConfigured, executeClosePositionInRailway } = await import('@/lib/railway-db');
+    if (isRailwayDbConfigured()) {
+      try {
+        const rRes = await executeClosePositionInRailway({
+          positionId: id,
+          closeQty,
+          closePrice: exitPrice,
+          closedBy: 'ADMIN',
+          expectedBrokerage: carryBrokerage,
+        });
+        if (rRes !== null) {
+          pnl = rRes.pnl;
+        }
+      } catch (rErr) {
+        console.warn('[POST /api/admin/positions/[id]/sqoff] Railway close error, trying fallback:', rErr);
+      }
+    }
+
+    if (pnl === null) {
+      const res = await adminClient.rpc('close_position_v2', {
+        p_position_id:        id,
+        p_close_qty:          closeQty,
+        p_close_price:        exitPrice,
+        p_closed_by:          'ADMIN',
+        p_expected_brokerage: carryBrokerage,
+      });
+      pnl = res.data;
+      rpcErr = res.error;
+    }
 
     if (rpcErr) {
       console.error('[POST /api/admin/positions/[id]/sqoff] RPC error:', rpcErr);

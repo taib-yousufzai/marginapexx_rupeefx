@@ -1,6 +1,11 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { calculateCarryBrokerage } from './trading/BrokerageCalculator';
 import { calculateExitPrice, calculateFreeMargin } from './floatingPnl.ts';
+import {
+  isRailwayDbConfigured,
+  executeClosePositionInRailway,
+  getRailwayUserBalance,
+} from './railway-db';
 
 export interface LiquidationResult {
   liquidated: boolean;
@@ -78,6 +83,15 @@ export async function checkAndExecuteAccountLiquidation(
   let confirmedBalance = balance;
   let confirmedAutoSqoff = autoSqoffPercent;
   try {
+    if (isRailwayDbConfigured()) {
+      try {
+        const rBal = await getRailwayUserBalance(userId);
+        if (rBal !== null) {
+          confirmedBalance = rBal;
+        }
+      } catch {}
+    }
+
     const { data: liveProfile } = await admin
       .from('profiles')
       .select('balance, auto_sqoff')
@@ -85,7 +99,9 @@ export async function checkAndExecuteAccountLiquidation(
       .single();
 
     if (liveProfile) {
-      confirmedBalance = Number(liveProfile.balance ?? balance);
+      if (liveProfile.balance !== undefined && liveProfile.balance !== null && !isRailwayDbConfigured()) {
+        confirmedBalance = Number(liveProfile.balance ?? balance);
+      }
       if (liveProfile.auto_sqoff && Number(liveProfile.auto_sqoff) > 0) {
         confirmedAutoSqoff = Number(liveProfile.auto_sqoff);
       }
@@ -173,33 +189,56 @@ export async function checkAndExecuteAccountLiquidation(
       commissionValue: bufferSettings?.commission_value,
     });
 
-    let closedThisPos = false;
+    const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
 
-    // Attempt close with retry & graceful exception handling
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    // 1. Attempt close natively in Railway Postgres first (< 5ms)
+    if (isRailwayDbConfigured()) {
       try {
-        const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
-        const { error: closeErr } = await admin.rpc('close_position_v2', {
-          p_position_id:        pos.id,
-          p_close_qty:          closeQty,
-          p_close_price:        exitPrice,
-          p_closed_by:          'LIQUIDATION',
-          p_expected_brokerage: carryBrokerage,
+        const rRes = await executeClosePositionInRailway({
+          positionId: pos.id,
+          closeQty,
+          closePrice: exitPrice,
+          closedBy: 'LIQUIDATION',
+          expectedBrokerage: carryBrokerage,
         });
-
-        if (!closeErr) {
+        if (rRes !== null) {
           closedThisPos = true;
-          break;
         }
-
-        if (attempt === 1) {
-          await new Promise(r => setTimeout(r, 200));
+      } catch (rErr: any) {
+        if (rErr.message?.toLowerCase().includes('already closed')) {
+          closedThisPos = true;
         } else {
-          console.error(`[LiquidationEngine] close_position FAILED for ${pos.id}: ${closeErr.message}`);
+          console.warn(`[LiquidationEngine] Railway close error for ${pos.id}, falling back:`, rErr.message);
         }
-      } catch (err: any) {
-        if (attempt === 2) {
-          console.warn(`[LiquidationEngine] close_position_v2 exception for ${pos.id}:`, err?.message);
+      }
+    }
+
+    // 2. Supabase Fallback (only if Railway did not execute)
+    if (!closedThisPos) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const { error: closeErr } = await admin.rpc('close_position_v2', {
+            p_position_id:        pos.id,
+            p_close_qty:          closeQty,
+            p_close_price:        exitPrice,
+            p_closed_by:          'LIQUIDATION',
+            p_expected_brokerage: carryBrokerage,
+          });
+
+          if (!closeErr) {
+            closedThisPos = true;
+            break;
+          }
+
+          if (attempt === 1) {
+            await new Promise(r => setTimeout(r, 200));
+          } else {
+            console.error(`[LiquidationEngine] close_position FAILED for ${pos.id}: ${closeErr.message}`);
+          }
+        } catch (err: any) {
+          if (attempt === 2) {
+            console.warn(`[LiquidationEngine] close_position_v2 exception for ${pos.id}:`, err?.message);
+          }
         }
       }
     }
@@ -210,18 +249,31 @@ export async function checkAndExecuteAccountLiquidation(
       positionsClosed++;
       liquidatedPositions.push(pos);
 
-      // Re-read live wallet balance from profiles
-      try {
-        const { data: updatedProfile } = await admin
-          .from('profiles')
-          .select('balance')
-          .eq('id', userId)
-          .single();
-        if (updatedProfile) {
-          currentBalance = Number(updatedProfile.balance ?? 0);
+      // Re-read live wallet balance (Railway first)
+      let balanceUpdated = false;
+      if (isRailwayDbConfigured()) {
+        try {
+          const rBal = await getRailwayUserBalance(userId);
+          if (rBal !== null) {
+            currentBalance = rBal;
+            balanceUpdated = true;
+          }
+        } catch {}
+      }
+
+      if (!balanceUpdated) {
+        try {
+          const { data: updatedProfile } = await admin
+            .from('profiles')
+            .select('balance')
+            .eq('id', userId)
+            .single();
+          if (updatedProfile) {
+            currentBalance = Number(updatedProfile.balance ?? 0);
+          }
+        } catch {
+          // Keep current balance estimate
         }
-      } catch {
-        // Keep current balance estimate
       }
 
       // Re-evaluate floating PnL of remaining open positions

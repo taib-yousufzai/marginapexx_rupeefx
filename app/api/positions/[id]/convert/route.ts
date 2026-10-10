@@ -175,6 +175,21 @@ export async function POST(
     }
 
     try {
+      const { isRailwayDbConfigured, getRailwayPool } = await import('@/lib/railway-db');
+      if (isRailwayDbConfigured()) {
+        const db = getRailwayPool();
+        if (db) {
+          await db.query(
+            `UPDATE public.positions SET product_type = $1, margin_required = $2, updated_at = now() WHERE id = $3::uuid AND user_id = $4::uuid;`,
+            [product_type, newMarginRequired, positionId, user.id]
+          );
+        }
+      }
+    } catch (rErr) {
+      console.warn('[Positions Convert API] Railway sync warning:', rErr);
+    }
+
+    try {
       const { invalidateUserPositionsCache } = await import('@/lib/redisSettingsCache');
       await invalidateUserPositionsCache(user.id);
     } catch (_) {}

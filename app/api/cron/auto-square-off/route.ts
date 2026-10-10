@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import { calculateCarryBrokerage } from '@/lib/trading/BrokerageCalculator';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
+import { isRailwayDbConfigured, executeClosePositionInRailway } from '@/lib/railway-db';
 
 
 export const dynamic = 'force-dynamic';
@@ -245,15 +246,44 @@ export async function GET(request: Request) {
         }
         
         const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
-        const { error: rpcErr } = await admin.rpc('close_position_v2', {
-          p_position_id:        pos.id,
-          p_close_qty:          closeQty,
-          p_close_price:        exitPrice,
-          p_closed_by:          'SYSTEM',
-          p_expected_brokerage: carryBrokerage,
-        });
+        let closeSuccess = false;
 
-        if (!rpcErr) {
+        if (isRailwayDbConfigured()) {
+          try {
+            const rRes = await executeClosePositionInRailway({
+              positionId: pos.id,
+              closeQty,
+              closePrice: exitPrice,
+              closedBy: 'SYSTEM',
+              expectedBrokerage: carryBrokerage,
+            });
+            if (rRes !== null) {
+              closeSuccess = true;
+            }
+          } catch (rErr: any) {
+            if (rErr.message?.toLowerCase().includes('already closed')) {
+              closeSuccess = true;
+            } else {
+              console.warn(`[Auto Sq-Off] Railway close error for pos ${pos.id}, trying fallback:`, rErr.message);
+            }
+          }
+        }
+
+        if (!closeSuccess) {
+          const { error: rpcErr } = await admin.rpc('close_position_v2', {
+            p_position_id:        pos.id,
+            p_close_qty:          closeQty,
+            p_close_price:        exitPrice,
+            p_closed_by:          'SYSTEM',
+            p_expected_brokerage: carryBrokerage,
+          });
+
+          if (!rpcErr) {
+            closeSuccess = true;
+          }
+        }
+
+        if (closeSuccess) {
           const { sendNotifications } = await import('@/lib/notifications');
           await sendNotifications(admin, {
             user_id: userProfile.id,

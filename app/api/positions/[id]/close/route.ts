@@ -19,7 +19,7 @@ import { getPlatformSetting } from '@/lib/getPlatformSetting';
 import { getSharedKiteSession } from '@/lib/kiteSession';
 import { calculateCarryBrokerage } from '@/lib/trading/BrokerageCalculator';
 import type { ClosePositionResponse } from '@/lib/types/order';
-import { isRailwayDbConfigured, executeClosePositionInRailway } from '@/lib/railway-db';
+import { isRailwayDbConfigured, executeClosePositionInRailway, getRailwayPositionsByIds, getRailwayOpenPositions } from '@/lib/railway-db';
 
 function cleanSym(s?: string | null): string {
   if (!s) return '';
@@ -206,12 +206,23 @@ export async function POST(
   // 1. Parallel fetch position (if valid UUID) and cached profile
   const [posResult, cachedProfile] = await Promise.all([
     isUuid
-      ? withDbRetry(() => admin.from('positions')
-          .select('*')
-          .eq('id', positionId)
-          .eq('user_id', user.id)
-          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-          .maybeSingle())
+      ? (async () => {
+          if (isRailwayDbConfigured()) {
+            try {
+              const rPos = await getRailwayPositionsByIds(user.id, [positionId]);
+              if (rPos && rPos.length > 0) {
+                const match = rPos.find(p => ['open', 'active'].includes(String(p.status || '').toLowerCase()));
+                if (match) return { data: match, error: null };
+              }
+            } catch { /* fallback */ }
+          }
+          return withDbRetry(() => admin.from('positions')
+            .select('*')
+            .eq('id', positionId)
+            .eq('user_id', user.id)
+            .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+            .maybeSingle());
+        })()
       : Promise.resolve({ data: null, error: null }),
     getCachedUserProfile(user.id, () => admin),
   ]);
@@ -226,12 +237,22 @@ export async function POST(
     const targetClean = cleanSym(targetSymbol);
 
     for (let attempt = 0; attempt < 5; attempt++) {
-      const { data: userOpenPositions } = await withDbRetry(() => admin
-        .from('positions')
-        .select('*')
-        .eq('user_id', user.id)
-        .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-        .order('created_at', { ascending: false }));
+      let userOpenPositions: any[] | null = null;
+      if (isRailwayDbConfigured()) {
+        try {
+          userOpenPositions = await getRailwayOpenPositions(user.id);
+        } catch { /* fallback */ }
+      }
+
+      if (!userOpenPositions) {
+        const res = await withDbRetry(() => admin
+          .from('positions')
+          .select('*')
+          .eq('user_id', user.id)
+          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+          .order('created_at', { ascending: false }));
+        userOpenPositions = res?.data ?? [];
+      }
 
       if (userOpenPositions && userOpenPositions.length > 0) {
         if (targetClean) {

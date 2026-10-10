@@ -115,18 +115,47 @@ export async function POST(request: Request): Promise<Response> {
         });
       }
 
-      const { error: rpcErr } = await adminClient.rpc('close_position_v2', {
-        p_position_id:        pos.id,
-        p_close_qty:          Number(pos.qty_open),
-        p_close_price:        exitPrice,
-        p_closed_by:          'ADMIN',
-        p_expected_brokerage: carryBrokerage,
-      });
+      const closeQty = Number(pos.qty_open !== undefined && pos.qty_open !== null && Number(pos.qty_open) > 0 ? pos.qty_open : (pos.qty_total || 1));
+      let closedThisPos = false;
 
-      if (rpcErr) {
-        console.error(`[square-off-all] failed to close position ${pos.id}:`, rpcErr.message);
-        errors++;
-      } else {
+      const { isRailwayDbConfigured, executeClosePositionInRailway } = await import('@/lib/railway-db');
+      if (isRailwayDbConfigured()) {
+        try {
+          const rRes = await executeClosePositionInRailway({
+            positionId: pos.id,
+            closeQty,
+            closePrice: exitPrice,
+            closedBy: 'ADMIN',
+            expectedBrokerage: carryBrokerage,
+          });
+          if (rRes !== null) {
+            closedThisPos = true;
+          }
+        } catch (rErr: any) {
+          if (rErr.message?.toLowerCase().includes('already closed')) {
+            closedThisPos = true;
+          }
+        }
+      }
+
+      if (!closedThisPos) {
+        const { error: rpcErr } = await adminClient.rpc('close_position_v2', {
+          p_position_id:        pos.id,
+          p_close_qty:          closeQty,
+          p_close_price:        exitPrice,
+          p_closed_by:          'ADMIN',
+          p_expected_brokerage: carryBrokerage,
+        });
+
+        if (rpcErr) {
+          console.error(`[square-off-all] failed to close position ${pos.id}:`, rpcErr.message);
+          errors++;
+        } else {
+          closedThisPos = true;
+        }
+      }
+
+      if (closedThisPos) {
         squaredOff++;
       }
     }
