@@ -62,8 +62,10 @@ export async function getCachedScriptSettings(getSupabaseAdmin: () => any): Prom
   }
 }
 
+const MEM_USER_SEG_SETTINGS = new Map<string, { data: any[]; expiresAt: number }>();
+
 /**
- * Get user segment settings using Redis caching (10-minute TTL).
+ * Get user segment settings using in-memory L1 + Redis caching (10-minute TTL).
  */
 export async function getCachedUserSegmentSettings(
   userId: string,
@@ -71,14 +73,24 @@ export async function getCachedUserSegmentSettings(
   isScalper: boolean,
   getSupabaseAdmin: () => any
 ): Promise<any[]> {
-  const redis = getRedisClient();
   const targetTable = isScalper ? 'scalper_segment_settings' : 'segment_settings';
+  const memKey = `${userId}:${segment}:${targetTable}`;
+  const now = Date.now();
+
+  const memCached = MEM_USER_SEG_SETTINGS.get(memKey);
+  if (memCached && memCached.expiresAt > now) {
+    return memCached.data;
+  }
+
+  const redis = getRedisClient();
   const redisKey = `user:seg_settings:${userId}:${segment}:${targetTable}`;
 
   try {
     const cached = await redis.get(redisKey);
     if (cached) {
-      return JSON.parse(cached);
+      const parsed = JSON.parse(cached);
+      MEM_USER_SEG_SETTINGS.set(memKey, { data: parsed, expiresAt: now + 60 * 1000 });
+      return parsed;
     }
   } catch (_) {}
 
@@ -91,6 +103,8 @@ export async function getCachedUserSegmentSettings(
       .eq('segment', segment));
 
     const result = data ?? [];
+    MEM_USER_SEG_SETTINGS.set(memKey, { data: result, expiresAt: now + 60 * 1000 });
+
     try {
       await redis.setex(redisKey, 600, JSON.stringify(result));
     } catch (_) {}
@@ -190,6 +204,11 @@ export async function invalidateUserProfile(userId: string): Promise<void> {
  * Invalidate user segment settings in Redis when updated by admin.
  */
 export async function invalidateUserSegmentSettings(userId: string): Promise<void> {
+  for (const k of Array.from(MEM_USER_SEG_SETTINGS.keys())) {
+    if (k.startsWith(`${userId}:`)) {
+      MEM_USER_SEG_SETTINGS.delete(k);
+    }
+  }
   const redis = getRedisClient();
   try {
     const keys = await redis.keys(`user:seg_settings:${userId}:*`);

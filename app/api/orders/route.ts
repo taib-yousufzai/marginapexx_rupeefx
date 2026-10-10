@@ -115,20 +115,25 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
     try {
       const redis = getRedisClient();
       const keysToTry = [cleanSym, baseClean, `CRYPTO:${cleanSym}`, `CRYPTO:${baseClean}`, `BINANCE:${cleanSym}`];
-      for (const k of keysToTry) {
-        const cached = await redis.hget('market:quotes', k);
-        if (cached) {
-          const tick = JSON.parse(cached);
-          const ltp = Number(tick.last_price || tick.lastPrice || 0);
-          if (ltp > 0) {
-            const bp = tick.bid ? Number(tick.bid) : ltp;
-            const ap = tick.ask ? Number(tick.ask) : ltp;
-            return {
-              last_price: ltp,
-              bid: bp,
-              ask: ap,
-              depth: tick.depth || null,
-            };
+      const cachedList = await Promise.race([
+        redis.hmget('market:quotes', ...keysToTry),
+        new Promise<any[]>(r => setTimeout(() => r([]), 100))
+      ]);
+      if (Array.isArray(cachedList)) {
+        for (const cached of cachedList) {
+          if (cached) {
+            const tick = JSON.parse(cached);
+            const ltp = Number(tick.last_price || tick.lastPrice || 0);
+            if (ltp > 0) {
+              const bp = tick.bid ? Number(tick.bid) : ltp;
+              const ap = tick.ask ? Number(tick.ask) : ltp;
+              return {
+                last_price: ltp,
+                bid: bp,
+                ask: ap,
+                depth: tick.depth || null,
+              };
+            }
           }
         }
       }
@@ -138,7 +143,7 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
     try {
       const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
       const params = new URLSearchParams({ symbols: cleanSym });
-      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(600) });
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(250) });
       if (resTicker.ok) {
         const json = await resTicker.json();
         if (json.success && json.data && json.data[cleanSym]) {
@@ -158,8 +163,8 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
 
     // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel with a fast timeout
     const [bookRes, priceRes] = await Promise.all([
-      fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(1200) }).catch(() => null),
-      fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(1200) }).catch(() => null),
+      fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(350) }).catch(() => null),
+      fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(350) }).catch(() => null),
     ]);
 
     const usdInrRate = 1;
@@ -220,13 +225,49 @@ async function fetchKiteQuotes(instruments: string[]): Promise<Record<string, Se
   const foundKiteIds = new Set<string>();
 
   try {
+    // 0. Check Redis cache first (0.5ms)
+    try {
+      const redis = getRedisClient();
+      const cachedList = await Promise.race([
+        redis.hmget('market:quotes', ...instruments),
+        new Promise<any[]>(r => setTimeout(() => r([]), 100))
+      ]);
+      if (Array.isArray(cachedList)) {
+        instruments.forEach((inst, idx) => {
+          const raw = cachedList[idx];
+          if (raw) {
+            try {
+              const tick = JSON.parse(raw);
+              const ltp = Number(tick.last_price || tick.lastPrice || tick.ltp || 0);
+              if (ltp > 0) {
+                const bidPrice = tick.bid ?? tick.depth?.buy?.[0]?.price ?? null;
+                const askPrice = tick.ask ?? tick.depth?.sell?.[0]?.price ?? null;
+                result[inst] = {
+                  last_price: ltp,
+                  bid: bidPrice ? Number(bidPrice) : null,
+                  ask: askPrice ? Number(askPrice) : null,
+                  depth: tick.depth || null,
+                };
+                foundKiteIds.add(inst);
+              }
+            } catch {}
+          }
+        });
+      }
+    } catch (_) {}
+
+    if (foundKiteIds.size === instruments.length) {
+      return result;
+    }
+
     const admin = getAdminClient();
 
-    // 1. Fetch available quotes from Ticker Daemon in-memory quotes API
+    // 1. Fetch remaining quotes from Ticker Daemon in-memory quotes API
+    const remainingToFetch = instruments.filter(id => !foundKiteIds.has(id));
     try {
       const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || 'http://localhost:8080';
-      const params = new URLSearchParams({ symbols: instruments.join(',') });
-      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(2000) });
+      const params = new URLSearchParams({ symbols: remainingToFetch.join(',') });
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(300) });
       if (resTicker.ok) {
         const json = await resTicker.json();
         if (json.success && json.data) {
@@ -267,7 +308,7 @@ async function fetchKiteQuotes(instruments: string[]): Promise<Record<string, Se
           Authorization: `token ${apiKey}:${session.accessToken}`,
         },
         cache: 'no-store',
-        signal: AbortSignal.timeout(2500),
+        signal: AbortSignal.timeout(500),
       });
 
       if (!res.ok) return result;
@@ -678,58 +719,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const admin = getAdminClient();
     const useRailway = isRailwayDbConfigured();
 
-    // Check market hours
-    try {
-      const exchangeName = symbol.includes(':') ? symbol.split(':')[0] : 'NSE';
-      const ex = exchangeName.toUpperCase();
-      const segUpper = dbSegment.toUpperCase();
-
-      if (!segUpper.includes('CRYPTO') && !is_exit) {
-        const segmentId = RiskValidation.resolveTradingHoursSegmentId(symbol, dbSegment);
-        const nowMs = Date.now();
-        const cachedHour = tradingHoursCache.get(segmentId);
-        let segmentHour: any = null;
-        let hrError: any = null;
-
-        if (cachedHour && cachedHour.expiresAt > nowMs) {
-          segmentHour = cachedHour.data;
-        } else {
-          if (useRailway) {
-            try {
-              const rRows = await queryRailwayDb(
-                `SELECT name, start_time, end_time, is_active FROM public.trading_hours WHERE LOWER(id) = LOWER($1) LIMIT 1;`,
-                [segmentId]
-              );
-              if (rRows && rRows.length > 0) {
-                segmentHour = rRows[0];
-              }
-            } catch {}
-          }
-          if (!segmentHour) {
-            const res: any = await (admin
-              .from('trading_hours') as any)
-              .select('name, start_time, end_time, is_active')
-              .ilike('id', segmentId)
-              .maybeSingle();
-            segmentHour = res?.data;
-            hrError = res?.error;
-          }
-          if (segmentHour) {
-            tradingHoursCache.set(segmentId, { data: segmentHour, expiresAt: nowMs + TRADING_HOURS_TTL_MS });
-          }
-        }
-
-        const effectiveHours = (!hrError && segmentHour) ? segmentHour : null;
-        if (!RiskValidation.isMarketOpenForSegment(segmentId, effectiveHours)) {
-          return NextResponse.json({ error: 'market is closed' }, { status: 400 });
-        }
-      }
-    } catch (err) {
-      console.error('[POST /api/orders] Market hours check error:', err);
-      // Fail closed for safety
-      return NextResponse.json({ error: 'market is closed' }, { status: 400 });
-    }
-
     const kiteInst = kite_instrument || symbol;
 
     // Identify all instruments needed for this order to batch the Kite API call
@@ -739,15 +728,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let underlyingId = 'NSE:NIFTY 50';
     if (parsedOption) {
       underlyingId = await resolveUnderlyingKiteId(symbol, parsedOption.underlying);
-    }
-
-    if (isOption && underlyingId !== kiteInst) {
-      instrumentsToFetch.push(underlyingId);
+      if (underlyingId !== kiteInst) {
+        instrumentsToFetch.push(underlyingId);
+      }
     }
 
     // 4-6 + 8-9: Run cached profile / settings lookups AND independent DB queries in parallel.
     // When Railway Postgres is configured, reads complete in <1ms over private network.
-    const [cachedProfile, balanceResult, positionsResult, pendingOrdersResult, quotesMap, scriptSettingsResult] = await Promise.all([
+    const [
+      cachedProfile,
+      balanceResult,
+      positionsResult,
+      pendingOrdersResult,
+      quotesMap,
+      scriptSettingsResult,
+      marketHoursCheckResult,
+    ] = await Promise.all([
       // Profile (Cached in L1/Redis for instant permissions & trading mode)
       getCachedUserProfile(user.id, () => admin),
 
@@ -779,7 +775,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           .in('status', ['open', 'OPEN', 'active', 'ACTIVE', 'PARTIALLY_CLOSED', 'PARTIAL_CLOSED']));
       })(),
 
-      // Fetch pending orders to verify total open lot limits (<1ms on Railway, fallback to Supabase)
+      // Fetch pending orders with full metadata for limit and duplicate exit checks (<1ms on Railway, fallback to Supabase)
       (async () => {
         if (useRailway) {
           try {
@@ -788,12 +784,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           } catch { /* fallback */ }
         }
         return withDbRetry(() => admin.from('orders')
-          .select('symbol, qty, lots, is_exit, status')
+          .select('id, symbol, qty, lots, is_exit, status, side, info, linked_position_id')
           .eq('user_id', user.id)
           .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending']));
       })(),
 
-      // Fetch quotes — either Kite or Binance depending on segment (with 2.0s fast timeout guard)
+      // Fetch quotes — either Kite or Binance depending on segment (with tight timeout guard)
       (async () => {
         const fetchPromise = (async () => {
           if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
@@ -862,8 +858,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         })();
 
+        const maxQuoteWait = (client_price && Number(client_price) > 0) ? 150 : 500;
         const timeoutPromise = new Promise<Record<string, ServerQuote>>((resolve) =>
-          setTimeout(() => resolve({}), 2000)
+          setTimeout(() => resolve({}), maxQuoteWait)
         );
 
         return Promise.race([fetchPromise, timeoutPromise]);
@@ -871,7 +868,61 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
       // Fetch script settings for dynamic lot size (cached in Redis / memory)
       getCachedScriptSettings(() => admin),
+
+      // Check market hours concurrently in parallel
+      (async (): Promise<{ open: boolean; error?: string }> => {
+        try {
+          const segUpper = dbSegment.toUpperCase();
+          if (segUpper.includes('CRYPTO') || is_exit) return { open: true };
+
+          const segmentId = RiskValidation.resolveTradingHoursSegmentId(symbol, dbSegment);
+          const nowMs = Date.now();
+          const cachedHour = tradingHoursCache.get(segmentId);
+          let segmentHour: any = null;
+          let hrError: any = null;
+
+          if (cachedHour && cachedHour.expiresAt > nowMs) {
+            segmentHour = cachedHour.data;
+          } else {
+            if (useRailway) {
+              try {
+                const rRows = await queryRailwayDb(
+                  `SELECT name, start_time, end_time, is_active FROM public.trading_hours WHERE LOWER(id) = LOWER($1) LIMIT 1;`,
+                  [segmentId]
+                );
+                if (rRows && rRows.length > 0) {
+                  segmentHour = rRows[0];
+                }
+              } catch {}
+            }
+            if (!segmentHour) {
+              const res: any = await (admin
+                .from('trading_hours') as any)
+                .select('name, start_time, end_time, is_active')
+                .ilike('id', segmentId)
+                .maybeSingle();
+              segmentHour = res?.data;
+              hrError = res?.error;
+            }
+            if (segmentHour) {
+              tradingHoursCache.set(segmentId, { data: segmentHour, expiresAt: nowMs + TRADING_HOURS_TTL_MS });
+            }
+          }
+
+          const effectiveHours = (!hrError && segmentHour) ? segmentHour : null;
+          if (!RiskValidation.isMarketOpenForSegment(segmentId, effectiveHours)) {
+            return { open: false, error: 'market is closed' };
+          }
+          return { open: true };
+        } catch {
+          return { open: false, error: 'market is closed' };
+        }
+      })(),
     ]);
+
+    if (!marketHoursCheckResult.open) {
+      return NextResponse.json({ error: marketHoursCheckResult.error || 'market is closed' }, { status: 400 });
+    }
 
     const t4_backendQuoteRead = Date.now();
     const openPositions = positionsResult?.data ?? [];
@@ -1540,16 +1591,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
 
       if (!existingExitOrders) {
-        const { data } = await admin
-          .from('orders')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('symbol', symbol)
-          .eq('side', exitSideForCheck)
-          .eq('is_exit', true)
-          .in('status', ['PENDING', 'TRIGGER_PENDING'])
-          .limit(5);
-        existingExitOrders = data ?? [];
+        const allPending = (pendingOrdersResult?.data ?? []) as any[];
+        existingExitOrders = allPending.filter((o: any) =>
+          (o.symbol === symbol || cleanSymHelper(o.symbol) === cleanSymHelper(symbol)) &&
+          o.side === exitSideForCheck &&
+          Boolean(o.is_exit)
+        );
       }
 
       if (existingExitOrders && existingExitOrders.length > 0) {
@@ -1723,95 +1770,98 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // ── SLM entry: insert a linked pending SL exit order ─────────────────────
     // SLM = market entry now + protective SL exit order that auto-fires when
     // stop_loss price is hit, closing the position at market.
+    // Executed concurrently in background so user receives instant fill confirmation.
     if (order_type === 'SLM' && !resolvedIsExit && resolvedStopLoss && resolvedStopLoss > 0) {
-      try {
-        const slSide = side === 'BUY' ? 'SELL' : 'BUY';
-        if (useRailway) {
-          const linkedPosId = confirmedPosition?.id ?? resolvedLinkedPositionId ?? null;
-          await executePlaceOrderInRailway({
-            userId: user.id,
-            symbol: symbol,
-            kiteInst: kiteInst,
-            segment: dbSegment,
-            side: slSide,
-            orderType: 'SL',
-            productType: product_type ?? 'INTRADAY',
-            qty: qty,
-            lots: lots ?? 0,
-            ltp: baseLtp,
-            fillPrice: resolvedStopLoss,
-            isExit: true,
-            bufferFee: 0,
-            status: 'PENDING',
-            triggerPrice: resolvedStopLoss,
-            stopLoss: resolvedStopLoss,
-            target: null,
-            info: linkedPosId,
-            expectedMargin: 0,
-            expectedBrokerage: 0,
-            idempotencyKey: null,
-            linkedPositionId: linkedPosId,
-          });
+      (async () => {
+        try {
+          const slSide = side === 'BUY' ? 'SELL' : 'BUY';
+          if (useRailway) {
+            const linkedPosId = confirmedPosition?.id ?? resolvedLinkedPositionId ?? null;
+            await executePlaceOrderInRailway({
+              userId: user.id,
+              symbol: symbol,
+              kiteInst: kiteInst,
+              segment: dbSegment,
+              side: slSide,
+              orderType: 'SL',
+              productType: product_type ?? 'INTRADAY',
+              qty: qty,
+              lots: lots ?? 0,
+              ltp: baseLtp,
+              fillPrice: resolvedStopLoss,
+              isExit: true,
+              bufferFee: 0,
+              status: 'PENDING',
+              triggerPrice: resolvedStopLoss,
+              stopLoss: resolvedStopLoss,
+              target: null,
+              info: linkedPosId,
+              expectedMargin: 0,
+              expectedBrokerage: 0,
+              idempotencyKey: null,
+              linkedPositionId: linkedPosId,
+            });
 
-          if (linkedPosId) {
-            queryRailwayDb(
-              `UPDATE public.positions SET stop_loss = $1, updated_at = now() WHERE id = $2 AND user_id = $3`,
-              [resolvedStopLoss, linkedPosId, user.id]
-            ).catch(() => {});
-          }
-          console.log(`[POST /api/orders] SLM (Railway): linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
-        } else {
-          // Fetch the newly created position for this order so we can link the SL
-          const { data: newPos } = await admin
-            .from('positions')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('symbol', symbol)
-            .in('status', ['open', 'OPEN', 'active'])
-            .order('created_at', { ascending: false })
-            .maybeSingle();
-
-          const linkedPosId = newPos?.id ?? resolvedLinkedPositionId ?? null;
-
-          await admin.rpc('place_order_v2', {
-            p_user_id: user.id,
-            p_symbol: symbol,
-            p_kite_inst: kiteInst,
-            p_segment: dbSegment,
-            p_side: slSide,
-            p_order_type: 'SL',
-            p_product_type: product_type ?? 'INTRADAY',
-            p_qty: qty,
-            p_lots: lots ?? 0,
-            p_ltp: baseLtp,
-            p_fill_price: resolvedStopLoss,
-            p_is_exit: true,
-            p_buffer_fee: 0,
-            p_status: 'PENDING',
-            p_trigger_price: resolvedStopLoss,
-            p_stop_loss: resolvedStopLoss,
-            p_target: null,
-            p_info: linkedPosId,
-            p_expected_margin: 0,
-            p_expected_brokerage: 0,
-            p_idempotency_key: null,
-            p_linked_position_id: linkedPosId,
-          });
-          console.log(`[POST /api/orders] SLM: linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
-
-          if (linkedPosId) {
-            await admin
+            if (linkedPosId) {
+              queryRailwayDb(
+                `UPDATE public.positions SET stop_loss = $1, updated_at = now() WHERE id = $2 AND user_id = $3`,
+                [resolvedStopLoss, linkedPosId, user.id]
+              ).catch(() => {});
+            }
+            console.log(`[POST /api/orders] SLM (Railway): linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
+          } else {
+            // Fetch the newly created position for this order so we can link the SL
+            const { data: newPos } = await admin
               .from('positions')
-              .update({ stop_loss: resolvedStopLoss, updated_at: new Date().toISOString() })
-              .eq('id', linkedPosId)
+              .select('id')
               .eq('user_id', user.id)
-              .in('status', ['open', 'OPEN', 'active']);
+              .eq('symbol', symbol)
+              .in('status', ['open', 'OPEN', 'active'])
+              .order('created_at', { ascending: false })
+              .maybeSingle();
+
+            const linkedPosId = newPos?.id ?? resolvedLinkedPositionId ?? null;
+
+            await admin.rpc('place_order_v2', {
+              p_user_id: user.id,
+              p_symbol: symbol,
+              p_kite_inst: kiteInst,
+              p_segment: dbSegment,
+              p_side: slSide,
+              p_order_type: 'SL',
+              p_product_type: product_type ?? 'INTRADAY',
+              p_qty: qty,
+              p_lots: lots ?? 0,
+              p_ltp: baseLtp,
+              p_fill_price: resolvedStopLoss,
+              p_is_exit: true,
+              p_buffer_fee: 0,
+              p_status: 'PENDING',
+              p_trigger_price: resolvedStopLoss,
+              p_stop_loss: resolvedStopLoss,
+              p_target: null,
+              p_info: linkedPosId,
+              p_expected_margin: 0,
+              p_expected_brokerage: 0,
+              p_idempotency_key: null,
+              p_linked_position_id: linkedPosId,
+            });
+            console.log(`[POST /api/orders] SLM: linked SL exit order inserted at ${resolvedStopLoss} for position ${linkedPosId}`);
+
+            if (linkedPosId) {
+              await admin
+                .from('positions')
+                .update({ stop_loss: resolvedStopLoss, updated_at: new Date().toISOString() })
+                .eq('id', linkedPosId)
+                .eq('user_id', user.id)
+                .in('status', ['open', 'OPEN', 'active']);
+            }
           }
+        } catch (slErr) {
+          // Non-fatal: SLM entry already executed; log but don't block response
+          console.warn('[POST /api/orders] Non-fatal: failed to insert linked SL exit order for SLM entry:', slErr);
         }
-      } catch (slErr) {
-        // Non-fatal: SLM entry already executed; log but don't block response
-        console.warn('[POST /api/orders] Non-fatal: failed to insert linked SL exit order for SLM entry:', slErr);
-      }
+      })();
     }
 
     // ── Fix 3.1c: Market exit — fully await orphan order cleanup ─────────────

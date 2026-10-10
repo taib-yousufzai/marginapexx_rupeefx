@@ -225,15 +225,11 @@ export async function validateOptionStrike(params: {
 
   if (!underlyingPrice || underlyingPrice <= 0) {
     try {
-      const speedMap = await fetchSpeedQuotes([underlyingKiteId, `MCX:${mcxBase}`, `NSE:${baseSymbol}`]);
+      const speedMap = await Promise.race([
+        fetchSpeedQuotes([underlyingKiteId, `MCX:${mcxBase}`, `NSE:${baseSymbol}`]),
+        new Promise<any>(r => setTimeout(() => r({}), 200))
+      ]);
       underlyingPrice = speedMap?.[underlyingKiteId] || speedMap?.[`NSE:${baseSymbol}`] || speedMap?.[`MCX:${mcxBase}`] || 0;
-    } catch { /* ignore */ }
-  }
-
-  if (!underlyingPrice || underlyingPrice <= 0) {
-    try {
-      const restMap = await fetchKiteQuotes([underlyingKiteId, `MCX:${mcxBase}`, `NSE:${baseSymbol}`]);
-      underlyingPrice = restMap?.[underlyingKiteId] || restMap?.[`NSE:${baseSymbol}`] || restMap?.[`MCX:${mcxBase}`] || 0;
     } catch { /* ignore */ }
   }
 
