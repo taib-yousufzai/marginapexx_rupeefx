@@ -392,6 +392,9 @@ export default function HistoryPage() {
     window.addEventListener('order_placed_optimistic', handleOptimisticOrder);
     window.addEventListener('order_placed_with_data', handleOptimisticOrder);
     window.addEventListener('storage', handleStorage);
+    // Fresh DB re-fetch 1.5s after exit to overwrite optimistic 0-brokerage with real value
+    const handleForceDbRefresh = () => fetchHistory(true, true);
+    window.addEventListener('force_history_db_refresh', handleForceDbRefresh);
 
     // Instant sync when tab/app becomes visible or focused
     const handleVisibility = () => {
@@ -428,7 +431,7 @@ export default function HistoryPage() {
       const userId = session?.user?.id;
       if (!userId) return;
       channel = supabase
-        .channel(`user-history-${userId}-${Date.now()}`)
+        .channel(`user-history-${userId}`)
         .on('postgres_changes', { event: '*', schema: 'public', table: 'positions', filter: `user_id=eq.${userId}` }, () => handleCloseOrOrderEvent())
         .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `user_id=eq.${userId}` }, () => handleCloseOrOrderEvent())
         .subscribe();
@@ -437,6 +440,9 @@ export default function HistoryPage() {
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       clearInterval(pollInterval);
+      if (channel) {
+        try { supabase.removeChannel(channel); } catch (_) {}
+      }
       if (bc) {
         try {
           bc.close();
@@ -453,6 +459,7 @@ export default function HistoryPage() {
       window.removeEventListener('position_closed_rollback', handleOptimisticRollback);
       window.removeEventListener('order_placed_optimistic', handleOptimisticOrder);
       window.removeEventListener('order_placed_with_data', handleOptimisticOrder);
+      window.removeEventListener('force_history_db_refresh', handleForceDbRefresh);
       if (channel) {
         supabase.removeChannel(channel);
       }

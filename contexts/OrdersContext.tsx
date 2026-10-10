@@ -198,29 +198,32 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
   useEffect(() => {
     let cancelled = false;
     let isSubscribed = false;
-    const channelName = `my-orders-realtime-${Math.random().toString(36).slice(2)}`;
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders' },
-        () => {
-          fetchOrders();
-        }
-      )
-      // Also listen to positions table — virtual SL/Target pending orders are
-      // generated from open positions, so a new/updated position must trigger a refresh.
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'positions' },
-        () => {
-          fetchOrders();
-        }
-      );
+    const { userId } = getSharedSessionSync();
+    let channel: any = null;
 
-    channel.subscribe((status) => {
-      isSubscribed = status === 'SUBSCRIBED';
-    });
+    if (userId) {
+      const channelName = `orders-realtime-${userId}`;
+      channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'orders', filter: `user_id=eq.${userId}` },
+          () => {
+            fetchOrders();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'positions', filter: `user_id=eq.${userId}` },
+          () => {
+            fetchOrders();
+          }
+        );
+
+      channel.subscribe((status: string) => {
+        isSubscribed = status === 'SUBSCRIBED';
+      });
+    }
 
     // Refresh whenever any component places an order or closes a position
     const handleOrderPlaced = () => fetchOrders({ fresh: true });
@@ -284,7 +287,7 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       cancelled = true;
       document.removeEventListener('visibilitychange', handleVisibility);
       if (intervalRef.current) clearInterval(intervalRef.current);
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('position-closed', handleOrderPlaced);
       window.removeEventListener('position_closed', handleOrderPlaced);

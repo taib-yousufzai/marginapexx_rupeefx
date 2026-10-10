@@ -196,7 +196,7 @@ export const BalanceDataProvider = ({ children }: { children: React.ReactNode })
       if (!userId) return;
 
       channel = supabase
-        .channel(`balance-realtime-${userId}-${Date.now()}`)
+        .channel(`balance-realtime-${userId}`)
         .on(
           'postgres_changes',
           {

@@ -540,7 +540,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
     fetchPositions({ fresh: true });
     let isSubscribed = false;
-    const channelName = `my-positions-realtime-${Math.random().toString(36).slice(2)}`;
+    const { userId } = getSharedSessionSync();
+    let channel: any = null;
 
     const debouncedFetch = (delay = 300, fresh = true) => {
       if (fetchDebounceRef.current) clearTimeout(fetchDebounceRef.current);
@@ -549,19 +550,22 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       }, delay);
     };
 
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'positions' },
-        () => {
-          debouncedFetch(200, true);
-        }
-      );
+    if (userId) {
+      const channelName = `positions-realtime-${userId}`;
+      channel = supabase
+        .channel(channelName)
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'positions', filter: `user_id=eq.${userId}` },
+          () => {
+            debouncedFetch(200, true);
+          }
+        );
 
-    channel.subscribe((status) => {
-      isSubscribed = status === 'SUBSCRIBED';
-    });
+      channel.subscribe((status: string) => {
+        isSubscribed = status === 'SUBSCRIBED';
+      });
+    }
 
     const handleOrderPlacedWithData = (e: Event) => {
       const detail = (e as CustomEvent).detail;
@@ -594,15 +598,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
           optimisticallyUpdatedPositionsRef.current.delete(p.id);
           optimisticPositionsRef.current.delete(p.id);
         }
-        const sym = cleanSym(p?.symbol || p?.kite_instrument || '');
-        if (sym) {
-          for (const [id, op] of Array.from(optimisticPositionsRef.current.entries())) {
-            if (cleanSym(op.symbol || op.kite_instrument) === sym) {
-              recentlyClosedTimesRef.current.set(id, now);
-              optimisticPositionsRef.current.delete(id);
-            }
-          }
-        }
       });
       partialPositions.forEach((p: any) => {
         if (p?.id) {
@@ -615,16 +610,9 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       });
       setRawPositions(prev => {
         const closedIdSet = new Set(fullyClosedPositions.map((p: any) => p?.id).filter(Boolean));
-        const closedSymbolSet = new Set(fullyClosedPositions.map((p: any) => cleanSym(p?.symbol || p?.kite_instrument || '')).filter(Boolean));
         const partialMap = new Map(partialPositions.map((p: any) => [p.id, p]));
         const next = prev
-          .filter(p => {
-            if (closedIdSet.has(p.id)) return false;
-            if ((p.id.startsWith('__optimistic__') || p.id.startsWith('opt_')) && closedSymbolSet.has(cleanSym(p.symbol || p.kite_instrument))) {
-              return false;
-            }
-            return true;
-          })
+          .filter(p => !closedIdSet.has(p.id))
           .map(p => {
             const partial = partialMap.get(p.id);
             if (partial) {
@@ -673,9 +661,8 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     return () => {
       clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVisibility);
-      supabase.removeChannel(channel);
+      if (channel) supabase.removeChannel(channel);
       authSub.unsubscribe();
-      window.removeEventListener('user_bootstrap_updated', handleBootstrapUpdated);
       window.removeEventListener('order_placed', handleOrderPlaced);
       window.removeEventListener('order_placed_with_data', handleOrderPlacedWithData);
       window.removeEventListener('position_closed_optimistic', handlePositionClosedOptimistic);

@@ -80,30 +80,12 @@ const Footer: React.FC<FooterProps> = ({ activeTab, hideDrawer = false, position
       } catch (err) {
         console.error('Failed to fetch profile settings in Footer', err);
       }
-
-      channel = supabase
-        .channel(`profile-realtime-footer-sqoff-${session.user.id}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${session.user.id}` },
-          (payload) => {
-            if (cancelled) return;
-            const updated = payload.new as any;
-            if (updated) {
-              const val = Number(updated.showcase_auto_sqoff ?? 85);
-              _cachedAutoSqoff = val;
-              setAutoSqoffPercent(val);
-            }
-          }
-        )
-        .subscribe();
     };
 
     initAutoSqoff();
 
     return () => {
       cancelled = true;
-      if (channel) supabase.removeChannel(channel);
     };
   }, []);
 
