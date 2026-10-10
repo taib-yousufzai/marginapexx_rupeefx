@@ -100,7 +100,7 @@ export async function GET(request: Request): Promise<Response> {
     }
 
 
-    // 2. Fetch transactions
+    // 2. Fetch transactions & positions concurrently in parallel
     let txnQuery = adminClient.from('transactions').select('type, amount');
     if (targetUserIds) {
       txnQuery = txnQuery.in('user_id', targetUserIds);
@@ -112,10 +112,6 @@ export async function GET(request: Request): Promise<Response> {
       txnQuery = txnQuery.lt('created_at', toDate.toISOString());
     }
 
-    const { data: txnData, error: txnError } = await txnQuery;
-    if (txnError) return Response.json({ error: 'Failed to fetch transactions' }, { status: 500 });
-
-    // 3. Fetch positions
     let posQuery = adminClient.from('positions').select('pnl, side, brokerage');
     if (targetUserIds) {
       posQuery = posQuery.in('user_id', targetUserIds);
@@ -127,8 +123,12 @@ export async function GET(request: Request): Promise<Response> {
       posQuery = posQuery.lt('entry_time', toDate.toISOString());
     }
 
-    const { data: posData, error: posError } = await posQuery;
-    if (posError) return Response.json({ error: 'Failed to fetch positions' }, { status: 500 });
+    const [txnRes, posRes] = await Promise.all([txnQuery, posQuery]);
+    if (txnRes.error) return Response.json({ error: 'Failed to fetch transactions' }, { status: 500 });
+    if (posRes.error) return Response.json({ error: 'Failed to fetch positions' }, { status: 500 });
+
+    const txnData = txnRes.data;
+    const posData = posRes.data;
 
     // 4. Compute metrics
     const txns = (txnData ?? []) as TransactionRecord[];

@@ -65,7 +65,15 @@ export default function DashboardPage({ selectedUser, onOpenUserPanel, isDemoMod
   const [clientId, setClientId] = useState('');
   const [usersList, setUsersList] = useState<{ id: string; role: string; parent_id: string }[]>([]);
 
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const cached = sessionStorage.getItem(`admin_dashboard_cache_${isDemoMode}`);
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return null;
+  });
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
   const [adminProfile, setAdminProfile] = useState<{ client_id?: string; referral_code?: string; id?: string } | null>(null);
@@ -130,6 +138,9 @@ export default function DashboardPage({ selectedUser, onOpenUserPanel, isDemoMod
         if (status === 403) { setToast({ message: 'Access Denied', type: 'error' }); return; }
         if (!ok) { setToast({ message: 'Server Error', type: 'error' }); return; }
         setMetrics(data as DashboardMetrics);
+        if (typeof window !== 'undefined') {
+          try { sessionStorage.setItem(`admin_dashboard_cache_${isDemoMode}`, JSON.stringify(data)); } catch {}
+        }
         if (manual) setToast({ message: 'Dashboard updated successfully', type: 'success' });
       })
       .catch((err: unknown) => {
