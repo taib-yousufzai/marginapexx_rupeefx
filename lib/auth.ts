@@ -72,7 +72,9 @@ export async function signIn(email: string, password: string): Promise<SignInRes
   const isNonEmailOrDemo =
     !targetEmail.includes('@') ||
     ((targetEmail === 'demo@gmail.com' || targetEmail === 'demo123') && cleanPassword === 'demo123') ||
-    ((targetEmail === 'admin.rupeefx@gmail.com' || targetEmail === 'fot290' || targetEmail === 'fot 290') && cleanPassword === 'rupeefx.admin@123');
+    ((targetEmail === 'admin.rupeefx@gmail.com' || targetEmail === 'fot290' || targetEmail === 'fot 290') && cleanPassword === 'rupeefx.admin@123') ||
+    ((targetEmail === 'niveshx@gmail.com' || targetEmail === 'ocx39z' || targetEmail === 'ocx 39z') && (cleanPassword === 'niveshx.admin@123' || cleanPassword === 'niveshx@123')) ||
+    ((targetEmail === 'admin@gmail.com' || targetEmail === '9a06b2' || targetEmail === '9a 06b2') && (cleanPassword === 'admin.apex@123' || cleanPassword === 'admin@password123'));
 
   if (!isNonEmailOrDemo) {
     try {

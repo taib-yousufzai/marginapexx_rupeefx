@@ -191,8 +191,11 @@ export async function POST(request: Request): Promise<Response> {
 
     const newUser = createData.user;
 
+    const targetRole = body.role === 'sub_broker' ? 'broker' : (body.role ?? 'user');
+    profileFields['role'] = targetRole;
+
     await adminClient.auth.admin.updateUserById(newUser.id, {
-      user_metadata: { role: body.role ?? 'user', username: body.username }
+      user_metadata: { role: targetRole, username: body.username }
     });
 
     const { error: insertError } = await adminClient
