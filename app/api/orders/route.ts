@@ -43,6 +43,7 @@ import {
   getRailwayOrderAndPosition,
   syncProfileBalanceToRailway,
   queryRailwayDb,
+  getRailwayUserOrders,
 } from '@/lib/railway-db';
 
 function getLotSize(symbol: string, dbSettings?: { symbol: string; lot_size: number }[] | Record<string, number>): number {
@@ -381,63 +382,96 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
     const includeVirtualOrders = !isHistoryQuery && (!requestedStatuses || requestedStatuses.some(s => ['open', 'pending', 'active', 'trigger_pending'].includes(s)));
 
-    let ordersQuery = admin
-      .from('orders')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
-
-    if (requestedStatuses && requestedStatuses.length > 0) {
-      const allStatusVariants = Array.from(new Set([
-        ...requestedStatuses,
-        ...requestedStatuses.map(s => s.toUpperCase())
-      ]));
-      ordersQuery = ordersQuery.in('status', allStatusVariants);
-    }
-    ordersQuery = ordersQuery.range(from, to);
-
-    // Fetch cached user profile, orders, and open positions in parallel (0 DB queries for profile)
-    const queryPromise = Promise.all([
-      getCachedUserProfile(user.id, () => admin),
-      ordersQuery,
-      includeVirtualOrders
-        ? admin
-          .from('positions')
-          .select('*')
-          .eq('user_id', user.id)
-          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-        : Promise.resolve({ data: [] })
-    ]);
-
-    const timeoutPromise = new Promise<any>((resolve) =>
-      setTimeout(() => resolve({ timeout: true }), 6000)
-    );
-
-    const raceRes = await Promise.race([queryPromise, timeoutPromise]).catch(err => {
-      console.warn('[GET /api/orders] Supabase query failed:', err);
-      return { timeout: true };
-    });
-
-    if (raceRes?.timeout) {
-      console.warn('[GET /api/orders] Supabase Cloud query timed out (6s), returning fallback');
-      const cachedOrders = await getCachedUserOrders(user.id, isHistoryQuery);
-      if (cachedOrders && Array.isArray(cachedOrders)) {
-        return NextResponse.json({ orders: cachedOrders.slice(0, limit), page, limit });
-      }
-      return NextResponse.json({ orders: [], page, limit });
-    }
-
     let userProfile: any = null;
-    let ordersRes: any = { data: [] };
-    let posRes: any = { data: [] };
+    let dbOrders: any[] = [];
+    let openPositions: any[] = [];
+    let queryResolved = false;
 
-    if (raceRes && Array.isArray(raceRes)) {
-      [userProfile, ordersRes, posRes] = raceRes;
+    // 1. RAILWAY POSTGRES FIRST (< 1ms In-Cluster Database)
+    if (isRailwayDbConfigured()) {
+      try {
+        const [profile, rOrders, rPositions] = await Promise.all([
+          getCachedUserProfile(user.id, () => admin),
+          getRailwayUserOrders(user.id, {
+            limit: limit * 2,
+            offset: from,
+            statuses: requestedStatuses,
+          }),
+          includeVirtualOrders ? getRailwayOpenPositions(user.id) : Promise.resolve([]),
+        ]);
+
+        if (rOrders !== null) {
+          userProfile = profile;
+          dbOrders = rOrders;
+          openPositions = rPositions ?? [];
+          queryResolved = true;
+        }
+      } catch (railwayErr) {
+        console.warn('[GET /api/orders] Railway DB query failed, falling back to Supabase:', railwayErr);
+      }
+    }
+
+    // 2. SUPABASE FALLBACK (Only if Railway is unconfigured or failed)
+    if (!queryResolved) {
+      let ordersQuery = admin
+        .from('orders')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (requestedStatuses && requestedStatuses.length > 0) {
+        const allStatusVariants = Array.from(new Set([
+          ...requestedStatuses,
+          ...requestedStatuses.map(s => s.toUpperCase())
+        ]));
+        ordersQuery = ordersQuery.in('status', allStatusVariants);
+      }
+      ordersQuery = ordersQuery.range(from, to);
+
+      // Fetch cached user profile, orders, and open positions in parallel
+      const queryPromise = Promise.all([
+        getCachedUserProfile(user.id, () => admin),
+        ordersQuery,
+        includeVirtualOrders
+          ? admin
+            .from('positions')
+            .select('*')
+            .eq('user_id', user.id)
+            .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+          : Promise.resolve({ data: [] })
+      ]);
+
+      const timeoutPromise = new Promise<any>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), 6000)
+      );
+
+      const raceRes = await Promise.race([queryPromise, timeoutPromise]).catch(err => {
+        console.warn('[GET /api/orders] Supabase query failed:', err);
+        return { timeout: true };
+      });
+
+      if (raceRes?.timeout) {
+        console.warn('[GET /api/orders] Supabase Cloud query timed out (6s), returning fallback');
+        const cachedOrders = await getCachedUserOrders(user.id, isHistoryQuery);
+        if (cachedOrders && Array.isArray(cachedOrders)) {
+          return NextResponse.json({ orders: cachedOrders.slice(0, limit), page, limit });
+        }
+        return NextResponse.json({ orders: [], page, limit });
+      }
+
+      let ordersRes: any = { data: [] };
+      let posRes: any = { data: [] };
+
+      if (raceRes && Array.isArray(raceRes)) {
+        [userProfile, ordersRes, posRes] = raceRes;
+      }
+
+      dbOrders = ordersRes.data ?? [];
+      openPositions = posRes.data ?? [];
     }
 
     const historyResetAt = userProfile?.history_reset_at ? new Date(userProfile.history_reset_at).getTime() : null;
 
-    let dbOrders = ordersRes.data ?? [];
     if (historyResetAt) {
       const pendingStatuses = new Set(['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending', 'OPEN', 'open', 'ACTIVE', 'active']);
       dbOrders = dbOrders.filter((r: any) => {
@@ -447,8 +481,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         return updatedAt > historyResetAt || createdAt > historyResetAt;
       });
     }
-
-    const openPositions = posRes.data ?? [];
 
     const orders: MyOrder[] = dbOrders.map((r: Record<string, unknown>) => {
       // linked_position_id is the raw unsanitized UUID linking this order to a position.

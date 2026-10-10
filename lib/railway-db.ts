@@ -1028,3 +1028,244 @@ export async function getRailwayActivitySince(sinceTimestamp: string): Promise<{
   }
 }
 
+/**
+ * Reads user wallet balance and settlement amount directly from Railway Postgres (< 1ms).
+ */
+export async function getRailwayUserBalanceAndSettlement(
+  userId: string
+): Promise<{ balance: number; settlementAmount: number } | null> {
+  const db = getRailwayPool();
+  if (!db) return null;
+
+  try {
+    await ensureTradingEngineSchema();
+    const res = await db.query(
+      `SELECT balance, settlement_amount FROM public.profiles WHERE id = $1::uuid LIMIT 1;`,
+      [userId]
+    );
+    if (res.rows && res.rows.length > 0) {
+      return {
+        balance: Number(res.rows[0].balance || 0),
+        settlementAmount: Math.abs(Number(res.rows[0].settlement_amount || 0)),
+      };
+    }
+    return null;
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] getRailwayUserBalanceAndSettlement error:', err.message);
+    return null;
+  }
+}
+
+export interface RailwayGetOrdersOptions {
+  limit?: number;
+  offset?: number;
+  statuses?: string[] | null;
+  historyResetAt?: number | null;
+}
+
+/**
+ * Reads user orders from Railway Postgres (< 1ms).
+ */
+export async function getRailwayUserOrders(
+  userId: string,
+  options: RailwayGetOrdersOptions = {}
+): Promise<any[] | null> {
+  const db = getRailwayPool();
+  if (!db) return null;
+
+  try {
+    await ensureTradingEngineSchema();
+    const limit = options.limit ?? 50;
+    const offset = options.offset ?? 0;
+    const params: any[] = [userId];
+
+    let query = `
+      SELECT 
+        id, user_id, symbol, kite_instrument, segment, side, status, qty, lots,
+        price, fill_price, ltp_at_entry, order_type, product_type, info, is_exit,
+        trigger_price, stop_loss, target, buffer_fee, brokerage, idempotency_key,
+        linked_position_id, created_at, updated_at
+      FROM public.orders
+      WHERE user_id = $1::uuid
+    `;
+
+    if (options.statuses && options.statuses.length > 0) {
+      const allStatuses = Array.from(new Set([
+        ...options.statuses.map(s => s.toLowerCase()),
+        ...options.statuses.map(s => s.toUpperCase())
+      ]));
+      params.push(allStatuses);
+      query += ` AND status = ANY($${params.length}::text[])`;
+    }
+
+    if (options.historyResetAt) {
+      const resetIso = new Date(options.historyResetAt).toISOString();
+      params.push(resetIso);
+      query += ` AND (
+        UPPER(status) IN ('PENDING', 'TRIGGER_PENDING', 'OPEN', 'ACTIVE')
+        OR updated_at > $${params.length}::timestamptz
+        OR created_at > $${params.length}::timestamptz
+      )`;
+    }
+
+    query += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2};`;
+    params.push(limit, offset);
+
+    const res = await db.query(query, params);
+    return res.rows ?? [];
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] getRailwayUserOrders error:', err.message);
+    return null;
+  }
+}
+
+export interface RailwayGetPositionsOptions {
+  status?: string | null;
+  historyResetAt?: string | null;
+  fromDate?: string | null;
+  limit?: number;
+}
+
+/**
+ * Reads user positions directly from Railway Postgres (< 1ms).
+ */
+export async function getRailwayUserPositions(
+  userId: string,
+  options: RailwayGetPositionsOptions = {}
+): Promise<any[] | null> {
+  const db = getRailwayPool();
+  if (!db) return null;
+
+  try {
+    await ensureTradingEngineSchema();
+    const params: any[] = [userId];
+    let query = `SELECT * FROM public.positions WHERE user_id = $1::uuid`;
+
+    const status = options.status?.toLowerCase();
+    if (status === 'closed') {
+      query += ` AND LOWER(status) = 'closed'`;
+      if (options.historyResetAt) {
+        const resetIso = new Date(options.historyResetAt).toISOString();
+        params.push(resetIso);
+        query += ` AND (updated_at > $${params.length}::timestamptz OR exit_time > $${params.length}::timestamptz OR created_at > $${params.length}::timestamptz)`;
+      }
+      if (options.fromDate) {
+        const fromIso = new Date(`${options.fromDate}T00:00:00+05:30`).toISOString();
+        params.push(fromIso);
+        query += ` AND (updated_at >= $${params.length}::timestamptz OR exit_time >= $${params.length}::timestamptz OR created_at >= $${params.length}::timestamptz)`;
+      }
+      query += ` ORDER BY exit_time DESC, updated_at DESC LIMIT $${params.length + 1};`;
+      params.push(options.limit || 500);
+    } else if (status === 'open' || !status) {
+      query += ` AND LOWER(status) IN ('open', 'active') AND qty_open > 0 ORDER BY created_at DESC;`;
+    } else {
+      params.push(status, status.toUpperCase());
+      query += ` AND status IN ($${params.length - 1}, $${params.length}) ORDER BY updated_at DESC LIMIT $${params.length + 1};`;
+      params.push(options.limit || 500);
+    }
+
+    const res = await db.query(query, params);
+    return res.rows ?? [];
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] getRailwayUserPositions error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Reads specific user positions by IDs directly from Railway Postgres (< 1ms).
+ */
+export async function getRailwayPositionsByIds(
+  userId: string,
+  positionIds: string[]
+): Promise<any[] | null> {
+  const db = getRailwayPool();
+  if (!db || !positionIds || positionIds.length === 0) return null;
+
+  try {
+    await ensureTradingEngineSchema();
+    const res = await db.query(
+      `SELECT * FROM public.positions WHERE user_id = $1::uuid AND id = ANY($2::uuid[]);`,
+      [userId, positionIds]
+    );
+    return res.rows ?? [];
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] getRailwayPositionsByIds error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Cancels a pending order in Railway Postgres and releases linked position triggers (< 1ms).
+ */
+export async function cancelRailwayOrderById(
+  userId: string,
+  orderId: string
+): Promise<{ success: boolean; order?: any } | null> {
+  const db = getRailwayPool();
+  if (!db) return null;
+
+  try {
+    await ensureTradingEngineSchema();
+    const res = await db.query(`
+      UPDATE public.orders
+      SET status = 'CANCELLED',
+          updated_at = now()
+      WHERE user_id = $1::uuid
+        AND id = $2::uuid
+        AND UPPER(status) IN ('PENDING', 'TRIGGER_PENDING', 'OPEN', 'ACTIVE', 'SUBMITTING', 'VALIDATION_PENDING')
+      RETURNING *;
+    `, [userId, orderId]);
+
+    if (res.rows && res.rows.length > 0) {
+      const order = res.rows[0];
+      if (order.is_exit) {
+        const linkedId = order.linked_position_id || order.info;
+        if (linkedId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(linkedId))) {
+          await db.query(`
+            UPDATE public.positions
+            SET stop_loss = NULL, target = NULL, updated_at = now()
+            WHERE id = $1::uuid AND user_id = $2::uuid;
+          `, [linkedId, userId]);
+        }
+      }
+      return { success: true, order };
+    }
+    return { success: false };
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] cancelRailwayOrderById error:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Updates stop loss and target on a position directly in Railway Postgres (< 1ms).
+ */
+export async function updateRailwayPositionSlTarget(
+  userId: string,
+  positionId: string,
+  stopLoss: number | null,
+  target: number | null
+): Promise<any | null> {
+  const db = getRailwayPool();
+  if (!db) return null;
+
+  try {
+    await ensureTradingEngineSchema();
+    const res = await db.query(`
+      UPDATE public.positions
+      SET stop_loss = $3,
+          target = $4,
+          updated_at = now()
+      WHERE id = $1::uuid
+        AND user_id = $2::uuid
+        AND LOWER(status) IN ('open', 'active')
+      RETURNING *;
+    `, [positionId, userId, stopLoss, target]);
+    return res.rows?.[0] ?? null;
+  } catch (err: any) {
+    console.warn('[Railway-Postgres] updateRailwayPositionSlTarget error:', err.message);
+    return null;
+  }
+}
+

@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { getRedisClient } from '@/lib/redis';
 import { getCachedUserProfile } from '@/lib/redisSettingsCache';
+import { isRailwayDbConfigured, getRailwayUserPositions } from '@/lib/railway-db';
 
 
 /**
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
     const cacheKeySuffix = `${statusParam || 'open'}:${isAll ? 'all' : 'default'}:${fromDateParam}`;
     const cacheKey = `api:positions:${user.id}:${cacheKeySuffix}`;
 
-    // Fast Redis cache check (instant <5ms response unless fresh=true is requested)
+    // Redis micro-caching (3s TTL): serves rapid repeated client polls without DB round-trips
     if (!isFresh) {
       try {
         const redis = getRedisClient();
@@ -52,30 +53,81 @@ export async function GET(request: NextRequest) {
     const userProfile = await getCachedUserProfile(user.id, () => admin);
     const historyResetAt = userProfile?.history_reset_at;
 
-    // Fetch positions with a 6s timeout wrapper
-    const timeoutPromise = new Promise<any>((resolve) =>
-      setTimeout(() => resolve({ timeout: true }), 6000)
-    );
+    let rawRows: any[] = [];
+    let queryResolved = false;
 
-    const posResult = await Promise.race([positionsQuery, timeoutPromise]).catch(err => {
-      console.warn('[Positions API] Query error:', err);
-      return { timeout: true };
-    });
-
-    if (posResult?.timeout || posResult?.error) {
-      console.warn('[Positions API] Query timed out (6s) or failed, returning fallback');
-      // Attempt to return stale Redis cache if available before failing
+    // 1. RAILWAY POSTGRES FIRST (< 1ms In-Cluster DB)
+    if (isRailwayDbConfigured()) {
       try {
-        const redis = getRedisClient();
-        const cached = await redis.get(cacheKey);
-        if (cached) {
-          return NextResponse.json(JSON.parse(cached));
+        const railwayPositions = await getRailwayUserPositions(user.id, {
+          status: statusParam,
+          historyResetAt,
+          fromDate: searchParams.get('from'),
+          limit: 500,
+        });
+        if (railwayPositions !== null) {
+          rawRows = railwayPositions;
+          queryResolved = true;
         }
-      } catch (_) {}
-      return NextResponse.json({ positions: [] }, { status: 200 });
+      } catch (railwayErr) {
+        console.warn('[Positions API] Railway DB query failed, falling back to Supabase:', railwayErr);
+      }
     }
 
-    let rawRows = posResult.data ?? [];
+    // 2. SUPABASE FALLBACK (Only if Railway is unconfigured or failed)
+    if (!queryResolved) {
+      let positionsQuery = admin
+        .from('positions')
+        .select('*')
+        .eq('user_id', user.id);
+
+      if (statusParam) {
+        if (statusParam === 'open') {
+          positionsQuery = positionsQuery
+            .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+            .gt('qty_open', 0)
+            .order('created_at', { ascending: false });
+        } else {
+          const lowerStatus = statusParam.toLowerCase();
+          const upperStatus = statusParam.toUpperCase();
+          positionsQuery = positionsQuery
+            .in('status', [lowerStatus, upperStatus])
+            .order('updated_at', { ascending: false })
+            .limit(500);
+        }
+      } else {
+        positionsQuery = positionsQuery
+          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+          .gt('qty_open', 0)
+          .order('created_at', { ascending: false });
+      }
+
+      // Fetch positions with a 6s timeout wrapper
+      const timeoutPromise = new Promise<any>((resolve) =>
+        setTimeout(() => resolve({ timeout: true }), 6000)
+      );
+
+      const posResult = await Promise.race([positionsQuery, timeoutPromise]).catch(err => {
+        console.warn('[Positions API] Query error:', err);
+        return { timeout: true };
+      });
+
+      if (posResult?.timeout || posResult?.error) {
+        console.warn('[Positions API] Query timed out (6s) or failed, returning fallback');
+        if (isClosedQuery) {
+          try {
+            const redis = getRedisClient();
+            const cached = await redis.get(cacheKey);
+            if (cached) {
+              return NextResponse.json(JSON.parse(cached));
+            }
+          } catch (_) {}
+        }
+        return NextResponse.json({ positions: [] }, { status: 200 });
+      }
+
+      rawRows = posResult.data ?? [];
+    }
 
     // Filter closed positions in-memory for historyResetAt and date filters (prevents PostgREST OR syntax errors)
     if (statusParam?.toLowerCase() === 'closed') {

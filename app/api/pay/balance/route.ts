@@ -9,6 +9,7 @@
 
 import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { getRedisClient } from '@/lib/redis';
+import { isRailwayDbConfigured, getRailwayUserBalanceAndSettlement } from '@/lib/railway-db';
 
 export async function GET(request: Request): Promise<Response> {
   try {
@@ -18,10 +19,26 @@ export async function GET(request: Request): Promise<Response> {
     }
 
     const redis = getRedisClient();
-    const adminClient = getAdminClient();
     const cacheKey = `user_balance:${user.id}`;
 
-    // Fire Redis cache read and DB query IN PARALLEL — no more sequential wait
+    // 1. Try Railway Postgres FIRST (< 1ms in-cluster query)
+    if (isRailwayDbConfigured()) {
+      try {
+        const railwayBalance = await getRailwayUserBalanceAndSettlement(user.id);
+        if (railwayBalance !== null) {
+          const { balance, settlementAmount } = railwayBalance;
+          // Update Redis cache in background (TTL = 30s)
+          redis.set(cacheKey, JSON.stringify({ balance, settlementAmount }), 'EX', 30).catch(() => {});
+          return Response.json({ balance, settlementAmount }, { status: 200 });
+        }
+      } catch (rErr) {
+        console.warn('[GET /api/pay/balance] Railway DB read failed, falling back to Supabase:', rErr);
+      }
+    }
+
+    // 2. Fallback to Redis cache & Supabase Cloud
+    const adminClient = getAdminClient();
+
     const [cachedRaw, dbResult] = await Promise.allSettled([
       redis.get(cacheKey),
       adminClient
@@ -29,7 +46,7 @@ export async function GET(request: Request): Promise<Response> {
         .select('balance, settlement_amount')
         .eq('id', user.id)
         .single()
-        .abortSignal(AbortSignal.timeout(4000)), // Tightened from 8s → 4s
+        .abortSignal(AbortSignal.timeout(4000)),
     ]);
 
     // Parse cache result
@@ -45,7 +62,7 @@ export async function GET(request: Request): Promise<Response> {
       } catch {}
     }
 
-    // Try to use DB result first (freshest data)
+    // Try to use Supabase DB result
     if (dbResult.status === 'fulfilled') {
       const { data: profile, error: profileError } = dbResult.value;
       if (!profileError && profile) {

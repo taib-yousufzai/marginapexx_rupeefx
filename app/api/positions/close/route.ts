@@ -5,6 +5,11 @@ import { calculateCarryBrokerage } from '@/lib/trading/BrokerageCalculator';
 import { RiskValidation } from '@/lib/trading/RiskValidation';
 import { resolveEffectivePrices } from '@/lib/trading/marketPriceResolver';
 import { mapSegmentWithSymbol } from '@/lib/trading/SymbolMapping';
+import {
+  isRailwayDbConfigured,
+  getRailwayPositionsByIds,
+  executeClosePositionInRailway,
+} from '@/lib/railway-db';
 
 
 /**
@@ -224,9 +229,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const admin = getAdminClient();
     const validUuids = positionIdsList.filter(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
 
-    // 1. Parallel fetch positions, profile, and trading hours
+    let positions: any[] = [];
+    if (isRailwayDbConfigured() && validUuids.length > 0) {
+      try {
+        const rPositions = await getRailwayPositionsByIds(user.id, validUuids);
+        if (rPositions && rPositions.length > 0) {
+          positions = rPositions.filter(p => ['open', 'active'].includes(String(p.status || '').toLowerCase()));
+        }
+      } catch (rErr) {
+        console.warn('[POST /api/positions/close] Railway fetch positions error, falling back:', rErr);
+      }
+    }
+
+    // 1. Parallel fetch positions (if not found in Railway), profile, and trading hours
     const [posResult, profileResult, tradingHoursResult] = await Promise.all([
-      validUuids.length > 0
+      positions.length === 0 && validUuids.length > 0
         ? admin.from('positions')
           .select('*')
           .in('id', validUuids)
@@ -241,7 +258,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         .select('id, name, start_time, end_time, is_active')
     ]);
 
-    let positions = posResult?.data || [];
+    if (positions.length === 0) {
+      positions = posResult?.data || [];
+    }
+
     if (positions.length === 0 && positionIdsList.length > 0 && body?.symbol) {
       const cleanTargetSymbol = (body.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_\-]/g, '').toUpperCase();
       const { data: userOpenPositions } = await admin
@@ -463,43 +483,94 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       });
     }
 
-    // 5. Execute closure: Try atomic close_positions_batch_v2 RPC in a single DB transaction (0 deadlocks, ~10ms execution)
+    // 5. Execute closure: Try Railway Postgres natively first (< 5ms each, 0 cloud round trips)
     if (preparedItems.length > 0) {
       let batchSuccess = false;
-      try {
-        const batchPayload = preparedItems.map(item => item.batchItem);
-        const { data: batchData, error: batchError } = await admin.rpc('close_positions_batch_v2', {
-          p_user_id: user.id,
-          p_items: batchPayload,
-          p_closed_by: 'USER'
-        });
 
-        if (!batchError && Array.isArray(batchData)) {
-          batchSuccess = true;
-          for (const res of batchData) {
-            const prep = preparedItems.find(p => p.pos.id === res.position_id);
-            if (res.success) {
-              results.push({
-                positionId: res.position_id,
-                success: true,
-                pnl: Number(res.pnl ?? 0),
-                exit_price: Number(res.exit_price ?? prep?.exitPrice ?? 0),
-                brokerage: Number(prep?.pos.brokerage || prep?.pos.entry_brokerage || 0) + (prep?.carryBrokerage || 0),
-                already_closed: Boolean(res.already_closed)
+      if (isRailwayDbConfigured()) {
+        try {
+          let allRailwayClosed = true;
+          for (const { pos, exitPrice, carryBrokerage, batchItem } of preparedItems) {
+            try {
+              const rCloseRes = await executeClosePositionInRailway({
+                positionId: pos.id,
+                closeQty: batchItem.close_qty,
+                closePrice: exitPrice,
+                closedBy: 'USER',
+                expectedBrokerage: carryBrokerage,
               });
-            } else {
-              results.push({
-                positionId: res.position_id,
-                success: false,
-                error: res.error || 'Failed to close position'
-              });
+
+              if (rCloseRes !== null) {
+                results.push({
+                  positionId: pos.id,
+                  success: true,
+                  pnl: Number(rCloseRes.pnl ?? 0),
+                  exit_price: exitPrice,
+                  brokerage: Number(pos.brokerage || pos.entry_brokerage || 0) + carryBrokerage,
+                  already_closed: false,
+                });
+              } else {
+                allRailwayClosed = false;
+                break;
+              }
+            } catch (posErr: any) {
+              if (posErr.message?.toLowerCase().includes('already closed')) {
+                results.push({ positionId: pos.id, success: true, already_closed: true });
+              } else {
+                allRailwayClosed = false;
+                break;
+              }
             }
           }
-        } else if (batchError) {
-          console.warn('[POST /api/positions/close] Batch RPC error, falling back to sequential single-position close:', batchError);
+
+          if (allRailwayClosed && results.length === preparedItems.length) {
+            batchSuccess = true;
+          } else {
+            results.length = 0;
+          }
+        } catch (rBatchErr) {
+          console.warn('[POST /api/positions/close] Railway batch close failed, falling back:', rBatchErr);
+          results.length = 0;
         }
-      } catch (batchErr) {
-        console.warn('[POST /api/positions/close] Batch RPC exception, falling back:', batchErr);
+      }
+
+      // Supabase RPC Fallback (only if Railway unconfigured or failed)
+      if (!batchSuccess) {
+        try {
+          const batchPayload = preparedItems.map(item => item.batchItem);
+          const { data: batchData, error: batchError } = await admin.rpc('close_positions_batch_v2', {
+            p_user_id: user.id,
+            p_items: batchPayload,
+            p_closed_by: 'USER'
+          });
+
+          if (!batchError && Array.isArray(batchData)) {
+            batchSuccess = true;
+            for (const res of batchData) {
+              const prep = preparedItems.find(p => p.pos.id === res.position_id);
+              if (res.success) {
+                results.push({
+                  positionId: res.position_id,
+                  success: true,
+                  pnl: Number(res.pnl ?? 0),
+                  exit_price: Number(res.exit_price ?? prep?.exitPrice ?? 0),
+                  brokerage: Number(prep?.pos.brokerage || prep?.pos.entry_brokerage || 0) + (prep?.carryBrokerage || 0),
+                  already_closed: Boolean(res.already_closed)
+                });
+              } else {
+                results.push({
+                  positionId: res.position_id,
+                  success: false,
+                  error: res.error || 'Failed to close position'
+                });
+              }
+            }
+          } else if (batchError) {
+            console.warn('[POST /api/positions/close] Batch RPC error, falling back to sequential single-position close:', batchError);
+          }
+        } catch (batchErr) {
+          console.warn('[POST /api/positions/close] Batch RPC exception, falling back:', batchErr);
+        }
       }
 
       // Fallback: If batch RPC failed, execute sequentially one-by-one (never concurrent, preventing DB deadlocks)

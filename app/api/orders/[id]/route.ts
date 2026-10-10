@@ -3,6 +3,11 @@ import { getAdminClient, getUserFromRequest } from '@/lib/adminClient';
 import { logAction, extractClientIp } from '@/lib/actionLogger';
 import { OrderService } from '@/lib/trading/OrderService';
 import { invalidateUserOrdersCache, invalidateUserPositionsCache } from '@/lib/redisSettingsCache';
+import {
+  isRailwayDbConfigured,
+  cancelRailwayOrderById,
+  updateRailwayPositionSlTarget,
+} from '@/lib/railway-db';
 
 const OPEN_ORDER_STATUSES = [
   'PENDING', 'pending',
@@ -648,6 +653,17 @@ async function handleCancelOrder(
       else if (isVirtualTarget) updateField = { target: null };
       else if (isVirtualGtt) updateField = { stop_loss: null, target: null };
 
+      if (isRailwayDbConfigured()) {
+        try {
+          await updateRailwayPositionSlTarget(
+            user.id,
+            positionId,
+            updateField.stop_loss !== undefined ? updateField.stop_loss : null,
+            updateField.target !== undefined ? updateField.target : null
+          );
+        } catch (_) {}
+      }
+
       await admin
         .from('positions')
         .update(updateField)
@@ -668,6 +684,31 @@ async function handleCancelOrder(
       });
     }
 
+    // 1. RAILWAY POSTGRES FIRST (< 1ms In-Cluster Cancel)
+    if (isRailwayDbConfigured()) {
+      try {
+        const railwayRes = await cancelRailwayOrderById(user.id, id);
+        if (railwayRes?.success && railwayRes.order) {
+          // Asynchronously mirror cancel to Supabase
+          admin
+            .from('orders')
+            .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .eq('user_id', user.id)
+            .then(() => {})
+            .catch(() => {});
+
+          await invalidateUserOrdersCache(user.id);
+          await invalidateUserPositionsCache(user.id);
+
+          return NextResponse.json({ order: railwayRes.order });
+        }
+      } catch (rErr) {
+        console.warn('[CANCEL] Railway Postgres cancel failed, falling back to Supabase:', rErr);
+      }
+    }
+
+    // 2. SUPABASE FALLBACK
     // Check existing order in DB first
     const { data: existingOrder } = await admin
       .from('orders')
