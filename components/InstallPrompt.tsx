@@ -71,7 +71,10 @@ export default function InstallPrompt() {
       } else if (isIOS) {
         setShowIosGuide(true);
       } else {
-        setModalMessage("To install: tap the Share/Menu button in your browser and select 'Add to Home Screen'");
+        // This message will only be shown on iOS devices (already filtered in render)
+        if (isIOS) {
+          setModalMessage("To install: tap the Share/Menu button in your browser and select 'Add to Home Screen'");
+        }
       }
     };
     window.addEventListener('triggerPwaInstall', handleCustomTrigger as EventListener);
@@ -92,7 +95,10 @@ export default function InstallPrompt() {
       setShowIosGuide(true);
       setShow(false);
     } else {
-      setModalMessage("To install: tap the Share/Menu button in your browser and select 'Add to Home Screen'");
+      // This message will only be shown on iOS devices (already filtered in render)
+      if (isIOS) {
+        setModalMessage("To install: tap the Share/Menu button in your browser and select 'Add to Home Screen'");
+      }
       setShow(false);
     }
   };
@@ -112,7 +118,10 @@ export default function InstallPrompt() {
         />
       );
     }
-    return <ErrorModal error={modalMessage} onClose={() => setModalMessage(null)} title="Install Instructions" />;
+    // Only show Install Instructions modal on iOS devices
+    return isIOS && modalMessage ? (
+      <ErrorModal error={modalMessage} onClose={() => setModalMessage(null)} title="Install Instructions" />
+    ) : null;
   }
 
   if (!show) {
@@ -124,7 +133,10 @@ export default function InstallPrompt() {
         />
       );
     }
-    return <ErrorModal error={modalMessage} onClose={() => setModalMessage(null)} title="Install Instructions" />;
+    // Only show Install Instructions modal on iOS devices
+    return isIOS && modalMessage ? (
+      <ErrorModal error={modalMessage} onClose={() => setModalMessage(null)} title="Install Instructions" />
+    ) : null;
   }
 
   return (
@@ -300,7 +312,10 @@ export default function InstallPrompt() {
         </div>
       )}
 
-      <ErrorModal error={modalMessage} onClose={() => setModalMessage(null)} title="Install Instructions" />
+      {/* Only show Install Instructions modal on iOS devices */}
+      {isIOS && modalMessage && (
+        <ErrorModal error={modalMessage} onClose={() => setModalMessage(null)} title="Install Instructions" />
+      )}
     </>
   );
 }
