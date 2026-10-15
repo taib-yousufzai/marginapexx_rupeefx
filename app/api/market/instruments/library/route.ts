@@ -812,6 +812,7 @@ async function buildLibrary(request: Request, today: string) {
       { symbol: 'USDCHF', name: 'USD/CHF' },
       { symbol: 'USDCAD', name: 'USD/CAD' },
       { symbol: 'AUDUSD', name: 'AUD/USD' },
+      { symbol: 'NZDUSD', name: 'NZD/USD' },
     ];
     standardUsdPairs.forEach((p) => {
       if (!seenForexSymbols.has(p.symbol)) {

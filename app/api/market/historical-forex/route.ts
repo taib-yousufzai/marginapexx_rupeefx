@@ -5,6 +5,40 @@ import { fetchUSStockQuote, getUSStockBasePrice } from '../../../../lib/datafeed
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+/**
+ * Fetch current forex rate for accurate candle generation
+ */
+async function fetchCurrentForexRate(symbol: string): Promise<number | null> {
+  try {
+    const clean = symbol.replace(/^(FOREX:|CDS:|COMEX:|US:)/i, '').replace(/[\/\s]/g, '').toUpperCase();
+    console.log('[historical-forex] Attempting to fetch current rate for:', symbol, '→ clean:', clean);
+    
+    // Use relative path, not env variable
+    const baseUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3000';
+    const res = await fetch(`${baseUrl}/api/market/forex-quotes?symbols=${clean}`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(3000),
+    });
+    
+    if (res.ok) {
+      const json = await res.json();
+      console.log('[historical-forex] Forex quotes response:', json);
+      const quote = json.quotes?.[clean] || json.quotes?.[symbol];
+      if (quote && quote.lastPrice > 0) {
+        console.log('[historical-forex] ✅ Got current rate for', symbol, ':', quote.lastPrice);
+        return quote.lastPrice;
+      }
+    } else {
+      console.warn('[historical-forex] Forex quotes API returned:', res.status);
+    }
+  } catch (err) {
+    console.warn('[historical-forex] Failed to fetch current forex rate:', err);
+  }
+  
+  console.log('[historical-forex] ⚠️ No current rate found, will use base price');
+  return null;
+}
+
 function generateFallbackCandles(symbol: string, interval: string, fromSec: number, toSec: number, anchorClosePrice?: number): any[][] {
   const basePrice = anchorClosePrice && anchorClosePrice > 0 ? anchorClosePrice : getUSStockBasePrice(symbol);
   const normInt = (interval || '').toLowerCase().trim();
@@ -227,7 +261,10 @@ export async function GET(req: NextRequest) {
           },
         });
       }
-      candles = generateFallbackCandles(rawSymbol, rawInterval, period1, period2);
+      
+      // Try to get current forex rate for accurate fallback candles
+      const currentForexRate = await fetchCurrentForexRate(rawSymbol);
+      candles = generateFallbackCandles(rawSymbol, rawInterval, period1, period2, currentForexRate || undefined);
     }
 
     return NextResponse.json({ candles }, {

@@ -207,7 +207,9 @@ const InstrumentRow = React.memo(function InstrumentRow({ item, quote, binanceQu
     }
   }
 
-  if (ltp === 0) {
+  // Only use fallback for non-forex/non-backend symbols (avoid overriding real WebSocket prices)
+  const isForexOrBackend = isCrypto || showComex || (item.segment || '').toUpperCase().includes('FOREX');
+  if (ltp === 0 && !isForexOrBackend) {
     const fallbackKey = item.symbol || item.kiteSymbol || item.name || '';
     const fallback = generateRealisticFallbackQuote(fallbackKey);
     ltp = fallback.last_price;
@@ -3360,15 +3362,9 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
       };
 
 
-      var openFolderBtn = document.getElementById('openFolderMobileBtn');
-      if (openFolderBtn) {
-        openFolderBtn.onclick = function() {
-          folderDrawer.classList.add('open');
-          overlay.classList.add('active');
-          renderFolderTree();
-        };
-      }
-
+      // React already handles the folder button click via setIsFolderDrawerOpen
+      // No need for duplicate inline handler
+      
       var closeFolderBtn = document.getElementById('closeFolderDrawerBtn');
       if (closeFolderBtn) {
         closeFolderBtn.onclick = function() {
@@ -3438,6 +3434,14 @@ function buildInlineScript(allowedSegments: string[], segmentSettings: any[], bl
 
       function handleWatchlistClick(e) {
         if (!window.__selectionModeActive) return;
+        
+        // Ignore clicks inside drawer/search/sheets
+        if (e.target.closest('#scriptsFolderDrawer') || 
+            e.target.closest('#searchResultsArea') ||
+            e.target.closest('.trade-sheet') ||
+            e.target.closest('.drawer-overlay')) {
+          return;
+        }
         
         var card = e.target.closest('.watchlist-card');
         if (!card) return;

@@ -72,12 +72,33 @@ export const FOREX_BASE_PRICES: Record<string, number> = {
 };
 
 export function getUSStockBasePrice(symbol: string): number {
-  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:)/i, '').replace('/', '').trim().toUpperCase();
-  if (US_BASE_PRICES[clean]) return US_BASE_PRICES[clean];
-  if (FOREX_BASE_PRICES[clean]) return FOREX_BASE_PRICES[clean];
+  console.log('[getUSStockBasePrice] Input symbol:', symbol);
+  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:|CDS:)/i, '').replace(/[\/\s]/g, '').trim().toUpperCase();
+  console.log('[getUSStockBasePrice] Cleaned symbol:', clean);
+  
+  if (US_BASE_PRICES[clean]) {
+    console.log('[getUSStockBasePrice] ✅ Found in US_BASE_PRICES:', clean, '=', US_BASE_PRICES[clean]);
+    return US_BASE_PRICES[clean];
+  }
+  if (FOREX_BASE_PRICES[clean]) {
+    console.log('[getUSStockBasePrice] ✅ Found in FOREX_BASE_PRICES:', clean, '=', FOREX_BASE_PRICES[clean]);
+    return FOREX_BASE_PRICES[clean];
+  }
+  
   const baseClean = clean.replace(/=F$/i, '');
-  if (US_BASE_PRICES[baseClean]) return US_BASE_PRICES[baseClean];
-  if (FOREX_BASE_PRICES[baseClean]) return FOREX_BASE_PRICES[baseClean];
+  if (US_BASE_PRICES[baseClean]) {
+    console.log('[getUSStockBasePrice] ✅ Found after =F removal:', baseClean, '=', US_BASE_PRICES[baseClean]);
+    return US_BASE_PRICES[baseClean];
+  }
+  if (FOREX_BASE_PRICES[baseClean]) {
+    console.log('[getUSStockBasePrice] ✅ Found after =F removal:', baseClean, '=', FOREX_BASE_PRICES[baseClean]);
+    return FOREX_BASE_PRICES[baseClean];
+  }
+  
+  // Log when no base price is found
+  console.warn('[getUSStockBasePrice] ❌ No base price found for:', symbol, '→ cleaned:', clean);
+  console.log('[getUSStockBasePrice] Available FOREX keys:', Object.keys(FOREX_BASE_PRICES));
+  
   return 100;
 }
 

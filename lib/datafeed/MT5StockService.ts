@@ -49,6 +49,18 @@ const COMEX_TO_MT5_MAP: Record<string, string> = {
   'NATURALGAS': 'XNGUSD',
   'HG=F': 'XCUUSD',
   'COPPER': 'XCUUSD',
+  // Forex pairs mapping
+  'EURUSD': 'EURUSD',
+  'GBPUSD': 'GBPUSD',
+  'USDJPY': 'USDJPY',
+  'USDCHF': 'USDCHF',
+  'USDCAD': 'USDCAD',
+  'AUDUSD': 'AUDUSD',
+  'NZDUSD': 'NZDUSD',
+  'USDINR': 'USDINR',
+  'EURINR': 'EURINR',
+  'GBPINR': 'GBPINR',
+  'JPYINR': 'JPYINR',
 };
 
 /**

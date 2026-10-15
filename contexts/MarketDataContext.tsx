@@ -306,6 +306,89 @@ class MarketWSManager {
   }
 
   private comexInterval: ReturnType<typeof setInterval> | null = null;
+  private forexInterval: ReturnType<typeof setInterval> | null = null;
+
+  private connectForex() {
+    if (typeof window === 'undefined') return;
+    if (this.forexInterval) return;
+
+    const pollForex = async () => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+
+      // Default major forex pairs
+      const defaultForex = ['USDINR', 'EURINR', 'GBPINR', 'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'];
+      const forexSymbols: string[] = [...defaultForex];
+
+      // Collect forex symbols from active subscriptions
+      for (const sym of Array.from(this.symbolRefCount.keys())) {
+        const upper = sym.toUpperCase();
+        const clean = sym.replace(/^(FOREX:|CDS:|COMEX:)/i, '').replace(/=X$/i, '').trim();
+        
+        // Check if it's a forex symbol
+        if (upper.startsWith('FOREX:') || upper.startsWith('CDS:') || 
+            upper.includes('USD') || upper.includes('EUR') || upper.includes('GBP') || 
+            upper.includes('JPY') || upper.includes('INR') || upper.includes('CHF') ||
+            upper.includes('CAD') || upper.includes('AUD') || upper.includes('NZD') ||
+            upper.endsWith('=X')) {
+          forexSymbols.push(clean);
+          
+          console.log('[MarketWSManager] Detected forex symbol:', sym, '→ clean:', clean);
+        }
+      }
+
+      const unique = Array.from(new Set(forexSymbols));
+      if (unique.length === 0) return;
+
+      console.log('[MarketWSManager] Polling forex quotes for:', unique);
+
+      try {
+        const res = await fetch(`/api/market/forex-quotes?symbols=${encodeURIComponent(unique.join(','))}`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const quotesMap = json?.quotes || {};
+
+        console.log('[MarketWSManager] Forex quotes received:', Object.keys(quotesMap).length, 'quotes');
+
+        for (const [sym, q] of Object.entries(quotesMap)) {
+          const raw = q as any;
+          const price = raw.lastPrice || raw.price || 0;
+          if (price <= 0) continue;
+
+          const quoteObj = {
+            timestamp: new Date().toISOString(),
+            last_price: price,
+            volume: raw.volume || 10000,
+            ohlc: {
+              open: raw.open || price,
+              high: raw.high || price,
+              low: raw.low || price,
+              close: raw.close || raw.open || price,
+            },
+            net_change: raw.change || 0,
+            bid: raw.bid || price,
+            ask: raw.ask || price,
+          };
+
+          // Notify with all possible variations
+          this.notifyListeners('update', { symbol: sym, quote: quoteObj });
+          
+          const clean = sym.replace(/^(FOREX:|CDS:|COMEX:)/i, '').replace(/=X$/i, '');
+          this.notifyListeners('update', { symbol: clean, quote: quoteObj });
+          this.notifyListeners('update', { symbol: `${clean}=X`, quote: quoteObj });
+          this.notifyListeners('update', { symbol: `FOREX:${clean}`, quote: quoteObj });
+          this.notifyListeners('update', { symbol: `CDS:${clean}`, quote: quoteObj });
+          
+          console.log('[MarketWSManager] Updated forex quote:', clean, '=', price);
+        }
+      } catch (e) {
+        console.warn('[MarketWSManager] Forex polling error:', e);
+      }
+    };
+
+    console.log('[MarketWSManager] Starting forex polling...');
+    pollForex();
+    this.forexInterval = setInterval(pollForex, 5000); // Poll every 5 seconds
+  }
 
   private connectCOMEX() {
     if (typeof window === 'undefined') return;
@@ -318,11 +401,13 @@ class MarketWSManager {
         return;
       }
 
+      // Default symbols include both COMEX commodities and major Forex pairs
       const defaultComex = ['XAUUSD', 'GOLD', 'GC=F', 'SILVER', 'XAGUSD', 'SI=F', 'CRUDE', 'XTIUSD', 'CL=F', 'COPPER', 'XCUUSD', 'HG=F', 'NATGAS', 'XNGUSD', 'NG=F'];
-      const comexSymbols: string[] = [...defaultComex];
+      const defaultForex = ['USDINR', 'EURINR', 'GBPINR', 'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'];
+      const comexSymbols: string[] = [...defaultComex, ...defaultForex];
 
       for (const sym of Array.from(this.symbolRefCount.keys())) {
-        const upper = sym.toUpperCase().replace(/^(COMEX:|MCX:|TVC:|FX:|OANDA:)/i, '').trim();
+        const upper = sym.toUpperCase().replace(/^(COMEX:|MCX:|TVC:|FX:|OANDA:|FOREX:|CDS:)/i, '').trim();
         comexSymbols.push(upper);
       }
 
@@ -357,15 +442,14 @@ class MarketWSManager {
             ask: raw.ask || price,
           };
 
+          // Notify with original symbol
           this.notifyListeners('update', { symbol: sym, quote: quoteObj });
-          this.notifyListeners('update', { symbol: `COMEX:${sym}`, quote: quoteObj });
-          this.notifyListeners('update', { symbol: upper, quote: quoteObj });
-          this.notifyListeners('update', { symbol: `COMEX:${upper}`, quote: quoteObj });
-
-          const aliases = COMEX_ALIAS_MAP[upper] || [];
-          for (const alias of aliases) {
-            this.notifyListeners('update', { symbol: alias, quote: quoteObj });
-            this.notifyListeners('update', { symbol: `COMEX:${alias}`, quote: quoteObj });
+          
+          // Also notify with various prefix variations for forex symbols
+          if (upper.includes('INR') || upper.includes('USD') || upper.includes('EUR') || 
+              upper.includes('GBP') || upper.includes('JPY')) {
+            this.notifyListeners('update', { symbol: `FOREX:${sym}`, quote: quoteObj });
+            this.notifyListeners('update', { symbol: `CDS:${sym}`, quote: quoteObj });
           }
         }
       } catch (e) {
@@ -374,7 +458,7 @@ class MarketWSManager {
     };
 
     pollCOMEX();
-    this.comexInterval = setInterval(pollCOMEX, 6000);
+    this.comexInterval = setInterval(pollCOMEX, 3000);
   }
 
   private overviewInterval: ReturnType<typeof setInterval> | null = null;
@@ -407,6 +491,7 @@ class MarketWSManager {
   public connect() {
     this.connectBinance();
     this.connectUSStocks();
+    this.connectForex();
     this.connectCOMEX();
     this.connectMarketOverview();
 
@@ -463,6 +548,17 @@ class MarketWSManager {
         this.lastMessageReceivedTime = Date.now();
         try {
           const payload = JSON.parse(event.data);
+          
+          // DEBUG: Log what backend is sending for forex symbols
+          if (payload.type === 'quotes' || payload.type === 'update') {
+            const data = payload.type === 'quotes' ? payload.data : { [payload.symbol]: payload.data };
+            for (const [sym, quote] of Object.entries(data as any)) {
+              if (sym.includes('EUR') || sym.includes('GBP') || sym.includes('USD')) {
+                console.log('[MarketWSManager] Backend WS sent:', sym, '→ price:', (quote as any)?.last_price || (quote as any)?.price);
+              }
+            }
+          }
+          
           if (payload.type === 'quotes') {
             this.notifyListeners('quotes', payload.data);
           } else if (payload.type === 'update') {

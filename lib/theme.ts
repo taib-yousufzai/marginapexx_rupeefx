@@ -50,8 +50,14 @@ export function applyTheme(theme: Theme, animated = false): void {
     localStorage.setItem('rupeefx_theme', validTheme);
   } catch (e) {}
 
-  // Dispatch custom event for reactive UI components across the app
-  window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme: validTheme } }));
+  // Dispatch custom event for reactive UI components across the app (only if not already applying)
+  if (!(window as any).__applyingTheme) {
+    (window as any).__applyingTheme = true;
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('themeChanged', { detail: { theme: validTheme } }));
+      (window as any).__applyingTheme = false;
+    }, 0);
+  }
 }
 
 export function cycleTheme(currentTheme: Theme): Theme {
