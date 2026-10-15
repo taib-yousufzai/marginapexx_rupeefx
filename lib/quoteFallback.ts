@@ -31,8 +31,9 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
     };
   }
 
-  const clean = symbolKey.toUpperCase().replace(/^(NFO|NSE|BSE|MCX|CRYPTO|FOREX|US):/, '').trim();
-  const cleanUnslashed = clean.replace('/', '');
+  const clean = symbolKey.toUpperCase().replace(/^(NFO|NSE|BSE|MCX|CRYPTO|FOREX|US|CDS):/, '').trim();
+  const cleanUnslashed = clean.replace(/\//g, '');
+  const cleanBase = cleanUnslashed.replace(/(=[FX]|\.X)$/i, '').replace(/(\d{2}[A-Z]{3}FUT)$/i, '');
   const isCall = clean.endsWith('CE');
   const isPut = clean.endsWith('PE');
   const isFut = clean.endsWith('FUT');
@@ -54,13 +55,20 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
 
   let basePrice = 15.2;
 
-  const isUSStock = Boolean(US_BASE_PRICES[clean] || symbolKey.toUpperCase().startsWith('US:'));
-  const isForex = Boolean(FOREX_BASE_PRICES[cleanUnslashed] || symbolKey.toUpperCase().startsWith('FOREX:'));
+  const isUSStock = Boolean(US_BASE_PRICES[clean] || US_BASE_PRICES[cleanBase] || symbolKey.toUpperCase().startsWith('US:'));
+  const isForex = Boolean(
+    FOREX_BASE_PRICES[clean] ||
+    FOREX_BASE_PRICES[cleanUnslashed] ||
+    FOREX_BASE_PRICES[cleanBase] ||
+    symbolKey.toUpperCase().startsWith('FOREX:') ||
+    symbolKey.toUpperCase().startsWith('CDS:') ||
+    ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD', 'USDINR', 'EURINR', 'GBPINR', 'JPYINR'].some(f => cleanBase.includes(f))
+  );
 
   if (isUSStock) {
     basePrice = getUSStockBasePrice(clean);
   } else if (isForex) {
-    basePrice = FOREX_BASE_PRICES[cleanUnslashed] || 1.15;
+    basePrice = FOREX_BASE_PRICES[cleanBase] || FOREX_BASE_PRICES[cleanUnslashed] || FOREX_BASE_PRICES[clean] || getUSStockBasePrice(clean);
   } else if (strike > 0) {
     if (isCall) {
       // Call options: premium factor varies between 1.5% and 3.5% of strike
@@ -102,15 +110,15 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
   const changePercent = Number(rawChangePct.toFixed(2));
 
   // Calculate close price based on last_price and changePercent
-  const close = Number((basePrice / (1 + changePercent / 100)).toFixed(2));
-  const net_change = Number((basePrice - close).toFixed(2));
-  const open = Number((close * (1 + ((posHash % 40) - 20) / 1000)).toFixed(2));
-  const high = Number((Math.max(basePrice, close) * 1.02).toFixed(2));
-  const low = Number((Math.min(basePrice, close) * 0.98).toFixed(2));
+  const close = Number((basePrice / (1 + changePercent / 100)).toFixed(decimals));
+  const net_change = Number((basePrice - close).toFixed(decimals));
+  const open = Number((close * (1 + ((posHash % 40) - 20) / 1000)).toFixed(decimals));
+  const high = Number((Math.max(basePrice, close) * 1.005).toFixed(decimals));
+  const low = Number((Math.min(basePrice, close) * 0.995).toFixed(decimals));
   const volume = 1000 + (posHash % 15000);
 
-  const bid = Number((basePrice * 0.995).toFixed(2));
-  const ask = Number((basePrice * 1.005).toFixed(2));
+  const bid = Number((basePrice * 0.9995).toFixed(decimals));
+  const ask = Number((basePrice * 1.0005).toFixed(decimals));
 
   return {
     timestamp: new Date().toISOString(),

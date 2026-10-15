@@ -27,38 +27,61 @@ async function fetchQuoteBatch(
 
   const missing = new Set(allSymbols);
 
-  // 1. Redis cache
+  // 1. Redis cache with single pipelined hmget (<80ms)
   try {
     const { getRedisClient } = await import('@/lib/redis');
     const redis = getRedisClient();
-    await Promise.all(Array.from(missing).map(async (sym) => {
+    const candidateMap = new Map<string, string[]>();
+    const allKeysToFetch: string[] = [];
+
+    for (const sym of Array.from(missing)) {
       const cleanSym = sym.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
       const baseClean = cleanSym.replace('USDT', '');
       const keysToTry = [sym, cleanSym, baseClean, `CRYPTO:${cleanSym}`, `CRYPTO:${baseClean}`, `BINANCE:${cleanSym}`];
-      for (const k of keysToTry) {
-        const cached = await redis.hget('market:quotes', k);
-        if (cached) {
-          const q = JSON.parse(cached);
-          const ltp = Number(q.last_price ?? q.ltp ?? q.price ?? 0);
-          const bid = Number(q.bid ?? q.buy_price ?? q.depth?.buy?.[0]?.price ?? 0);
-          const ask = Number(q.ask ?? q.sell_price ?? q.depth?.sell?.[0]?.price ?? 0);
-          if (bid > 0 || ask > 0 || ltp > 0) {
-            quotesMap[sym] = { bid, ask, ltp: ltp > 0 ? ltp : undefined };
-            missing.delete(sym);
-            break;
+      candidateMap.set(sym, keysToTry);
+      allKeysToFetch.push(...keysToTry);
+    }
+
+    const cachedResults = await Promise.race([
+      redis.hmget('market:quotes', ...allKeysToFetch),
+      new Promise<any[]>(r => setTimeout(() => r([]), 80))
+    ]);
+
+    if (Array.isArray(cachedResults) && cachedResults.length === allKeysToFetch.length) {
+      const valByKey = new Map<string, string>();
+      allKeysToFetch.forEach((k, idx) => {
+        if (cachedResults[idx]) valByKey.set(k, cachedResults[idx]);
+      });
+
+      for (const sym of Array.from(missing)) {
+        const candidates = candidateMap.get(sym) || [];
+        for (const k of candidates) {
+          const raw = valByKey.get(k);
+          if (raw) {
+            try {
+              const q = JSON.parse(raw);
+              const ltp = Number(q.last_price ?? q.ltp ?? q.price ?? 0);
+              const bid = Number(q.bid ?? q.buy_price ?? q.depth?.buy?.[0]?.price ?? 0);
+              const ask = Number(q.ask ?? q.sell_price ?? q.depth?.sell?.[0]?.price ?? 0);
+              if (bid > 0 || ask > 0 || ltp > 0) {
+                quotesMap[sym] = { bid, ask, ltp: ltp > 0 ? ltp : undefined };
+                missing.delete(sym);
+                break;
+              }
+            } catch (_) {}
           }
         }
       }
-    }));
+    }
   } catch { /* fall through */ }
 
   if (missing.size === 0) return quotesMap;
 
-  // 2. Ticker Daemon
+  // 2. Ticker Daemon (<200ms)
   try {
     const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
     const params = new URLSearchParams({ symbols: Array.from(missing).join(',') });
-    const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(1500) });
+    const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
     if (resTicker.ok) {
       const json = await resTicker.json();
       if (json.success && json.data) {
@@ -76,13 +99,11 @@ async function fetchQuoteBatch(
         }
       }
     }
-  } catch (tickerErr) {
-    console.warn('[fetchQuoteBatch] Ticker Daemon failed, falling back to REST:', tickerErr);
-  }
+  } catch (_) {}
 
   if (missing.size === 0) return quotesMap;
 
-  // 3a. Kite REST for remaining non-crypto instruments
+  // 3a. Kite REST for remaining non-crypto instruments (<350ms)
   const missingKite = Array.from(missing).filter(s => kiteInstruments.includes(s));
   if (missingKite.length > 0) {
     try {
@@ -93,7 +114,7 @@ async function fetchQuoteBatch(
         missingKite.forEach(i => params.append('i', i));
         const res = await fetch(`https://api.kite.trade/quote?${params}`, {
           headers: { 'X-Kite-Version': '3', Authorization: `token ${apiKey}:${session.accessToken}` },
-          cache: 'no-store', signal: AbortSignal.timeout(1500),
+          cache: 'no-store', signal: AbortSignal.timeout(350),
         });
         if (res && res.ok) {
           const data = await res.json() as { data?: Record<string, any> };
@@ -111,9 +132,7 @@ async function fetchQuoteBatch(
           }
         }
       }
-    } catch (err) {
-      console.error('[fetchQuoteBatch] Kite REST error:', err);
-    }
+    } catch (_) {}
   }
 
   // 3b. Binance bookTicker for remaining crypto symbols (returns bidPrice / askPrice)
@@ -634,69 +653,70 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       }
     }
 
-    // Update Redis cache synchronously for all successfully closed positions (<5ms responses for history)
+    // Update Redis cache asynchronously (decoupled from response path for <200ms latency)
     const successfulPosIds = results.filter(r => r.success).map(r => r.positionId);
     if (successfulPosIds.length > 0) {
-      try {
-        const {
-          appendClosedPositionToCache,
-          appendOrderToCache,
-          invalidateUserOpenPositionsCache,
-          invalidateUserActiveOrdersCache,
-          invalidateUserHistoryCache
-        } = await import('@/lib/redisHistoryCache');
-
-        const closedPositions = positions.filter(p => successfulPosIds.includes(p.id));
-        await Promise.all([
-          ...closedPositions.map(pos => {
-            const resMatch = results.find(r => r.positionId === pos.id);
-            const closedPosRecord = {
-              ...pos,
-              status: 'closed',
-              exit_price: resMatch?.exit_price || pos.exit_price || 0,
-              pnl: Number(resMatch?.pnl ?? pos.pnl ?? 0),
-              exit_time: new Date().toISOString(),
-              closed_at: new Date().toISOString(),
-              closed_by: 'USER',
-              qty_open: 0,
-              locked_margin: 0,
-              brokerage: Number(resMatch?.brokerage ?? pos.brokerage ?? pos.entry_brokerage ?? 0),
-            };
-            const exitOrderRecord = {
-              id: `order_exit_${pos.id}_${Date.now()}`,
-              user_id: user.id,
-              symbol: pos.symbol,
-              segment: pos.settlement,
-              side: pos.side === 'BUY' ? 'SELL' : 'BUY',
-              status: 'EXECUTED',
-              qty: Number(pos.qty_open || pos.qty_total || 1),
-              fill_price: resMatch?.exit_price || pos.exit_price || 0,
-              price: resMatch?.exit_price || pos.exit_price || 0,
-              order_type: 'MARKET',
-              product_type: pos.product_type || 'INTRADAY',
-              is_exit: true,
-              linked_position_id: pos.id,
-              created_at: new Date().toISOString(),
-            };
-            return Promise.all([
-              appendClosedPositionToCache(user.id, closedPosRecord),
-              appendOrderToCache(user.id, exitOrderRecord)
-            ]);
-          }),
-          invalidateUserOpenPositionsCache(user.id),
-          invalidateUserActiveOrdersCache(user.id),
-          invalidateUserHistoryCache(user.id),
-        ]);
-
-        // Invalidate balance cache so wallet updates immediately after profit/loss
+      queueMicrotask(async () => {
         try {
-          const { getRedisClient } = await import('@/lib/redis');
-          const redis = getRedisClient();
-          await redis.del(`user_balance:${user.id}`);
-        } catch (_) {}
-      } catch (cacheErr) {
-        console.warn('[POST /api/positions/close] Cache update warning:', cacheErr);
-      }
+          const {
+            appendClosedPositionToCache,
+            appendOrderToCache,
+            invalidateUserOpenPositionsCache,
+            invalidateUserActiveOrdersCache,
+            invalidateUserHistoryCache
+          } = await import('@/lib/redisHistoryCache');
+
+          const closedPositions = positions.filter(p => successfulPosIds.includes(p.id));
+          await Promise.allSettled([
+            ...closedPositions.map(pos => {
+              const resMatch = results.find(r => r.positionId === pos.id);
+              const closedPosRecord = {
+                ...pos,
+                status: 'closed',
+                exit_price: resMatch?.exit_price || pos.exit_price || 0,
+                pnl: Number(resMatch?.pnl ?? pos.pnl ?? 0),
+                exit_time: new Date().toISOString(),
+                closed_at: new Date().toISOString(),
+                closed_by: 'USER',
+                qty_open: 0,
+                locked_margin: 0,
+                brokerage: Number(resMatch?.brokerage ?? pos.brokerage ?? pos.entry_brokerage ?? 0),
+              };
+              const exitOrderRecord = {
+                id: `order_exit_${pos.id}_${Date.now()}`,
+                user_id: user.id,
+                symbol: pos.symbol,
+                segment: pos.settlement,
+                side: pos.side === 'BUY' ? 'SELL' : 'BUY',
+                status: 'EXECUTED',
+                qty: Number(pos.qty_open || pos.qty_total || 1),
+                fill_price: resMatch?.exit_price || pos.exit_price || 0,
+                price: resMatch?.exit_price || pos.exit_price || 0,
+                order_type: 'MARKET',
+                product_type: pos.product_type || 'INTRADAY',
+                is_exit: true,
+                linked_position_id: pos.id,
+                created_at: new Date().toISOString(),
+              };
+              return Promise.allSettled([
+                appendClosedPositionToCache(user.id, closedPosRecord),
+                appendOrderToCache(user.id, exitOrderRecord)
+              ]);
+            }),
+            invalidateUserOpenPositionsCache(user.id),
+            invalidateUserActiveOrdersCache(user.id),
+            invalidateUserHistoryCache(user.id),
+          ]);
+
+          try {
+            const { getRedisClient } = await import('@/lib/redis');
+            const redis = getRedisClient();
+            await redis.del(`user_balance:${user.id}`);
+          } catch (_) {}
+        } catch (cacheErr) {
+          console.warn('[POST /api/positions/close] Cache update warning:', cacheErr);
+        }
+      });
 
       (async () => {
         try {

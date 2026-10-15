@@ -1,6 +1,8 @@
 import { getRedisClient } from '@/lib/redis';
 import { getAdminClient } from '@/lib/adminClient';
 
+const MEM_PLATFORM_SETTINGS = new Map<string, { value: string; expiresAt: number }>();
+
 export async function getPlatformSetting(
   key: string,
   fallback: string,
@@ -9,21 +11,31 @@ export async function getPlatformSetting(
   const envVal = process.env[key];
   if (envVal) return envVal;
 
-  // 2. Try Redis cache (with 300ms fast safety guard)
+  const now = Date.now();
+  // 2. Instant L1 in-memory cache (<0.01ms)
+  const mem = MEM_PLATFORM_SETTINGS.get(key);
+  if (mem && mem.expiresAt > now) {
+    return mem.value;
+  }
+
+  // 3. Try Redis cache (with 100ms fast safety guard)
   try {
     const redis = getRedisClient();
     if (redis) {
       const val = await Promise.race([
         redis.get(`platform:${key}`),
-        new Promise(r => setTimeout(() => r(null), 300))
+        new Promise(r => setTimeout(() => r(null), 100))
       ]) as string | null;
-      if (val !== null && val !== undefined) return val;
+      if (val !== null && val !== undefined) {
+        MEM_PLATFORM_SETTINGS.set(key, { value: val, expiresAt: now + 60_000 });
+        return val;
+      }
     }
   } catch (err) {
     // Ignore Redis error
   }
 
-  // 3. Fallback to Supabase platform_settings table
+  // 4. Fallback to Supabase platform_settings table
   try {
     const admin = getAdminClient();
     const { data } = await admin
@@ -33,16 +45,16 @@ export async function getPlatformSetting(
       .single();
 
     if (data && data.value !== null && data.value !== undefined) {
-      // Warm Redis cache
-      try {
-        const redis = getRedisClient();
-        if (redis) {
-          await Promise.race([
-            redis.set(`platform:${key}`, data.value),
-            new Promise(r => setTimeout(r, 300))
-          ]);
-        }
-      } catch {}
+      MEM_PLATFORM_SETTINGS.set(key, { value: data.value, expiresAt: now + 60_000 });
+      // Warm Redis cache in background
+      (async () => {
+        try {
+          const redis = getRedisClient();
+          if (redis) {
+            await redis.set(`platform:${key}`, data.value);
+          }
+        } catch {}
+      })();
       return data.value;
     }
   } catch (err) {

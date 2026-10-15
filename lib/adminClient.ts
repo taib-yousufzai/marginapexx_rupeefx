@@ -133,6 +133,8 @@ function parseJwtLocally(token: string): any | null {
   }
 }
 
+// In-memory L1 cache for parsed user JWTs (eliminates 300-600ms remote Redis roundtrip)
+const MEM_AUTH_USERS = new Map<string, { user: any; expiresAt: number }>();
 const pendingRequests = new Map<string, Promise<any>>();
 
 /**
@@ -146,15 +148,32 @@ export async function getUserFromRequest(request: Request) {
   const token = auth.slice(7).trim();
   if (!token || token === 'null' || token === 'undefined') return null;
 
+  const now = Date.now();
+  // 1. Instant L1 in-memory cache lookup (<0.01ms)
+  const mem = MEM_AUTH_USERS.get(token);
+  if (mem && mem.expiresAt > now) {
+    return mem.user;
+  }
+
+  // 2. Instant local JWT verification (<0.02ms)
+  const localUser = parseJwtLocally(token);
+  if (localUser) {
+    MEM_AUTH_USERS.set(token, { user: localUser, expiresAt: now + 60_000 });
+    return localUser;
+  }
+
+  // 3. Fallback: Check Redis cache (with 100ms fast safety guard)
   try {
     const { getRedisClient } = await import('./redis');
     const redis = getRedisClient();
     const cachedUser = await Promise.race([
       redis.get(`auth_user:${token}`),
-      new Promise(r => setTimeout(() => r(null), 300))
+      new Promise(r => setTimeout(() => r(null), 100))
     ]) as string | null;
     if (cachedUser) {
-      return JSON.parse(cachedUser);
+      const parsed = JSON.parse(cachedUser);
+      MEM_AUTH_USERS.set(token, { user: parsed, expiresAt: now + 60_000 });
+      return parsed;
     }
   } catch {
     // Ignore Redis errors
@@ -172,42 +191,40 @@ export async function getUserFromRequest(request: Request) {
   const fetchUser = async () => {
     let resolvedUser: any = null;
 
-    // 1. Instant 0ms local JWT verification
-    resolvedUser = parseJwtLocally(token);
+    // Supabase Cloud Auth API query
+    try {
+      const admin = getAdminClient();
+      const authPromise = admin.auth.getUser(token);
+      const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
+        setTimeout(() => resolve({ data: null, error: new Error('Supabase Auth timeout') }), 800)
+      );
 
-    // 2. Fallback: Supabase Cloud Auth API query if local JWT parsing failed
-    if (!resolvedUser) {
-      try {
-        const admin = getAdminClient();
-        const authPromise = admin.auth.getUser(token);
-        const timeoutPromise = new Promise<{ data: null; error: any }>((resolve) =>
-          setTimeout(() => resolve({ data: null, error: new Error('Supabase Auth timeout') }), 1000)
-        );
-
-        const { data, error } = await Promise.race([authPromise, timeoutPromise]);
-        if (!error && data?.user) {
-          resolvedUser = data.user;
-        }
-      } catch (err) {
-        console.warn('[getUserFromRequest] Supabase auth network error:', err);
+      const { data, error } = await Promise.race([authPromise, timeoutPromise]);
+      if (!error && data?.user) {
+        resolvedUser = data.user;
       }
+    } catch (err) {
+      console.warn('[getUserFromRequest] Supabase auth network error:', err);
     }
 
     if (!resolvedUser) {
       return null;
     }
 
-    try {
-      const { getRedisClient } = await import('./redis');
-      const redis = getRedisClient();
-      // Cache the validated user for 1 hour in Redis/Mock with 300ms safety timeout
-      await Promise.race([
-        redis.setex ? redis.setex(`auth_user:${token}`, 3600, JSON.stringify(resolvedUser)) : redis.set(`auth_user:${token}`, JSON.stringify(resolvedUser), 'EX', 3600),
-        new Promise(r => setTimeout(r, 300))
-      ]);
-    } catch {
-      // Ignore Redis errors
-    }
+    MEM_AUTH_USERS.set(token, { user: resolvedUser, expiresAt: Date.now() + 60_000 });
+
+    // Non-blocking background Redis cache write
+    (async () => {
+      try {
+        const { getRedisClient } = await import('./redis');
+        const redis = getRedisClient();
+        if (redis.setex) {
+          await redis.setex(`auth_user:${token}`, 3600, JSON.stringify(resolvedUser));
+        } else {
+          await redis.set(`auth_user:${token}`, JSON.stringify(resolvedUser), 'EX', 3600);
+        }
+      } catch { /* ignore */ }
+    })();
 
     return resolvedUser;
   };

@@ -51,20 +51,29 @@ export function reportRailwayDbError(action: string, err: any): void {
 
 /**
  * Returns the configured Railway Postgres database connection URL.
+ *
+ * Priority:
+ *  1. Inside Railway private network  → DATABASE_URL / RAILWAY_DATABASE_URL (< 2ms)
+ *  2. Outside Railway (Vercel, local) → DATABASE_PUBLIC_URL public proxy (~80-150ms)
+ *
+ * We no longer short-circuit on VERCEL so that chart candle queries work from the
+ * Vercel-hosted Next.js API routes as well.
  */
 export function getRailwayDbUrl(): string | null {
-  const url = (
+  // Prefer the internal private-network URL when running inside Railway itself.
+  const internalUrl =
     process.env.RAILWAY_DATABASE_URL ||
-    process.env.DATABASE_URL ||
+    (process.env.RAILWAY_ENVIRONMENT ? process.env.DATABASE_URL : null) ||
+    null;
+  if (internalUrl) return internalUrl;
+
+  // Outside Railway (Vercel, local dev) — use the public proxy URL.
+  // DATABASE_PUBLIC_URL is the iriguchi.proxy.rlwy.net address; it works from anywhere.
+  return (
+    process.env.DATABASE_PUBLIC_URL ||
     process.env.POSTGRES_URL ||
     null
   );
-  if (!url) return null;
-  // If running in a non-Railway environment (e.g. VERCEL or local), internal railway domains cannot resolve
-  if (url.includes('railway.internal') && (process.env.VERCEL || !process.env.RAILWAY_ENVIRONMENT)) {
-    return null;
-  }
-  return url;
 }
 
 /**
@@ -89,10 +98,11 @@ export function getRailwayPool(): Pool | null {
       connectionString,
       max: 10,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 800, // fast timeout: 800ms max to establish connection
+      // Internal network is sub-2ms; public proxy is ~80-150ms — give it more headroom.
+      connectionTimeoutMillis: isInternal ? 1000 : 5000,
     };
 
-    // For external/proxied connections, enable SSL without strict certificate validation
+    // Public proxy and any non-localhost connection needs SSL.
     if (!isInternal && !connectionString.includes('localhost') && !connectionString.includes('127.0.0.1')) {
       poolConfig.ssl = { rejectUnauthorized: false };
     }

@@ -97,6 +97,9 @@ function cleanSymHelper(s?: string | null): string {
 const tradingHoursCache = new Map<string, { data: any; expiresAt: number }>();
 const TRADING_HOURS_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
+// In-memory deduplication cache for orderAttemptId (<0.01ms vs remote Redis 400ms)
+const MEM_IN_FLIGHT_ORDERS = new Map<string, { expiresAt: number; response?: any }>();
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -682,26 +685,29 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let { symbol, kite_instrument, segment, side, order_type, product_type, qty, lots, client_price, trigger_price, stop_loss, target, linked_position_id, orderAttemptId } = body;
     const is_exit = Boolean(body.is_exit === true || body.is_exit === 'true' || body.is_exit === 1 || body.is_exit === '1');
 
-    // 2b. Idempotency pre-check using Redis (with 300ms fast safety guard and 3s lock TTL)
+    // 2b. Idempotency pre-check using fast in-memory L1 cache (<0.01ms) + Redis
     if (orderAttemptId) {
       attemptRedisKey = `order_attempt:${user.id}:${orderAttemptId}`;
-      try {
-        const redis = getRedisClient();
-        const cached = await Promise.race([
-          redis.get(attemptRedisKey),
-          new Promise(r => setTimeout(() => r(null), 300))
-        ]);
-        if (cached) {
-          if (cached === 'IN_PROGRESS') {
-            return NextResponse.json({ error: 'Order submission in progress. Please wait.' }, { status: 409 });
-          }
-          return NextResponse.json(JSON.parse(cached));
+      const now = Date.now();
+      const inFlight = MEM_IN_FLIGHT_ORDERS.get(attemptRedisKey);
+      if (inFlight && inFlight.expiresAt > now) {
+        if (inFlight.response) {
+          return NextResponse.json(inFlight.response);
         }
-        await Promise.race([
-          redis.setex(attemptRedisKey, 3, 'IN_PROGRESS'),
-          new Promise(r => setTimeout(() => r('OK'), 300))
-        ]);
-      } catch { /* proceed if redis fails */ }
+        return NextResponse.json({ error: 'Order submission in progress. Please wait.' }, { status: 409 });
+      }
+      MEM_IN_FLIGHT_ORDERS.set(attemptRedisKey, { expiresAt: now + 3000 });
+
+      // Non-blocking cross-instance check with 80ms timeout
+      (async () => {
+        try {
+          const redis = getRedisClient();
+          await Promise.race([
+            redis.setex(attemptRedisKey, 3, 'IN_PROGRESS'),
+            new Promise(r => setTimeout(r, 80))
+          ]);
+        } catch { /* proceed */ }
+      })();
     }
 
     // 3. Basic field validation
@@ -1217,6 +1223,41 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // Strict Exit Validation: Ensure exit quantity does not exceed open quantity
     if (is_exit || linked_position_id) {
       if (matchingPositions.length === 0) {
+        // Check if the position exists and was already closed (e.g. concurrent exit or fast-pipe execution)
+        let alreadyClosedPos: any = null;
+        if (linked_position_id) {
+          const { data } = await admin
+            .from('positions')
+            .select('*')
+            .eq('user_id', user.id)
+            .eq('id', linked_position_id)
+            .maybeSingle();
+          if (data && ['closed', 'CLOSED'].includes(data.status)) {
+            alreadyClosedPos = data;
+          }
+        }
+        if (!alreadyClosedPos) {
+          const { data: recentClosed } = await admin
+            .from('positions')
+            .select('*')
+            .eq('user_id', user.id)
+            .in('status', ['closed', 'CLOSED'])
+            .order('updated_at', { ascending: false })
+            .limit(5);
+          alreadyClosedPos = recentClosed?.find((p: any) => cleanSymHelper(p.symbol || p.kite_instrument) === targetClean) ?? null;
+        }
+
+        if (alreadyClosedPos) {
+          return NextResponse.json({
+            order_id: `already_closed_${alreadyClosedPos.id}`,
+            status: 'EXECUTED',
+            fill_price: Number(alreadyClosedPos.exit_price || alreadyClosedPos.ltp || client_price || 0),
+            message: 'Position is already closed',
+            already_closed: true,
+            position: { ...alreadyClosedPos, status: 'closed' }
+          }, { status: 200 });
+        }
+
         return NextResponse.json({
           error: 'No matching open position found to exit for this symbol.',
         }, { status: 400 });
@@ -1893,6 +1934,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     };
 
     // Decoupled asynchronous post-processing (zero blocking latency on HTTP response)
+    if (attemptRedisKey) {
+      MEM_IN_FLIGHT_ORDERS.set(attemptRedisKey, { expiresAt: Date.now() + 10000, response });
+    }
     queueMicrotask(async () => {
       if (attemptRedisKey) {
         try {

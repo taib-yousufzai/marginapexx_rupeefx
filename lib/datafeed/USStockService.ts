@@ -69,36 +69,42 @@ export const FOREX_BASE_PRICES: Record<string, number> = {
   'EURINR': 110.88,
   'GBPINR': 129.29,
   'JPYINR': 0.622,
+  'EURGBP': 0.8570,
+  'EURJPY': 178.10,
+  'GBPJPY': 207.75,
+  'GBPUSD=X': 1.3523,
+  'EURUSD=X': 1.1597,
+  'USDJPY=X': 153.61,
+  'USDCHF=X': 0.8166,
+  'USDCAD=X': 1.3863,
+  'AUDUSD=X': 0.7155,
+  'NZDUSD=X': 0.5811,
 };
 
 export function getUSStockBasePrice(symbol: string): number {
-  console.log('[getUSStockBasePrice] Input symbol:', symbol);
-  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:|CDS:)/i, '').replace(/[\/\s]/g, '').trim().toUpperCase();
-  console.log('[getUSStockBasePrice] Cleaned symbol:', clean);
-  
-  if (US_BASE_PRICES[clean]) {
-    console.log('[getUSStockBasePrice] ✅ Found in US_BASE_PRICES:', clean, '=', US_BASE_PRICES[clean]);
-    return US_BASE_PRICES[clean];
+  if (!symbol) return 100;
+  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:|CDS:|FX:|TVC:|OANDA:)/i, '').replace(/[\/\s]/g, '').trim().toUpperCase();
+  if (US_BASE_PRICES[clean]) return US_BASE_PRICES[clean];
+  if (FOREX_BASE_PRICES[clean]) return FOREX_BASE_PRICES[clean];
+
+  const baseClean = clean.replace(/(=[FX]|\.X)$/i, '').replace(/(\d{2}[A-Z]{3}FUT)$/i, '');
+  if (US_BASE_PRICES[baseClean]) return US_BASE_PRICES[baseClean];
+  if (FOREX_BASE_PRICES[baseClean]) return FOREX_BASE_PRICES[baseClean];
+
+  for (const [k, v] of Object.entries(FOREX_BASE_PRICES)) {
+    if (baseClean.startsWith(k) || clean.startsWith(k)) return v;
   }
-  if (FOREX_BASE_PRICES[clean]) {
-    console.log('[getUSStockBasePrice] ✅ Found in FOREX_BASE_PRICES:', clean, '=', FOREX_BASE_PRICES[clean]);
-    return FOREX_BASE_PRICES[clean];
+  for (const [k, v] of Object.entries(US_BASE_PRICES)) {
+    if (baseClean.startsWith(k) || clean.startsWith(k)) return v;
   }
-  
-  const baseClean = clean.replace(/=F$/i, '');
-  if (US_BASE_PRICES[baseClean]) {
-    console.log('[getUSStockBasePrice] ✅ Found after =F removal:', baseClean, '=', US_BASE_PRICES[baseClean]);
-    return US_BASE_PRICES[baseClean];
+
+  // If it matches 6-character forex pattern, return reasonable base rate rather than 100
+  if (/^[A-Z]{6}$/.test(baseClean)) {
+    if (baseClean.endsWith('JPY')) return 150.0;
+    if (baseClean.endsWith('INR')) return 90.0;
+    return 1.15;
   }
-  if (FOREX_BASE_PRICES[baseClean]) {
-    console.log('[getUSStockBasePrice] ✅ Found after =F removal:', baseClean, '=', FOREX_BASE_PRICES[baseClean]);
-    return FOREX_BASE_PRICES[baseClean];
-  }
-  
-  // Log when no base price is found
-  console.warn('[getUSStockBasePrice] ❌ No base price found for:', symbol, '→ cleaned:', clean);
-  console.log('[getUSStockBasePrice] Available FOREX keys:', Object.keys(FOREX_BASE_PRICES));
-  
+
   return 100;
 }
 
@@ -162,12 +168,13 @@ export async function fetchUSStockQuote(symbol: string): Promise<USStockQuote | 
 
   // Consistent Fallback for US Stocks if network is offline
   const basePrice = getUSStockBasePrice(cleanSymbol);
+  const dec = basePrice < 10 ? 4 : 2;
   const fallbackQuote: USStockQuote = {
     symbol: cleanSymbol,
     name: cleanSymbol,
     price: basePrice,
-    high: Number((basePrice * 1.01).toFixed(2)),
-    low: Number((basePrice * 0.99).toFixed(2)),
+    high: Number((basePrice * 1.01).toFixed(dec)),
+    low: Number((basePrice * 0.99).toFixed(dec)),
     prevClose: basePrice,
     changePercent: 0,
     currency: 'INR',

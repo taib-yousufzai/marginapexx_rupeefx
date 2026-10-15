@@ -476,7 +476,13 @@ export function useOrderEntry() {
       }
 
       // If position is already closed, treat as success
-      if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+      const isAlreadyClosed = typeof message === 'string' && (
+        message.toLowerCase().includes('already closed') ||
+        message.toLowerCase().includes('already_closed') ||
+        message.toLowerCase().includes('no matching open position') ||
+        message.toLowerCase().includes('not found')
+      );
+      if (isAlreadyClosed) {
         if (positionsContext?.removePositionLocally) {
           positionsContext.removePositionLocally(positionId, existingPos);
         }
@@ -675,7 +681,13 @@ export function useOrderEntry() {
       }
 
       // If positions are already closed, treat as success
-      if (typeof message === 'string' && (message.toLowerCase().includes('already closed') || message.toLowerCase().includes('already_closed'))) {
+      const isBatchAlreadyClosed = typeof message === 'string' && (
+        message.toLowerCase().includes('already closed') ||
+        message.toLowerCase().includes('already_closed') ||
+        message.toLowerCase().includes('no matching open position') ||
+        message.toLowerCase().includes('not found')
+      );
+      if (isBatchAlreadyClosed) {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new Event('order_placed'));
           window.dispatchEvent(new Event('position-closed'));

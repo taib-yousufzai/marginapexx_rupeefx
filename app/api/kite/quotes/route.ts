@@ -39,8 +39,8 @@ function isCryptoSymbol(sym: string): boolean {
 function isForexSymbol(sym: string): boolean {
   if (!sym) return false;
   if (sym.startsWith('FOREX:')) return true;
-  const clean = sym.toUpperCase().replace(/^FOREX:/, '').replace('/', '').trim();
-  return FOREX_PAIRS.has(clean);
+  const clean = sym.toUpperCase().replace(/^FOREX:/, '').replace(/\//g, '').replace(/(=[FX]|\.X)$/i, '').trim();
+  return FOREX_PAIRS.has(clean) || clean.includes('INR');
 }
 
 function isUsSymbol(sym: string): boolean {
@@ -141,7 +141,7 @@ async function fetchForexQuotesBatch(forexSymbols: string[]): Promise<Record<str
     if (forexCache?.rates) {
       const rates = forexCache.rates;
       for (const rawSym of forexSymbols) {
-        const clean = rawSym.replace(/^FOREX:/i, '').replace('/', '').trim().toUpperCase();
+        const clean = rawSym.replace(/^FOREX:/i, '').replace(/\//g, '').replace(/(=[FX]|\.X)$/i, '').trim().toUpperCase();
         let rate = 0;
 
         if (clean === 'EURUSD') rate = rates.EUR ? 1 / rates.EUR : 1.1597;
@@ -170,6 +170,7 @@ async function fetchForexQuotesBatch(forexSymbols: string[]): Promise<Record<str
           };
           result[rawSym] = quoteObj;
           result[clean] = quoteObj;
+          result[`${clean}=X`] = quoteObj;
           result[`FOREX:${clean}`] = quoteObj;
           if (rawSym.includes('/')) result[rawSym] = quoteObj;
         }

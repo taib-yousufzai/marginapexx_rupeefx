@@ -875,7 +875,7 @@ export function normalizeQuote(q: any, symbolKey?: string): QuoteData {
 
   const rawSym = (q.symbol || q.tradingsymbol || symbolKey || '').toUpperCase();
   const exchange = (q.exchange || (rawSym.includes(':') ? rawSym.split(':')[0] : '')).toUpperCase();
-  const cleanSym = rawSym.replace(/^(CRYPTO|FOREX|MCX|COMEX|NCO|NFO|NSE|BSE):/, '');
+  const cleanSym = rawSym.replace(/^(CRYPTO|FOREX|MCX|COMEX|NCO|NFO|NSE|BSE):/, '').replace(/\//g, '').replace(/(=[FX]|\.X)$/i, '');
 
   const isForexUsd = ['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'].includes(cleanSym);
   const usdInrRate = 1;

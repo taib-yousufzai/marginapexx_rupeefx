@@ -52,11 +52,29 @@ async function fetchKiteLtp(instrument: string): Promise<number | null> {
   try {
     const admin = getAdminClient();
     
-    // 1. Check Ticker Daemon in-memory quotes API
+    // 0. Check Redis cache first (pipelined fast lookup <80ms)
+    try {
+      const redis = getRedisClient();
+      const cached = await Promise.race([
+        redis.hget('market:quotes', instrument),
+        new Promise<string | null>(r => setTimeout(() => r(null), 80))
+      ]);
+      if (cached) {
+        const q = JSON.parse(cached);
+        const ltp = Number(q.last_price || q.ltp || q.price || 0);
+        if (ltp > 0) {
+          const bid = Number(q.bid ?? q.buy_price ?? q.depth?.buy?.[0]?.price ?? 0);
+          const ask = Number(q.ask ?? q.sell_price ?? q.depth?.sell?.[0]?.price ?? 0);
+          return { ltp, bid: bid > 0 ? bid : null, ask: ask > 0 ? ask : null } as any;
+        }
+      }
+    } catch (_) {}
+
+    // 1. Check Ticker Daemon in-memory quotes API (<200ms)
     try {
       const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || 'http://localhost:8080';
       const params = new URLSearchParams({ symbols: instrument });
-      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(1000) });
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
       if (resTicker.ok) {
         const json = await resTicker.json();
         if (json.success && json.data && json.data[instrument]) {
@@ -67,11 +85,9 @@ async function fetchKiteLtp(instrument: string): Promise<number | null> {
           return { ltp, bid: bid > 0 ? bid : null, ask: ask > 0 ? ask : null } as any;
         }
       }
-    } catch (tickerErr) {
-      console.warn('[fetchKiteLtp] Failed to query Ticker Daemon, falling back to REST:', tickerErr);
-    }
+    } catch (_) {}
 
-    // 2. On-demand fallback to Kite REST API
+    // 2. On-demand fallback to Kite REST API (<350ms)
     const apiKey = process.env.KITE_API_KEY;
     if (!apiKey) return null;
     const session = await getSharedKiteSession();
@@ -84,7 +100,7 @@ async function fetchKiteLtp(instrument: string): Promise<number | null> {
         Authorization: `token ${apiKey}:${session.accessToken}`,
       },
       cache: 'no-store',
-      signal: AbortSignal.timeout(1500),
+      signal: AbortSignal.timeout(350),
     });
 
     if (!res.ok) return null;
@@ -137,25 +153,30 @@ async function fetchBinanceQuote(symbol: string): Promise<number | null> {
     }
     const baseClean = clean.replace('USDT', '');
 
-    // 1. Check Redis in-memory cache first (0.5ms) across all possible symbol keys
+    // 1. Check Redis in-memory cache first with pipelined hmget (<80ms) across all possible symbol keys
     try {
       const redis = getRedisClient();
       const keysToTry = [clean, baseClean, `CRYPTO:${clean}`, `CRYPTO:${baseClean}`, `BINANCE:${clean}`];
-      for (const k of keysToTry) {
-        const cached = await redis.hget('market:quotes', k);
-        if (cached) {
-          const tick = JSON.parse(cached);
-          const ltp = Number(tick.last_price || tick.lastPrice || 0);
-          if (ltp > 0) return ltp;
+      const cachedList = await Promise.race([
+        redis.hmget('market:quotes', ...keysToTry),
+        new Promise<any[]>(r => setTimeout(() => r([]), 80))
+      ]);
+      if (Array.isArray(cachedList)) {
+        for (const cached of cachedList) {
+          if (cached) {
+            const tick = JSON.parse(cached);
+            const ltp = Number(tick.last_price || tick.lastPrice || tick.price || 0);
+            if (ltp > 0) return ltp;
+          }
         }
       }
     } catch (_) {}
 
-    // 1b. Check Ticker Daemon endpoint (<5ms)
+    // 1b. Check Ticker Daemon endpoint (<200ms)
     try {
       const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
       const params = new URLSearchParams({ symbols: clean });
-      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(600) });
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(200) });
       if (resTicker.ok) {
         const json = await resTicker.json();
         if (json.success && json.data && json.data[clean]) {
@@ -165,10 +186,10 @@ async function fetchBinanceQuote(symbol: string): Promise<number | null> {
       }
     } catch (_) {}
 
-    // 2. Fallback to REST API with 1.2s timeout
+    // 2. Fallback to REST API with 300ms timeout
     const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${clean}`, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(1200),
+      signal: AbortSignal.timeout(300),
     });
     if (res.ok) {
       const data = await res.json();
@@ -213,6 +234,7 @@ export async function POST(
               if (rPos && rPos.length > 0) {
                 const match = rPos.find(p => ['open', 'active'].includes(String(p.status || '').toLowerCase()));
                 if (match) return { data: match, error: null };
+                return { data: rPos[0], error: null };
               }
             } catch { /* fallback */ }
           }
@@ -220,7 +242,6 @@ export async function POST(
             .select('*')
             .eq('id', positionId)
             .eq('user_id', user.id)
-            .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
             .maybeSingle());
         })()
       : Promise.resolve({ data: null, error: null }),
@@ -230,89 +251,74 @@ export async function POST(
   let pos = posResult?.data;
   let resolvedPositionId = isUuid ? positionId : '';
 
-  // Fallback: If position was not found by exact UUID (e.g. optimistic client ID or newly opened trade),
-  // look up by symbol/side among user's open positions with a short retry for in-flight DB commits.
+  // If position was already closed, return immediate success (<20ms)
+  if (pos && ['closed', 'CLOSED'].includes(pos.status)) {
+    return NextResponse.json({
+      success: true,
+      message: 'Position already closed',
+      position_id: pos.id,
+      pnl: pos.pnl ?? 0,
+      exit_price: pos.exit_price ?? pos.ltp ?? body?.client_price ?? 0,
+      already_closed: true,
+    }, { status: 200 });
+  }
+
+  // Fallback: If position was not found by exact UUID, look up by symbol/side in a single query
   if (!pos) {
     const targetSymbol = body?.symbol || (positionId && !isUuid ? positionId : '');
     const targetClean = cleanSym(targetSymbol);
 
-    for (let attempt = 0; attempt < 5; attempt++) {
-      let userOpenPositions: any[] | null = null;
-      if (isRailwayDbConfigured()) {
-        try {
-          userOpenPositions = await getRailwayOpenPositions(user.id);
-        } catch { /* fallback */ }
-      }
-
-      if (!userOpenPositions) {
-        const res = await withDbRetry(() => admin
-          .from('positions')
-          .select('*')
-          .eq('user_id', user.id)
-          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-          .order('created_at', { ascending: false }));
-        userOpenPositions = res?.data ?? [];
-      }
-
-      if (userOpenPositions && userOpenPositions.length > 0) {
-        if (targetClean) {
-          pos = userOpenPositions.find((p: any) => 
-            cleanSym(p.symbol || p.kite_instrument) === targetClean && 
-            (!body?.side || p.side === body.side)
-          ) ?? userOpenPositions.find((p: any) => cleanSym(p.symbol || p.kite_instrument) === targetClean) ?? null;
-        }
-        if (!pos && isUuid) {
-          pos = userOpenPositions.find((p: any) => p.id === positionId) ?? null;
-        }
-        if (pos) {
-          resolvedPositionId = pos.id;
-          break;
-        }
-      }
-      if (attempt < 4) {
-        await new Promise(r => setTimeout(r, 50));
-      }
+    let userPositions: any[] | null = null;
+    if (isRailwayDbConfigured()) {
+      try {
+        userPositions = await getRailwayOpenPositions(user.id);
+      } catch { /* fallback */ }
     }
-  }
 
-  if (!pos) {
-    // Check if the position exists for this user and was already closed (e.g. fast-pipe WS already closed it, or concurrent exit)
-    let closedPos: any = null;
-    if (isUuid) {
-      const { data } = await admin
+    if (!userPositions) {
+      const res = await withDbRetry(() => admin
         .from('positions')
         .select('*')
         .eq('user_id', user.id)
-        .eq('id', positionId)
-        .maybeSingle();
-      closedPos = data;
+        .order('created_at', { ascending: false })
+        .limit(10));
+      userPositions = res?.data ?? [];
     }
 
-    if (!closedPos && body?.symbol) {
-      const targetClean = cleanSym(body.symbol);
-      const { data: recentClosed } = await admin
-        .from('positions')
-        .select('*')
-        .eq('user_id', user.id)
-        .in('status', ['closed', 'CLOSED'])
-        .order('updated_at', { ascending: false })
-        .limit(5);
-
-      closedPos = recentClosed?.find((p: any) => cleanSym(p.symbol || p.kite_instrument) === targetClean) ?? null;
+    if (userPositions && userPositions.length > 0) {
+      if (targetClean) {
+        pos = userPositions.find((p: any) => 
+          cleanSym(p.symbol || p.kite_instrument) === targetClean && 
+          ['open', 'active', 'OPEN', 'ACTIVE'].includes(p.status) &&
+          (!body?.side || p.side === body.side)
+        ) ?? userPositions.find((p: any) => cleanSym(p.symbol || p.kite_instrument) === targetClean && ['open', 'active', 'OPEN', 'ACTIVE'].includes(p.status)) ?? null;
+      }
+      if (!pos && isUuid) {
+        pos = userPositions.find((p: any) => p.id === positionId && ['open', 'active', 'OPEN', 'ACTIVE'].includes(p.status)) ?? null;
+      }
+      if (pos) {
+        resolvedPositionId = pos.id;
+      }
     }
 
-    if (closedPos && (closedPos.status === 'closed' || closedPos.status === 'CLOSED')) {
-      return NextResponse.json({
-        success: true,
-        message: 'Position already closed',
-        position_id: closedPos.id,
-        pnl: closedPos.pnl ?? 0,
-        exit_price: closedPos.exit_price ?? closedPos.ltp ?? 0,
-        already_closed: true,
-      });
-    }
+    if (!pos) {
+      const closedMatch = userPositions?.find((p: any) => 
+        ['closed', 'CLOSED'].includes(p.status) && 
+        (p.id === positionId || (targetClean && cleanSym(p.symbol || p.kite_instrument) === targetClean))
+      );
+      if (closedMatch) {
+        return NextResponse.json({
+          success: true,
+          message: 'Position already closed',
+          position_id: closedMatch.id,
+          pnl: closedMatch.pnl ?? 0,
+          exit_price: closedMatch.exit_price ?? closedMatch.ltp ?? body?.client_price ?? 0,
+          already_closed: true,
+        }, { status: 200 });
+      }
 
-    return NextResponse.json({ error: 'Position not found or already closed' }, { status: 404 });
+      return NextResponse.json({ error: 'Position not found or already closed' }, { status: 404 });
+    }
   }
 
   const dbSegment = mapSegmentWithSymbol(pos.settlement || '', pos.symbol || '');
@@ -381,9 +387,10 @@ export async function POST(
         }
         return fetchKiteLtp(fullSymbol);
       })();
+      const maxQuoteWait = (body?.client_price && Number(body.client_price) > 0) ? 120 : 400;
       return Promise.race([
         fetchPromise,
-        new Promise<any>((resolve) => setTimeout(() => resolve(null), 1500))
+        new Promise<any>((resolve) => setTimeout(() => resolve(null), maxQuoteWait))
       ]);
     })(),
   ]);
@@ -593,61 +600,59 @@ export async function POST(
       .catch((e: any) => console.warn('[POST /api/positions/[id]/close] brokerage patch warning:', e));
   }
 
-  // Update caches synchronously so subsequent client polls receive clean updated state instantly (<5ms)
-  try {
-    const { 
-      appendClosedPositionToCache, 
-      appendOrderToCache, 
-      invalidateUserOpenPositionsCache, 
-      invalidateUserActiveOrdersCache,
-      invalidateUserHistoryCache
-    } = await import('@/lib/redisHistoryCache');
+  // Update caches in background (decoupled from response path to achieve <200ms latency)
+  queueMicrotask(async () => {
+    try {
+      const { 
+        appendClosedPositionToCache, 
+        appendOrderToCache, 
+        invalidateUserOpenPositionsCache, 
+        invalidateUserActiveOrdersCache,
+      } = await import('@/lib/redisHistoryCache');
 
-    const closedPosRecord = {
-      ...pos,
-      id: resolvedPositionId || pos.id,
-      status: 'closed',
-      exit_price: exitPrice,
-      pnl: Number(pnl),
-      exit_time: new Date().toISOString(),
-      closed_at: new Date().toISOString(),
-      closed_by: 'USER',
-      qty_open: 0,
-      locked_margin: 0,
-      brokerage: totalBrokerage,
-    };
+      const closedPosRecord = {
+        ...pos,
+        id: resolvedPositionId || pos.id,
+        status: 'closed',
+        exit_price: exitPrice,
+        pnl: Number(pnl),
+        exit_time: new Date().toISOString(),
+        closed_at: new Date().toISOString(),
+        closed_by: 'USER',
+        qty_open: 0,
+        locked_margin: 0,
+        brokerage: totalBrokerage,
+      };
 
-    const exitOrderRecord = {
-      id: `order_exit_${resolvedPositionId || pos.id}_${Date.now()}`,
-      user_id: user.id,
-      symbol: pos.symbol,
-      segment: pos.settlement,
-      side: pos.side === 'BUY' ? 'SELL' : 'BUY',
-      status: 'EXECUTED',
-      qty: Number(pos.qty_open || pos.qty_total || 1),
-      fill_price: exitPrice,
-      price: exitPrice,
-      order_type: 'MARKET',
-      product_type: pos.product_type || 'INTRADAY',
-      is_exit: true,
-      linked_position_id: resolvedPositionId || pos.id,
-      created_at: new Date().toISOString(),
-    };
+      const exitOrderRecord = {
+        id: `order_exit_${resolvedPositionId || pos.id}_${Date.now()}`,
+        user_id: user.id,
+        symbol: pos.symbol,
+        segment: pos.settlement,
+        side: pos.side === 'BUY' ? 'SELL' : 'BUY',
+        status: 'EXECUTED',
+        qty: Number(pos.qty_open || pos.qty_total || 1),
+        fill_price: exitPrice,
+        price: exitPrice,
+        order_type: 'MARKET',
+        product_type: pos.product_type || 'INTRADAY',
+        is_exit: true,
+        linked_position_id: resolvedPositionId || pos.id,
+        created_at: new Date().toISOString(),
+      };
 
-    // Invalidate balance cache so wallet updates immediately after profit/loss
-    const redis = getRedisClient();
-    await Promise.all([
-      appendClosedPositionToCache(user.id, closedPosRecord),
-      appendOrderToCache(user.id, exitOrderRecord),
-      invalidateUserOpenPositionsCache(user.id),
-      invalidateUserActiveOrdersCache(user.id),
-      redis.del(`user_balance:${user.id}`).catch(() => {}),
-      // Note: do NOT call invalidateUserHistoryCache here — it would race with
-      // appendClosedPositionToCache and delete the keys we just wrote.
-    ]);
-  } catch (cacheErr) {
-    console.warn('[POST /api/positions/[id]/close] Cache update warning:', cacheErr);
-  }
+      const redis = getRedisClient();
+      await Promise.allSettled([
+        appendClosedPositionToCache(user.id, closedPosRecord),
+        appendOrderToCache(user.id, exitOrderRecord),
+        invalidateUserOpenPositionsCache(user.id),
+        invalidateUserActiveOrdersCache(user.id),
+        redis.del(`user_balance:${user.id}`),
+      ]);
+    } catch (cacheErr) {
+      console.warn('[POST /api/positions/[id]/close] Cache update warning:', cacheErr);
+    }
+  });
 
   // Cancel any open/pending exit or linked orders for this position/symbol asynchronously
   (async () => {
