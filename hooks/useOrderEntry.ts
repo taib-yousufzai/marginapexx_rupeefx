@@ -53,7 +53,7 @@ export interface OrderEntryState {
 export function useOrderEntry() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const isSubmittingRef = useRef(false);
+  const pendingOrdersRef = useRef<Set<string>>(new Set()); // Track individual orders by unique ID
   const closingPositionsRef = useRef<Set<string>>(new Set());
   const isBatchClosingRef = useRef(false);
 
@@ -66,11 +66,16 @@ export function useOrderEntry() {
   try { positionsContext = usePositionsData(); } catch { }
 
   const placeOrder = useCallback(async (state: OrderEntryState) => {
-    // Double-click synchronous lock
-    if (isSubmittingRef.current) {
+    // Generate unique order ID for parallel execution tracking
+    const orderAttemptId = state.orderAttemptId || `${state.symbol}_${state.side}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Check if THIS specific order is already being processed (prevent duplicate clicks on same order)
+    if (pendingOrdersRef.current.has(orderAttemptId)) {
       return { success: false, isProcessing: true };
     }
-    isSubmittingRef.current = true;
+    
+    // Add to pending set (allows parallel processing of DIFFERENT orders)
+    pendingOrdersRef.current.add(orderAttemptId);
     setLoading(true);
     setError(null);
 
@@ -297,10 +302,10 @@ export function useOrderEntry() {
       }
       console.warn('[useOrderEntry] Order placement rejected:', message);
       setError(message);
-      return { success: false, isProcessing: false, error: message };
+      return { success: false, error: message };
     } finally {
-      isSubmittingRef.current = false;
-      setLoading(false);
+      pendingOrdersRef.current.delete(orderAttemptId); // Remove from pending set
+      setLoading(pendingOrdersRef.current.size > 0); // Keep loading if other orders still pending
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('global-loader-end'));
         window.dispatchEvent(new Event('exit-overlay-end'));

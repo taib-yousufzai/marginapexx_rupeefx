@@ -755,7 +755,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const { placeOrder, closePosition, closePositionsBatch } = useOrderEntry();
 
   // --- Dashboard States ---
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [pendingOrders, setPendingOrders] = useState<Set<string>>(new Set()); // Track individual order attempts
   const [addingPosId, setAddingPosId] = useState<string | null>(null);
   const positionSnapshotRef = useRef<string | null>(null); // snapshot of position state at order time
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // tracks the active toast auto-dismiss timer
@@ -782,6 +782,9 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const [isBottomSectionVisible, setIsBottomSectionVisible] = useState<boolean>(true);
   const [positionViewMode, setPositionViewMode] = useState<'cumulative' | 'detailed'>('cumulative');
   const [toast, setToast] = useState<{ visible: boolean; msg: string; isError?: boolean }>({ visible: false, msg: '' });
+  
+  // Computed state: any order is submitting
+  const isSubmitting = pendingOrders.size > 0;
   // Config from the shared TradeConfigProvider — no local fetches needed
   const { tradingMode, getLotSize, getSegment } = useTradeConfig();
   // Balance from the global BalanceDataProvider — no local fetch needed
@@ -1061,7 +1064,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   };
 
   const handlePlaceOrder = async () => {
-    if (isSubmitting) return;
+    // Allow parallel orders - no global lock
     handleSubmitOrder();
   };
 
@@ -1186,7 +1189,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
     if (modifyOrderId) {
       showToast('Modifying order...');
-      setIsSubmitting(true);
+      const orderAttemptId = `modify_${modifyOrderId}_${Date.now()}`;
+      setPendingOrders(prev => new Set(prev).add(orderAttemptId));
       positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
       
       try {
@@ -1221,15 +1225,24 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         else if (err?.message) msg = err.message;
         showToast(msg, true);
       } finally {
-        setIsSubmitting(false);
+        setPendingOrders(prev => {
+          const updated = new Set(prev);
+          updated.delete(orderAttemptId);
+          return updated;
+        });
         positionSnapshotRef.current = null;
       }
       return;
     }
 
     showToast('Placing order...');
+    // Generate unique order ID for parallel execution
+    const orderAttemptId = `${orderSymbol}_${orderSide}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
+    // Add to pending orders set
+    setPendingOrders(prev => new Set(prev).add(orderAttemptId));
+    
     // Optimistic UI: Immediately show processing state
-    setIsSubmitting(true);
     positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
     
     setIsOrderBlockVisible(false);
@@ -1250,7 +1263,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setIsPanelExpanded(true);
     }
 
-    placeOrder(orderPayload).then(res => {
+    // Pass unique ID to placeOrder for tracking
+    placeOrder({ ...orderPayload, orderAttemptId }).then(res => {
       if (res.success) {
         showToast(modifyOrderId ? 'Order Modified Successfully!' : `${orderSide} Order Placed Successfully!`);
         notifyOrderEvent();
@@ -1260,7 +1274,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     }).catch(err => {
       showToast(err?.message || 'Failed to place order', true);
     }).finally(() => {
-      setIsSubmitting(false);
+      // Remove this specific order from pending set
+      setPendingOrders(prev => {
+        const updated = new Set(prev);
+        updated.delete(orderAttemptId);
+        return updated;
+      });
       positionSnapshotRef.current = null;
     });
   };
@@ -1476,14 +1495,14 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       showToast(err?.message || 'Exit failed', true);
       quickExitLock.current = false;
       exitingPosIds.current.delete(pos.id);
-      setIsSubmitting(false);
+      // isSubmitting is now computed from pendingOrders.size
       setForceRender(prev => prev + 1);
     }
   };
 
   // Add more to a position (may be a different symbol from the current chart)
   const handleAddMorePosition = async (pos: EnrichedPosition) => {
-    if (isSubmitting) return;
+    // Allow parallel operations - no global lock
     const addDbSeg = mapSegmentWithSymbol(pos.settlement || segment, pos.symbol);
     const addSegId = RiskValidation.resolveTradingHoursSegmentId(pos.symbol, addDbSeg);
     if (!RiskValidation.isMarketOpenForSegment(addSegId)) {
@@ -1522,7 +1541,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         return;
       }
 
-      setIsSubmitting(true);
+      const addOrderAttemptId = `addmore_${pos.id}_${Date.now()}`;
+      setPendingOrders(prev => new Set(prev).add(addOrderAttemptId));
       setAddingPosId(pos.id);
       submitStartTimeRef.current = Date.now();
       positionSnapshotRef.current = `${pos.id}:${pos.qty_open}`;
@@ -1556,7 +1576,11 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       } catch (err: any) {
         showToast(err?.message || 'Failed to add to position', true);
       } finally {
-        setIsSubmitting(false);
+        setPendingOrders(prev => {
+          const updated = new Set(prev);
+          updated.delete(addOrderAttemptId);
+          return updated;
+        });
         setAddingPosId(null);
         positionSnapshotRef.current = null;
         window.dispatchEvent(new Event('global-loader-end'));
@@ -1702,9 +1726,10 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   };
 
   const handleQuickAddPosition = async (pos: EnrichedPosition) => {
-    if (quickEntryLock.current || isSubmitting) return;
+    if (quickEntryLock.current) return; // Remove isSubmitting check for parallel execution
     quickEntryLock.current = true;
-    setIsSubmitting(true);
+    const quickAddOrderId = `quickadd_${pos.id}_${Date.now()}`;
+    setPendingOrders(prev => new Set(prev).add(quickAddOrderId));
     setAddingPosId(pos.id);
 
     try {
@@ -1778,7 +1803,11 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       showToast(err?.message || 'Failed to add to position', true);
     } finally {
       quickEntryLock.current = false;
-      setIsSubmitting(false);
+      setPendingOrders(prev => {
+        const updated = new Set(prev);
+        updated.delete(quickAddOrderId);
+        return updated;
+      });
       setAddingPosId(null);
       positionSnapshotRef.current = null;
       window.dispatchEvent(new Event('global-loader-end'));
@@ -1789,12 +1818,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const watchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    if (isSubmitting || exitingPosIds.current.size > 0) {
+    if (pendingOrders.size > 0 || exitingPosIds.current.size > 0) {
       if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
       // Reduced from 18 s → 10 s: fail fast so the user can retry sooner.
       watchdogTimerRef.current = setTimeout(() => {
         console.warn('[TradingChart Watchdog] Auto-clearing stuck submitting/exiting state');
-        setIsSubmitting(false);
+        setPendingOrders(new Set()); // Clear all pending orders
         setAddingPosId(null);
         positionSnapshotRef.current = null;
         exitingPosIds.current.clear();
@@ -1812,7 +1841,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         watchdogTimerRef.current = null;
       }
     }
-  }, [isSubmitting, refreshPositions, refreshBalance]);
+  }, [pendingOrders.size, refreshPositions, refreshBalance]);
 
   // ── Page-visibility safety net ──
   // Mobile browsers throttle setTimeout / useEffect when the tab is backgrounded.
@@ -1825,7 +1854,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       if (document.visibilityState !== 'visible') return;
       const elapsed = Date.now() - submitStartTimeRef.current;
       const stuck =
-        (isSubmitting || quickEntryLock.current || exitingPosIds.current.size > 0) &&
+        (pendingOrders.size > 0 || quickEntryLock.current || exitingPosIds.current.size > 0) &&
         submitStartTimeRef.current > 0 &&
         elapsed > 8000;
       if (!stuck) return;
@@ -1834,7 +1863,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         clearTimeout(watchdogTimerRef.current);
         watchdogTimerRef.current = null;
       }
-      setIsSubmitting(false);
+      setPendingOrders(new Set()); // Clear all pending orders
       setAddingPosId(null);
       positionSnapshotRef.current = null;
       exitingPosIds.current.clear();
@@ -1849,7 +1878,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [isSubmitting, refreshPositions, refreshBalance]);
+  }, [pendingOrders.size, refreshPositions, refreshBalance]);
 
   useEffect(() => {
     return () => {
@@ -1896,7 +1925,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         submittingTimeoutRef.current = null;
       }
     }
-  }, [positions, isSubmitting, symbol]);
+  }, [positions, pendingOrders.size, symbol]);
 
   // Calculated Required Margin for current order block state
   // Determine if the current chart symbol is itself an option/futures contract

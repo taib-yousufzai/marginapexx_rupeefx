@@ -208,7 +208,21 @@ const InstrumentRow = React.memo(function InstrumentRow({ item, quote, binanceQu
   }
 
   // Only use fallback for non-forex/non-backend symbols (avoid overriding real WebSocket prices)
-  const isForexOrBackend = isCrypto || showComex || (item.segment || '').toUpperCase().includes('FOREX');
+  const isForexOrBackend = isCrypto || showComex || (item.segment || '').toUpperCase().includes('FOREX') || 
+    (item.symbol && (
+      item.symbol.includes('USD') || 
+      item.symbol.includes('EUR') || 
+      item.symbol.includes('GBP') || 
+      item.symbol.includes('JPY') || 
+      item.symbol.includes('INR') ||
+      item.symbol.includes('AUD') ||
+      item.symbol.includes('NZD') ||
+      item.symbol.includes('CAD') ||
+      item.symbol.includes('CHF')
+    ));
+  
+  // For forex/crypto/comex: Never use fallback, always wait for WebSocket
+  // For equity/options: Use fallback only if ltp is 0
   if (ltp === 0 && !isForexOrBackend) {
     const fallbackKey = item.symbol || item.kiteSymbol || item.name || '';
     const fallback = generateRealisticFallbackQuote(fallbackKey);
