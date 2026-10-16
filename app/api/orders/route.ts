@@ -864,7 +864,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         })();
 
-        const maxQuoteWait = (client_price && Number(client_price) > 0) ? 150 : 500;
+        const hasClientPrice = (client_price && Number(client_price) > 0) || (body.frontend_ltp && Number(body.frontend_ltp) > 0);
+        const maxQuoteWait = hasClientPrice ? 0 : 250;
         const timeoutPromise = new Promise<Record<string, ServerQuote>>((resolve) =>
           setTimeout(() => resolve({}), maxQuoteWait)
         );

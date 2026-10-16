@@ -48,6 +48,7 @@ export interface OrderEntryState {
   orderAttemptId?: string;
   expected_brokerage?: number;
   expected_margin?: number;
+  skip_global_loader?: boolean;
 }
 
 export function useOrderEntry() {
@@ -109,7 +110,7 @@ export function useOrderEntry() {
     const effectiveIsExit = Boolean(state.is_exit || matchingOppositePositions.length > 0);
     const effectiveLinkedPosId = state.linked_position_id || (matchingOppositePositions.length === 1 && (Number(matchingOppositePos?.qty_open || matchingOppositePos?.qty_total || 0) >= (state.qty || 1)) ? matchingOppositePos.id : undefined);
 
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && !state.skip_global_loader) {
       if (effectiveIsExit) {
         window.dispatchEvent(new CustomEvent('exit-overlay-start', { detail: `Closing ${state.symbol || 'Position'}...` }));
       } else {
