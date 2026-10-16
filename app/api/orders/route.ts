@@ -105,7 +105,7 @@ const MEM_IN_FLIGHT_ORDERS = new Map<string, { expiresAt: number; response?: any
 /**
  * Fetch the Binance quote (LTP, bid, ask, depth) for a crypto symbol.
  */
-async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
+async function fetchBinanceQuote(symbol: string, fallbackPrice?: number): Promise<ServerQuote | null> {
   try {
     let cleanSym = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
     if (cleanSym === 'DODGE' || cleanSym === 'DODGEUSDT') cleanSym = 'DOGEUSDT';
@@ -142,11 +142,22 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
       }
     } catch (e) { }
 
+    // Instant return if client already passed the live WebSocket price
+    if (fallbackPrice && Number(fallbackPrice) > 0) {
+      const fb = Number(fallbackPrice);
+      return {
+        last_price: fb,
+        bid: fb,
+        ask: fb,
+        depth: null,
+      };
+    }
+
     // 1b. Check Ticker Daemon endpoint (<5ms)
     try {
       const tickerUrl = process.env.NEXT_PUBLIC_TICKER_URL || (process.env.NODE_ENV === 'production' ? 'https://marginapexx-production.up.railway.app' : 'http://localhost:8080');
       const params = new URLSearchParams({ symbols: cleanSym });
-      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(250) });
+      const resTicker = await fetch(`${tickerUrl}/quotes?${params}`, { cache: 'no-store', signal: AbortSignal.timeout(100) });
       if (resTicker.ok) {
         const json = await resTicker.json();
         if (json.success && json.data && json.data[cleanSym]) {
@@ -167,10 +178,10 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
     // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel using cloud-safe endpoint
     const binanceBase = 'https://data-api.binance.vision';
     const [bookRes, priceRes] = await Promise.all([
-      fetch(`${binanceBase}/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(300) })
-        .catch(() => fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(200) }).catch(() => null)),
-      fetch(`${binanceBase}/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(300) })
-        .catch(() => fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(200) }).catch(() => null)),
+      fetch(`${binanceBase}/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(150) })
+        .catch(() => fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(100) }).catch(() => null)),
+      fetch(`${binanceBase}/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(150) })
+        .catch(() => fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(100) }).catch(() => null)),
     ]);
 
     const usdInrRate = 1;
@@ -752,6 +763,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       quotesMap,
       scriptSettingsResult,
       marketHoursCheckResult,
+      prefetchSettingsResult,
     ] = await Promise.all([
       // Profile (Cached in L1/Redis for instant permissions & trading mode)
       getCachedUserProfile(user.id, () => admin),
@@ -802,7 +814,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       (async () => {
         const fetchPromise = (async () => {
           if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
-            const quote = await fetchBinanceQuote(symbol);
+            const quote = await fetchBinanceQuote(symbol, body.frontend_ltp || client_price);
             if (!quote) return {};
             const clean = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
             const isDoge = clean === 'DOGE' || clean === 'DODGE' || clean === 'DOGEUSDT' || clean === 'DODGEUSDT';
@@ -928,6 +940,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           return { open: false, error: 'market is closed' };
         }
       })(),
+
+      // Prefetch user segment settings concurrently in parallel (< 1ms if cached)
+      getCachedUserSegmentSettings(user.id, dbSegment, false, () => admin),
     ]);
 
     if (!marketHoursCheckResult.open) {
@@ -981,9 +996,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     // 6. Segment settings — cached resolution with parent inheritance
     const isScalper = profile.trading_mode === 'scalper';
     const lookupId = profile.parent_id ?? user.id;
-    let settingsList = await getCachedUserSegmentSettings(lookupId, dbSegment, isScalper, () => admin);
-    if ((!settingsList || settingsList.length === 0) && lookupId !== user.id) {
-      settingsList = await getCachedUserSegmentSettings(user.id, dbSegment, isScalper, () => admin);
+    let settingsList: any[] = [];
+    if (lookupId === user.id && !isScalper && Array.isArray(prefetchSettingsResult) && prefetchSettingsResult.length > 0) {
+      settingsList = prefetchSettingsResult;
+    } else {
+      settingsList = await getCachedUserSegmentSettings(lookupId, dbSegment, isScalper, () => admin);
+      if ((!settingsList || settingsList.length === 0) && lookupId !== user.id) {
+        settingsList = await getCachedUserSegmentSettings(user.id, dbSegment, isScalper, () => admin);
+      }
     }
 
     let buySetting = (settingsList || []).find((s: any) => s.side === 'BUY');

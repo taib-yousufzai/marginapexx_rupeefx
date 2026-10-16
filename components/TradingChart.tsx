@@ -3325,10 +3325,9 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
                   <button
                     className={`submit-btn ${orderSide === 'BUY' ? 'submit-buy' : 'submit-sell'}`}
-                    disabled={isSubmitting}
                     onClick={handlePlaceOrder}
                   >
-                    {isSubmitting ? <AnimatedLoader size="small" /> : (modifyOrderId ? 'Update Order' : (isExitFlow ? 'Exit Position' : `${orderSide} ${useLots ? (Number(qtyValue) || 1) + ' Lot' : qtyValue + ' Qty'}`))}
+                    {modifyOrderId ? 'Update Order' : (isExitFlow ? 'Exit Position' : `${orderSide} ${useLots ? (Number(qtyValue) || 1) + ' Lot' : qtyValue + ' Qty'}`)}
                   </button>
                 </div>
               </div>
