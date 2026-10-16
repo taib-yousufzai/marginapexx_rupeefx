@@ -804,6 +804,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   // Balance from the global BalanceDataProvider — no local fetch needed
   const { balance, refresh: refreshBalance } = useBalance();
 
+  const notifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const notifyOrderEvent = useCallback(() => {
     refreshOrders();
     refreshPositions();
@@ -813,7 +815,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     window.dispatchEvent(new Event('position_updated'));
     window.dispatchEvent(new CustomEvent('position-closed'));
     window.dispatchEvent(new CustomEvent('position_closed'));
-    setTimeout(() => {
+    if (notifyTimerRef.current) clearTimeout(notifyTimerRef.current);
+    notifyTimerRef.current = setTimeout(() => {
       refreshOrders();
       refreshPositions();
       refreshBalance();
@@ -2344,21 +2347,21 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
               </div>
               <div className="position-actions">
                 <button
-                  className={`position-action-btn add-position-btn${(isSubmitting && addingPosId !== pos.id) || exitingPosIds.current.size > 0 ? ' submitting-inactive' : ''}`}
+                  className={`position-action-btn add-position-btn${addingPosId === pos.id ? ' submitting-inactive' : ''}`}
                   onClick={() => handleAddMorePosition(pos)}
-                  disabled={isSubmitting || exitingPosIds.current.size > 0}
+                  disabled={addingPosId === pos.id}
                 >
-                  {isSubmitting && addingPosId === pos.id && <AnimatedLoader size="small" />}
-                  {isSubmitting && addingPosId === pos.id ? 'Adding...' : '+ Add More'}
+                  {addingPosId === pos.id && <AnimatedLoader size="small" />}
+                  {addingPosId === pos.id ? 'Adding...' : '+ Add More'}
                 </button>
                 <button
-                  className={`position-action-btn exit-position-btn${isSubmitting || (exitingPosIds.current.size > 0 && !isExiting) ? ' submitting-inactive' : ''}`}
+                  className={`position-action-btn exit-position-btn${isExiting ? ' submitting-inactive' : ''}`}
                   onClick={() => handleExitPosition(pos)}
-                  disabled={isSubmitting || isExiting || (exitingPosIds.current.size > 0 && !isExiting)}
+                  disabled={isExiting}
                   style={{
-                    opacity: (isSubmitting || isExiting || (exitingPosIds.current.size > 0 && !isExiting)) ? 0.5 : 1,
-                    cursor: (isSubmitting || isExiting || (exitingPosIds.current.size > 0 && !isExiting)) ? 'not-allowed' : 'pointer',
-                    pointerEvents: (isSubmitting || exitingPosIds.current.size > 0) ? 'none' : 'auto'
+                    opacity: isExiting ? 0.5 : 1,
+                    cursor: isExiting ? 'not-allowed' : 'pointer',
+                    pointerEvents: isExiting ? 'none' : 'auto'
                   }}
                 >
                   {isExiting ? 'Exiting...' : 'Exit'}
@@ -2902,10 +2905,10 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                   {currentInstrumentPosition.side === 'BUY' ? (
                     <>
                       <button
-                        className={`trade-btn exit-position-chart-btn${(isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id) ? ' submitting-inactive' : ''}`}
+                        className={`trade-btn exit-position-chart-btn${exitingPosIds.current.has(currentInstrumentPosition.id) ? ' submitting-inactive' : ''}`}
                         onClick={() => handleExitPosition(currentInstrumentPosition)}
-                        disabled={isSubmitting || exitingPosIds.current.size > 0}
-                        style={{ opacity: ((isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id)) ? 0.5 : 1, pointerEvents: 'auto' }}
+                        disabled={exitingPosIds.current.has(currentInstrumentPosition.id)}
+                        style={{ opacity: exitingPosIds.current.has(currentInstrumentPosition.id) ? 0.5 : 1, pointerEvents: 'auto' }}
                       >
                         <span className="btn-label">
                           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ marginRight: '6px', verticalAlign: 'middle' }}>
@@ -2914,7 +2917,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                           {exitingPosIds.current.has(currentInstrumentPosition.id) ? 'EXITING...' : 'EXIT LONG'}
                         </span>
                       </button>
-                      <button id="buyButton" className={`trade-btn buy${(!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)) ? ' submitting-inactive' : ''}`} disabled={!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)} style={{ opacity: (!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)) ? 0.5 : 1 }} onClick={() => {
+                      <button id="buyButton" className="trade-btn buy" onClick={() => {
                         const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
                         const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
                         if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
@@ -2936,14 +2939,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                         }
                       }}>
                         <span className="btn-label">
-                          {!isTradeOnChartActive && isSubmitting && !addingPosId && orderSide === 'BUY' && <AnimatedLoader size="small" />}
                           BUY
                         </span>
                       </button>
                     </>
                   ) : (
                     <>
-                      <button id="sellButton" className={`trade-btn sell${(!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)) ? ' submitting-inactive' : ''}`} disabled={!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)} style={{ opacity: (!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)) ? 0.5 : 1 }} onClick={() => {
+                      <button id="sellButton" className="trade-btn sell" onClick={() => {
                         const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
                         const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
                         if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
@@ -2965,15 +2967,14 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                         }
                       }}>
                         <span className="btn-label">
-                          {!isTradeOnChartActive && isSubmitting && !addingPosId && orderSide === 'SELL' && <AnimatedLoader size="small" />}
                           SELL
                         </span>
                       </button>
                       <button
-                        className={`trade-btn exit-position-chart-btn${(isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id) ? ' submitting-inactive' : ''}`}
+                        className={`trade-btn exit-position-chart-btn${exitingPosIds.current.has(currentInstrumentPosition.id) ? ' submitting-inactive' : ''}`}
                         onClick={() => handleExitPosition(currentInstrumentPosition)}
-                        disabled={isSubmitting || exitingPosIds.current.size > 0}
-                        style={{ opacity: ((isSubmitting || exitingPosIds.current.size > 0) && !exitingPosIds.current.has(currentInstrumentPosition.id)) ? 0.5 : 1, pointerEvents: 'auto' }}
+                        disabled={exitingPosIds.current.has(currentInstrumentPosition.id)}
+                        style={{ opacity: exitingPosIds.current.has(currentInstrumentPosition.id) ? 0.5 : 1, pointerEvents: 'auto' }}
                       >
                         <span className="btn-label">
                           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ marginRight: '6px', verticalAlign: 'middle' }}>
@@ -2987,7 +2988,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                 </div>
               ) : (
                 <div className="trade-buttons" id="tradeButtons" style={(isLandscape || isCssLandscape) && !isInfoPanelCollapsed ? { display: 'none' } : {}}>
-                  <button id="sellButton" className={`trade-btn sell${(!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)) ? ' submitting-inactive' : ''}`} disabled={!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)} style={{ opacity: (!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)) ? 0.5 : 1 }} onClick={() => {
+                  <button id="sellButton" className="trade-btn sell" onClick={() => {
                     const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
                     const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
                     if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
@@ -3009,11 +3010,10 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     }
                   }}>
                     <span className="btn-label">
-                      {!isTradeOnChartActive && isSubmitting && !addingPosId && orderSide === 'SELL' && <AnimatedLoader size="small" />}
                       SELL
                     </span>
                   </button>
-                  <button id="buyButton" className={`trade-btn buy${(!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)) ? ' submitting-inactive' : ''}`} disabled={!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)} style={{ opacity: (!isTradeOnChartActive && (isSubmitting || exitingPosIds.current.size > 0)) ? 0.5 : 1 }} onClick={() => {
+                  <button id="buyButton" className="trade-btn buy" onClick={() => {
                     const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
                     const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
                     if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
@@ -3035,7 +3035,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     }
                   }}>
                     <span className="btn-label">
-                      {!isTradeOnChartActive && isSubmitting && !addingPosId && orderSide === 'BUY' && <AnimatedLoader size="small" />}
                       BUY
                     </span>
                   </button>

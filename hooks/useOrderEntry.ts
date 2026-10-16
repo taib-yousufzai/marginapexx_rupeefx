@@ -157,12 +157,32 @@ export function useOrderEntry() {
       const finalStatus = result.status || result.order?.status || (isImmediate ? 'EXECUTED' : 'PENDING');
       const finalFillPrice = result.fill_price || result.order?.fill_price || state.client_price;
 
-      // 1. Mount server-confirmed position directly without optimistic guesses
-      if (result.position) {
+      // 1. Mount server-confirmed position directly
+      const effectivePosition = result.position || (isImmediate && !effectiveIsExit ? {
+        id: `pos_${finalOrderId}`,
+        user_id: '',
+        symbol: state.symbol,
+        kite_instrument: state.kite_instrument || state.symbol,
+        settlement: state.segment || '',
+        side: state.side,
+        qty_open: state.qty,
+        qty_total: state.qty,
+        entry_price: finalFillPrice,
+        avg_price: finalFillPrice,
+        ltp: finalFillPrice,
+        product_type: state.product_type || 'INTRADAY',
+        status: 'open',
+        created_at: new Date().toISOString(),
+        entry_time: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_time_ms: Date.now(),
+      } : null);
+
+      if (effectivePosition) {
         if ((positionsContext as any)?.mountServerPosition) {
-          (positionsContext as any).mountServerPosition(result.position);
+          (positionsContext as any).mountServerPosition(effectivePosition);
         } else if (positionsContext?.addOptimisticPosition) {
-          positionsContext.addOptimisticPosition(result.position);
+          positionsContext.addOptimisticPosition(effectivePosition);
         }
       } else if (effectiveIsExit && positionsContext?.removePositionLocally) {
         if (effectiveLinkedPosId) {

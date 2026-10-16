@@ -1812,6 +1812,52 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       } catch { /* ignore */ }
     }
 
+    // Always synthesize confirmedOrder and confirmedPosition if DB lookup did not yield them
+    if (!confirmedOrder) {
+      confirmedOrder = {
+        id: orderId,
+        user_id: user.id,
+        symbol: symbol,
+        kite_instrument: kiteInst,
+        segment: dbSegment,
+        side: side,
+        status: isImmediate ? 'EXECUTED' : 'PENDING',
+        qty: qty,
+        lots: lots || 1,
+        fill_price: fillPrice,
+        price: clientPrice || fillPrice,
+        order_type: order_type,
+        product_type: product_type || 'INTRADAY',
+        brokerage: expectedBrokerage,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    }
+
+    if (!confirmedPosition && isImmediate && !resolvedIsExit) {
+      confirmedPosition = {
+        id: `pos_${orderId}`,
+        user_id: user.id,
+        symbol: symbol,
+        kite_instrument: kiteInst,
+        segment: dbSegment,
+        settlement: dbSegment,
+        side: side,
+        qty_open: qty,
+        qty_total: qty,
+        entry_price: fillPrice,
+        avg_price: fillPrice,
+        current_ltp: fillPrice,
+        ltp: fillPrice,
+        status: 'open',
+        product_type: product_type || 'INTRADAY',
+        created_at: new Date().toISOString(),
+        entry_time: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_time_ms: Date.now(),
+      };
+    }
+
     // ── SLM entry: insert a linked pending SL exit order ─────────────────────
     // SLM = market entry now + protective SL exit order that auto-fires when
     // stop_loss price is hit, closing the position at market.
