@@ -225,7 +225,7 @@ const redisProxyClient = new Proxy({}, {
           if (res && typeof res.then === 'function') {
             return Promise.race([
               res,
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Redis command timeout (1500ms)')), 1500))
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Redis command timeout (80ms)')), 80))
             ]).catch((err) => {
               if (process.env.NODE_ENV === 'development') {
                 logger.warn({ err: err?.message || err, command: String(propKey) }, 'Redis command timed out/failed, falling back to mock');

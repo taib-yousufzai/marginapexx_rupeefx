@@ -164,10 +164,13 @@ async function fetchBinanceQuote(symbol: string): Promise<ServerQuote | null> {
       }
     } catch (_) { }
 
-    // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel with a fast timeout
+    // 2. Fetch Binance ticker bookTicker (best bid & ask) + ticker price in parallel using cloud-safe endpoint
+    const binanceBase = 'https://data-api.binance.vision';
     const [bookRes, priceRes] = await Promise.all([
-      fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(350) }).catch(() => null),
-      fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(350) }).catch(() => null),
+      fetch(`${binanceBase}/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(300) })
+        .catch(() => fetch(`https://api.binance.com/api/v3/ticker/bookTicker?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(200) }).catch(() => null)),
+      fetch(`${binanceBase}/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(300) })
+        .catch(() => fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${cleanSym}`, { cache: 'no-store', signal: AbortSignal.timeout(200) }).catch(() => null)),
     ]);
 
     const usdInrRate = 1;

@@ -23,7 +23,10 @@ export async function getCachedScriptSettings(getSupabaseAdmin: () => any): Prom
   const redisKey = 'settings:script_lot_sizes';
 
   try {
-    const cached = await redis.get(redisKey);
+    const cached = await Promise.race([
+      redis.get(redisKey),
+      new Promise<null>(r => setTimeout(() => r(null), 80))
+    ]);
     if (cached) {
       const parsed: Record<string, number> = JSON.parse(cached);
       MEM_SCRIPT_SETTINGS.clear();
@@ -51,9 +54,7 @@ export async function getCachedScriptSettings(getSupabaseAdmin: () => any): Prom
     }
 
     scriptSettingsExpiry = now + 3600 * 1000;
-    try {
-      await redis.setex(redisKey, 3600, JSON.stringify(result));
-    } catch (_) {}
+    redis.setex(redisKey, 3600, JSON.stringify(result)).catch(() => {});
 
     return result;
   } catch (err) {
@@ -86,10 +87,13 @@ export async function getCachedUserSegmentSettings(
   const redisKey = `user:seg_settings:${userId}:${segment}:${targetTable}`;
 
   try {
-    const cached = await redis.get(redisKey);
+    const cached = await Promise.race([
+      redis.get(redisKey),
+      new Promise<null>(r => setTimeout(() => r(null), 80))
+    ]);
     if (cached) {
       const parsed = JSON.parse(cached);
-      MEM_USER_SEG_SETTINGS.set(memKey, { data: parsed, expiresAt: now + 60 * 1000 });
+      MEM_USER_SEG_SETTINGS.set(memKey, { data: parsed, expiresAt: now + 15 * 60 * 1000 });
       return parsed;
     }
   } catch (_) {}
@@ -103,11 +107,9 @@ export async function getCachedUserSegmentSettings(
       .eq('segment', segment));
 
     const result = data ?? [];
-    MEM_USER_SEG_SETTINGS.set(memKey, { data: result, expiresAt: now + 60 * 1000 });
+    MEM_USER_SEG_SETTINGS.set(memKey, { data: result, expiresAt: now + 15 * 60 * 1000 });
 
-    try {
-      await redis.setex(redisKey, 600, JSON.stringify(result));
-    } catch (_) {}
+    redis.setex(redisKey, 600, JSON.stringify(result)).catch(() => {});
 
     return result;
   } catch (err) {
@@ -148,10 +150,13 @@ export async function getCachedUserProfile(
   const redisKey = `user:profile_perms:${userId}`;
 
   try {
-    const cached = await redis.get(redisKey);
+    const cached = await Promise.race([
+      redis.get(redisKey),
+      new Promise<null>(r => setTimeout(() => r(null), 80))
+    ]);
     if (cached) {
       const parsed: CachedUserProfile = JSON.parse(cached);
-      MEM_USER_PROFILES.set(userId, { data: parsed, expiresAt: now + 60 * 1000 });
+      MEM_USER_PROFILES.set(userId, { data: parsed, expiresAt: now + 15 * 60 * 1000 });
       return parsed;
     }
   } catch (_) {}
@@ -176,11 +181,9 @@ export async function getCachedUserProfile(
       history_reset_at: data.history_reset_at ?? null,
     };
 
-    MEM_USER_PROFILES.set(userId, { data: profileData, expiresAt: now + 60 * 1000 });
+    MEM_USER_PROFILES.set(userId, { data: profileData, expiresAt: now + 15 * 60 * 1000 });
 
-    try {
-      await redis.setex(redisKey, 300, JSON.stringify(profileData));
-    } catch (_) {}
+    redis.setex(redisKey, 300, JSON.stringify(profileData)).catch(() => {});
 
     return profileData;
   } catch (err) {

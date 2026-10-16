@@ -1181,6 +1181,10 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       product_type: orderCarry === 'carry' ? 'CARRY' : 'INTRADAY',
       client_price: finalPrice,
       price: finalPrice,
+      frontend_ltp: currentPrice || finalPrice,
+      frontend_ask: activeLiveQuote?.ask || currentPrice || finalPrice,
+      frontend_bid: activeLiveQuote?.bid || currentPrice || finalPrice,
+      client_click_time: Date.now(),
       trigger_price: (orderType === 'sl' || orderType === 'slm') ? parseFloat(triggerPrice) : undefined,
       stop_loss: gttSlPrice ? parseFloat(gttSlPrice) : undefined,
       target: gttTargetPrice ? parseFloat(gttTargetPrice) : undefined,
@@ -1450,7 +1454,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       // Release lock immediately — do not block UI waiting for API/DB
       quickExitLock.current = false;
       exitingPosIds.current.delete(pos.id);
-      setIsSubmitting(false);
+      setPendingOrders(new Set());
       setForceRender(prev => prev + 1);
 
       // Execute close position API call asynchronously in background
@@ -1919,7 +1923,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     }
 
     if (changed) {
-      setIsSubmitting(false);
+      setPendingOrders(new Set());
       setAddingPosId(null);
       positionSnapshotRef.current = null;
       quickEntryLock.current = false;
