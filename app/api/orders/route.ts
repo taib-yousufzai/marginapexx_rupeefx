@@ -793,7 +793,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           } catch { /* fallback */ }
         }
         return withDbRetry(() => admin.from('orders')
-          .select('id, symbol, qty, lots, is_exit, status, side, info, linked_position_id')
+          .select('id, symbol, qty, lots, is_exit, status, side, info')
           .eq('user_id', user.id)
           .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending']));
       })(),

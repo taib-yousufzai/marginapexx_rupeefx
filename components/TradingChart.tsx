@@ -761,6 +761,17 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // tracks the active toast auto-dismiss timer
   const submitStartTimeRef = useRef<number>(0);
   const submittingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const getSymbolPositionSnapshot = useCallback((sym: string) => {
+    const clean = cleanSym(sym);
+    const matching = positions.filter(
+      p => (cleanSym(p.symbol) === clean || cleanSym(p.kite_instrument) === clean) &&
+           (p.status === 'open' || p.status === 'active')
+    );
+    const totalQty = matching.reduce((sum, p) => sum + Number(p.qty_open || 0), 0);
+    return `${matching.length}:${totalQty}`;
+  }, [positions]);
+
   const [isOrderBlockVisible, setIsOrderBlockVisible] = useState<boolean>(false);
   const [isTradeOnChartActive, setIsTradeOnChartActive] = useState<boolean>(false);
   const [orderSide, setOrderSide] = useState<'BUY' | 'SELL'>('BUY');
@@ -1195,7 +1206,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       showToast('Modifying order...');
       const orderAttemptId = `modify_${modifyOrderId}_${Date.now()}`;
       setPendingOrders(prev => new Set(prev).add(orderAttemptId));
-      positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
+      positionSnapshotRef.current = getSymbolPositionSnapshot(orderSymbol);
       
       try {
         const res = await api.put<{ success: boolean; error?: string }>(`/api/orders/${modifyOrderId}`, orderPayload);
@@ -1247,7 +1258,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     setPendingOrders(prev => new Set(prev).add(orderAttemptId));
     
     // Optimistic UI: Immediately show processing state
-    positionSnapshotRef.current = currentInstrumentPosition ? `${currentInstrumentPosition.id}:${currentInstrumentPosition.qty_open}` : '__none__';
+    positionSnapshotRef.current = getSymbolPositionSnapshot(orderSymbol);
     
     setIsOrderBlockVisible(false);
     setChainContract(null);
@@ -1550,7 +1561,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setPendingOrders(prev => new Set(prev).add(addOrderAttemptId));
       setAddingPosId(pos.id);
       submitStartTimeRef.current = Date.now();
-      positionSnapshotRef.current = `${pos.id}:${pos.qty_open}`;
+      positionSnapshotRef.current = getSymbolPositionSnapshot(pos.symbol);
 
       try {
         const addTimeout = new Promise<{ success: false; error: string }>((resolve) =>
@@ -1828,7 +1839,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   useEffect(() => {
     if (pendingOrders.size > 0 || exitingPosIds.current.size > 0) {
       if (watchdogTimerRef.current) clearTimeout(watchdogTimerRef.current);
-      // Reduced from 18 s → 10 s: fail fast so the user can retry sooner.
+      // Fast fallback watchdog: fail fast after 3.5s so the UI is never frozen
       watchdogTimerRef.current = setTimeout(() => {
         console.warn('[TradingChart Watchdog] Auto-clearing stuck submitting/exiting state');
         setPendingOrders(new Set()); // Clear all pending orders
@@ -1842,7 +1853,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         // Refresh in case the order executed server-side while we were stuck
         refreshPositions();
         refreshBalance();
-      }, 10000);
+      }, 3500);
     } else {
       if (watchdogTimerRef.current) {
         clearTimeout(watchdogTimerRef.current);
@@ -1897,30 +1908,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   }, []);
 
   // ── Watch for position changes while submitting ──
-  // Keep buttons in loading state until positions actually refresh and the UI changes
+  // Immediately unlocks buttons the moment positions update or new position is created
   useEffect(() => {
     if (!isSubmitting || positionSnapshotRef.current === null) return;
 
-    const snapshotId = positionSnapshotRef.current.split(':')[0];
-
-    let changed = false;
-
-    if (snapshotId === '__none__') {
-      // New position case: we had no open position before the order.
-      const targetClean = cleanSym(symbol);
-      const hasNewPos = positions.some(
-        p => (cleanSym(p.symbol) === targetClean || cleanSym(p.kite_instrument) === targetClean) && (p.status === 'open' || p.status === 'active')
-      );
-      changed = hasNewPos;
-    } else {
-      // Existing position case: qty changed or position closed
-      const targetPos = positions.find(
-        p => p.id === snapshotId && (p.status === 'open' || p.status === 'active')
-      );
-      const snapshotQty = Number(positionSnapshotRef.current.split(':')[1]);
-      const currentKey = targetPos ? `${targetPos.id}:${targetPos.qty_open}` : '__none__';
-      changed = currentKey !== positionSnapshotRef.current || (targetPos?.qty_open !== snapshotQty);
-    }
+    const currentSnapshot = getSymbolPositionSnapshot(symbol);
+    const changed = currentSnapshot !== positionSnapshotRef.current;
 
     if (changed) {
       setPendingOrders(new Set());
@@ -1933,7 +1926,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         submittingTimeoutRef.current = null;
       }
     }
-  }, [positions, pendingOrders.size, symbol]);
+  }, [positions, isSubmitting, symbol, getSymbolPositionSnapshot]);
 
   // Calculated Required Margin for current order block state
   // Determine if the current chart symbol is itself an option/futures contract
