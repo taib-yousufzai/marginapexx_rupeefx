@@ -81,16 +81,59 @@ export const FOREX_BASE_PRICES: Record<string, number> = {
   'NZDUSD=X': 0.5811,
 };
 
+export const CRYPTO_BASE_PRICES: Record<string, number> = {
+  'BTC': 67500,
+  'BTCUSDT': 67500,
+  'BTCUSD': 67500,
+  'ETH': 2440,
+  'ETHUSDT': 2440,
+  'ETHUSD': 2440,
+  'SOL': 155,
+  'SOLUSDT': 155,
+  'SOLUSD': 155,
+  'BNB': 585,
+  'BNBUSDT': 585,
+  'XRP': 0.54,
+  'XRPUSDT': 0.54,
+  'DOGE': 0.12,
+  'DOGEUSDT': 0.12,
+  'ADA': 0.35,
+  'ADAUSDT': 0.35,
+  'AVAX': 28,
+  'AVAXUSDT': 28,
+  'DOT': 4.2,
+  'DOTUSDT': 4.2,
+  'LTC': 72,
+  'LTCUSDT': 72,
+  'MATIC': 0.38,
+  'MATICUSDT': 0.38,
+  'NEAR': 4.8,
+  'NEARUSDT': 4.8,
+  'SUI': 1.95,
+  'SUIUSDT': 1.95,
+  'TRX': 0.16,
+  'TRXUSDT': 0.16,
+  'LINK': 11.2,
+  'LINKUSDT': 11.2,
+  'BCH': 330,
+  'BCHUSDT': 330,
+};
+
 export function getUSStockBasePrice(symbol: string): number {
   if (!symbol) return 100;
-  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:|CDS:|FX:|TVC:|OANDA:)/i, '').replace(/[\/\s]/g, '').trim().toUpperCase();
+  const clean = symbol.replace(/^(US:|FOREX:|COMEX:|MCX:|CDS:|FX:|TVC:|OANDA:|CRYPTO:|BINANCE:)/i, '').replace(/[\/\s]/g, '').trim().toUpperCase();
   if (US_BASE_PRICES[clean]) return US_BASE_PRICES[clean];
   if (FOREX_BASE_PRICES[clean]) return FOREX_BASE_PRICES[clean];
+  if (CRYPTO_BASE_PRICES[clean]) return CRYPTO_BASE_PRICES[clean];
 
   const baseClean = clean.replace(/(=[FX]|\.X)$/i, '').replace(/(\d{2}[A-Z]{3}FUT)$/i, '');
   if (US_BASE_PRICES[baseClean]) return US_BASE_PRICES[baseClean];
   if (FOREX_BASE_PRICES[baseClean]) return FOREX_BASE_PRICES[baseClean];
+  if (CRYPTO_BASE_PRICES[baseClean]) return CRYPTO_BASE_PRICES[baseClean];
 
+  for (const [k, v] of Object.entries(CRYPTO_BASE_PRICES)) {
+    if (baseClean === k || clean === k || baseClean.startsWith(k) || clean.startsWith(k)) return v;
+  }
   for (const [k, v] of Object.entries(FOREX_BASE_PRICES)) {
     if (baseClean.startsWith(k) || clean.startsWith(k)) return v;
   }

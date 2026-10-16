@@ -164,14 +164,34 @@ async function fetchBinance(symbol: string, udfInterval: string, fromSec: number
   if (!bSymbol) return [];
 
   const interval = udfToBinanceInterval(udfInterval);
-  const url = `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(bSymbol)}&interval=${encodeURIComponent(interval)}&startTime=${fromSec * 1000}&endTime=${toSec * 1000}&limit=500`;
-  try {
-    const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(3500) });
-    if (!res.ok) return [];
-    const klines: any[][] = await res.json();
-    if (!Array.isArray(klines)) return [];
-    return klines.map(k => [new Date(k[0]).toISOString(), parseFloat(k[1]), parseFloat(k[2]), parseFloat(k[3]), parseFloat(k[4]), parseFloat(k[5] ?? '0')]);
-  } catch { return []; }
+  const endpoints = [
+    'https://data-api.binance.vision',
+    'https://api.binance.com',
+    'https://api1.binance.com',
+    'https://api2.binance.com',
+    'https://api3.binance.com',
+  ];
+
+  for (const base of endpoints) {
+    const url = `${base}/api/v3/klines?symbol=${encodeURIComponent(bSymbol)}&interval=${encodeURIComponent(interval)}&startTime=${fromSec * 1000}&endTime=${toSec * 1000}&limit=500`;
+    try {
+      const res = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(3500) });
+      if (!res.ok) continue;
+      const klines: any[][] = await res.json();
+      if (!Array.isArray(klines) || !klines.length) continue;
+      return klines.map(k => [
+        new Date(k[0]).toISOString(),
+        parseFloat(k[1]),
+        parseFloat(k[2]),
+        parseFloat(k[3]),
+        parseFloat(k[4]),
+        parseFloat(k[5] ?? '0'),
+      ]);
+    } catch {
+      continue;
+    }
+  }
+  return [];
 }
 
 async function fetchNasdaq(symbol: string): Promise<any[][]> {

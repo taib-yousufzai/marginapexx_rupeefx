@@ -19,24 +19,34 @@ export async function GET(request: Request) {
       binanceSymbol += 'USDT';
     }
 
-    let url = `https://api.binance.com/api/v3/klines?symbol=${binanceSymbol}&interval=${interval}&limit=${limit}`;
-    if (startTime) url += `&startTime=${startTime}`;
-    if (endTime) url += `&endTime=${endTime}`;
+    const endpoints = [
+      'https://data-api.binance.vision',
+      'https://api.binance.com',
+      'https://api1.binance.com',
+      'https://api2.binance.com',
+      'https://api3.binance.com',
+    ];
 
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-        const errorData = await response.json();
-        return NextResponse.json({ error: errorData.msg || 'Failed to fetch from Binance' }, { status: response.status });
+    let lastError: any = null;
+    for (const base of endpoints) {
+      try {
+        let url = `${base}/api/v3/klines?symbol=${binanceSymbol}&interval=${interval}&limit=${limit}`;
+        if (startTime) url += `&startTime=${startTime}`;
+        if (endTime) url += `&endTime=${endTime}`;
+
+        const response = await fetch(url, { signal: AbortSignal.timeout(3500) });
+        if (!response.ok) continue;
+
+        const json = await response.json();
+        if (Array.isArray(json) && json.length > 0) {
+          return NextResponse.json(json);
+        }
+      } catch (e: any) {
+        lastError = e;
+      }
     }
 
-    const json = await response.json();
-
-    if (!Array.isArray(json)) {
-        return NextResponse.json({ error: 'Invalid response from Binance' }, { status: 500 });
-    }
-    
-    return NextResponse.json(json);
+    return NextResponse.json({ error: lastError?.message || 'Failed to fetch from Binance' }, { status: 502 });
 
   } catch (error: any) {
     console.error('Crypto Historical API Error:', error);

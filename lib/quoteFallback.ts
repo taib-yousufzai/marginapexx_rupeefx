@@ -64,11 +64,20 @@ export function generateRealisticFallbackQuote(symbolKey: string): FallbackQuote
     symbolKey.toUpperCase().startsWith('CDS:') ||
     ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD', 'USDINR', 'EURINR', 'GBPINR', 'JPYINR'].some(f => cleanBase.includes(f))
   );
+  const isCrypto = Boolean(
+    clean.endsWith('USDT') ||
+    cleanBase.endsWith('USDT') ||
+    symbolKey.toUpperCase().startsWith('CRYPTO:') ||
+    symbolKey.toUpperCase().startsWith('BINANCE:') ||
+    ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA'].some(c => cleanBase === c || cleanBase.startsWith(c + 'USDT'))
+  );
 
   if (isUSStock) {
     basePrice = getUSStockBasePrice(clean);
   } else if (isForex) {
     basePrice = FOREX_BASE_PRICES[cleanBase] || FOREX_BASE_PRICES[cleanUnslashed] || FOREX_BASE_PRICES[clean] || getUSStockBasePrice(clean);
+  } else if (isCrypto) {
+    basePrice = getUSStockBasePrice(clean);
   } else if (strike > 0) {
     if (isCall) {
       // Call options: premium factor varies between 1.5% and 3.5% of strike
