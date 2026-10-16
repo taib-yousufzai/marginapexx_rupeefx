@@ -1825,7 +1825,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         qty: qty,
         lots: lots || 1,
         fill_price: fillPrice,
-        price: clientPrice || fillPrice,
+        price: client_price || fillPrice,
         order_type: order_type,
         product_type: product_type || 'INTRADAY',
         brokerage: expectedBrokerage,
