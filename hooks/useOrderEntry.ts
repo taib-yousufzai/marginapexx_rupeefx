@@ -184,6 +184,7 @@ export function useOrderEntry() {
         } else if (positionsContext?.addOptimisticPosition) {
           positionsContext.addOptimisticPosition(effectivePosition);
         }
+        (positionsContext as any)?.refresh?.({ fresh: true });
       } else if (effectiveIsExit && positionsContext?.removePositionLocally) {
         if (effectiveLinkedPosId) {
           positionsContext.removePositionLocally(effectiveLinkedPosId);

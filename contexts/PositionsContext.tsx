@@ -319,6 +319,39 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     if (!serverPos || !serverPos.id) return;
     recentlyClosedTimesRef.current.delete(serverPos.id);
 
+    // Clean up recently removed guards for this symbol
+    const cleanSymUpper = cleanSym(serverPos.symbol || serverPos.kite_instrument);
+    for (const [id, rp] of Array.from(recentlyRemovedPositionsRef.current.entries())) {
+      if (cleanSym(rp.symbol || rp.kite_instrument) === cleanSymUpper) {
+        recentlyRemovedPositionsRef.current.delete(id);
+      }
+    }
+
+    // Precompute static properties immediately so live quotes bind from millisecond 0
+    const staticProps = staticPositionPropsRef.current;
+    if (!staticProps[serverPos.id]) {
+      const dbSeg = mapSegmentWithSymbol(serverPos.settlement || '', serverPos.symbol);
+      const segUpper = dbSeg.toUpperCase();
+      const cleanUpper = (serverPos.symbol || '').replace(/^(CRYPTO:|NSE:|NFO:|MCX:|BSE:|BFO:|US:|FOREX:|COMEX:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+      const isComex = (serverPos as any).preferredView === 'comex' || segUpper.includes('COMEX') || (serverPos.symbol && (serverPos.symbol.endsWith('=F') || NON_CRYPTO_USD_SYMBOLS.slice(0, 7).some(c => cleanUpper.includes(c))));
+      const isCrypto = !isComex && (segUpper.includes('CRYPTO') || (serverPos.symbol && (serverPos.symbol.endsWith('USDT') || (serverPos.symbol.endsWith('USD') && !NON_CRYPTO_USD_SYMBOLS.includes(cleanUpper)))));
+      let binanceSymbol = '';
+      if (isCrypto) {
+        binanceSymbol = cleanUpper;
+        if (binanceSymbol === 'DODGE' || binanceSymbol === 'DODGEUSDT') binanceSymbol = 'DOGEUSDT';
+        else if (binanceSymbol.endsWith('USD') && !binanceSymbol.endsWith('USDT')) binanceSymbol = binanceSymbol.slice(0, -3) + 'USDT';
+        else if (!binanceSymbol.endsWith('USDT')) binanceSymbol += 'USDT';
+      }
+      staticProps[serverPos.id] = {
+        entryTimeMs: serverPos.entry_time ? new Date(serverPos.entry_time).getTime() : Date.now(),
+        dbSeg,
+        resolvedKiteSymbol: resolveKitePrefix(serverPos.kite_instrument || serverPos.symbol, serverPos.settlement || ''),
+        isCrypto: Boolean(isCrypto),
+        isComex: Boolean(isComex),
+        binanceSymbol,
+      };
+    }
+
     setRawPositions(prev => {
       const idx = prev.findIndex(p => p.id === serverPos.id);
       if (idx >= 0) {
@@ -400,9 +433,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
   }, []);
 
   const fetchPositions = useCallback(async (options?: { fresh?: boolean }) => {
-    // Prevent concurrent fetches to avoid race conditions
+    // If a fetch is already running: abort stale in-flight fetch on fresh requests so fresh calls are never dropped
     if (fetchInProgressRef.current) {
-      return;
+      if (options?.fresh) {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
+      } else {
+        return;
+      }
     }
     
     fetchInProgressRef.current = true;
@@ -466,7 +505,21 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         });
 
       setRawPositions(prev => {
-        const merged = basePositions;
+        const serverIds = new Set(basePositions.map(p => p.id));
+        // Retain recent locally mounted / optimistic positions (created within 15s) that server hasn't returned yet
+        const recentLocals = prev.filter(p => {
+          if (serverIds.has(p.id)) return false;
+          if (recentlyClosedTimesRef.current.has(p.id)) return false;
+          const pClean = cleanSym(p.symbol || p.kite_instrument);
+          const hasServerMatch = basePositions.some(sp =>
+            cleanSym(sp.symbol || sp.kite_instrument) === pClean && sp.side === p.side
+          );
+          if (hasServerMatch) return false;
+          const createdMs = p.created_time_ms || (p.created_at ? new Date(p.created_at).getTime() : 0);
+          return (now - createdMs) < 15000;
+        });
+
+        const merged = [...basePositions, ...recentLocals];
 
         // Precompute static properties for newly loaded positions
         const staticProps = staticPositionPropsRef.current;

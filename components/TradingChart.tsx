@@ -769,7 +769,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     const posList = Array.isArray(positions) ? positions : [];
     const matching = posList.filter(
       p => p && (cleanSym(p.symbol) === clean || cleanSym(p.kite_instrument) === clean) &&
-           (p.status === 'open' || p.status === 'active')
+           ((p.status || '').toLowerCase() === 'open' || (p.status || '').toLowerCase() === 'active')
     );
     const totalQty = matching.reduce((sum, p) => sum + Number(p?.qty_open || 0), 0);
     return `${matching.length}:${totalQty}`;
@@ -808,7 +808,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   const notifyOrderEvent = useCallback(() => {
     refreshOrders();
-    refreshPositions();
+    (refreshPositions as any)?.({ fresh: true });
     refreshBalance();
     window.dispatchEvent(new Event('order_placed'));
     window.dispatchEvent(new Event('order_executed'));
@@ -818,7 +818,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     if (notifyTimerRef.current) clearTimeout(notifyTimerRef.current);
     notifyTimerRef.current = setTimeout(() => {
       refreshOrders();
-      refreshPositions();
+      (refreshPositions as any)?.({ fresh: true });
       refreshBalance();
     }, 600);
   }, [refreshOrders, refreshPositions, refreshBalance]);
@@ -1388,7 +1388,10 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const [, setForceRender] = useState(0);
 
   // All open/active positions (not filtered by symbol)
-  const currentSymbolPositions = positions.filter(p => (p.status === 'open' || p.status === 'active'));
+  const currentSymbolPositions = positions.filter(p => {
+    const st = (p.status || '').toLowerCase();
+    return st === 'open' || st === 'active';
+  });
   // Sum pre-computed unrealised P&L (uses correct per-symbol LTP from useMyPositions)
   const pnlTotal = currentSymbolPositions.reduce((acc, pos) => acc + safeNum(pos.unrealised_pnl ?? pos.total_pnl ?? 0), 0);
 
@@ -1396,7 +1399,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const currentInstrumentPosition = useMemo(() => {
     const targetClean = cleanSym(symbol);
     const matchingPositions = positions.filter(p => {
-      if (p.status !== 'open' && p.status !== 'active') return false;
+      const st = (p.status || '').toLowerCase();
+      if (st !== 'open' && st !== 'active') return false;
       const pClean = cleanSym(p.symbol);
       const kiteClean = cleanSym(p.kite_instrument);
       return pClean === targetClean || kiteClean === targetClean;
@@ -1413,7 +1417,10 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   // Automatically clear exiting status for any position ID that is no longer active in positions
   useEffect(() => {
     if (exitingPosIds.current.size > 0) {
-      const activeIds = new Set(positions.filter(p => p.status === 'open' || p.status === 'active').map(p => p.id));
+      const activeIds = new Set(positions.filter(p => {
+        const st = (p.status || '').toLowerCase();
+        return st === 'open' || st === 'active';
+      }).map(p => p.id));
       let changed = false;
       for (const id of Array.from(exitingPosIds.current)) {
         if (!activeIds.has(id)) {

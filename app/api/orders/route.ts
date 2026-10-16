@@ -1855,27 +1855,49 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     if (!confirmedPosition && isImmediate && !resolvedIsExit) {
-      confirmedPosition = {
-        id: `pos_${orderId}`,
-        user_id: user.id,
-        symbol: symbol,
-        kite_instrument: kiteInst,
-        segment: dbSegment,
-        settlement: dbSegment,
-        side: side,
-        qty_open: qty,
-        qty_total: qty,
-        entry_price: fillPrice,
-        avg_price: fillPrice,
-        current_ltp: fillPrice,
-        ltp: fillPrice,
-        status: 'open',
-        product_type: product_type || 'INTRADAY',
-        created_at: new Date().toISOString(),
-        entry_time: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        created_time_ms: Date.now(),
-      };
+      try {
+        const { data: dbPos } = await admin
+          .from('positions')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('symbol', symbol)
+          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (dbPos) {
+          confirmedPosition = {
+            ...dbPos,
+            status: 'open',
+            kite_instrument: dbPos.kite_instrument || kiteInst || symbol,
+            created_time_ms: Date.now(),
+          };
+        }
+      } catch (_) {}
+
+      if (!confirmedPosition) {
+        confirmedPosition = {
+          id: `pos_${orderId}`,
+          user_id: user.id,
+          symbol: symbol,
+          kite_instrument: kiteInst,
+          segment: dbSegment,
+          settlement: dbSegment,
+          side: side,
+          qty_open: qty,
+          qty_total: qty,
+          entry_price: fillPrice,
+          avg_price: fillPrice,
+          current_ltp: fillPrice,
+          ltp: fillPrice,
+          status: 'open',
+          product_type: product_type || 'INTRADAY',
+          created_at: new Date().toISOString(),
+          entry_time: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          created_time_ms: Date.now(),
+        };
+      }
     }
 
     // ── SLM entry: insert a linked pending SL exit order ─────────────────────
@@ -2039,6 +2061,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         ]);
       } catch { /* ignore */ }
     });
+
+    // Synchronously invalidate open positions and balance cache in Redis so client never fetches stale empty cache
+    try {
+      const redis = getRedisClient();
+      await redis.del(
+        `api:positions:${user.id}:open:default:`,
+        `api:positions:${user.id}:open:all:`,
+        `api:positions:${user.id}:active:default:`,
+        `api:positions:${user.id}:active:all:`,
+        `user_balance:${user.id}`
+      );
+    } catch { /* ignore */ }
 
     return NextResponse.json(response, { status: 201 });
   } catch (topErr: any) {
