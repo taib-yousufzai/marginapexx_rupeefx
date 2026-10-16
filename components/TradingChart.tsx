@@ -758,17 +758,20 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const [pendingOrders, setPendingOrders] = useState<Set<string>>(new Set()); // Track individual order attempts
   const [addingPosId, setAddingPosId] = useState<string | null>(null);
   const positionSnapshotRef = useRef<string | null>(null); // snapshot of position state at order time
+  const snapshotSymbolRef = useRef<string | null>(null); // target symbol for position snapshot
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // tracks the active toast auto-dismiss timer
   const submitStartTimeRef = useRef<number>(0);
   const submittingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getSymbolPositionSnapshot = useCallback((sym: string) => {
+    if (!sym) return '0:0';
     const clean = cleanSym(sym);
-    const matching = positions.filter(
-      p => (cleanSym(p.symbol) === clean || cleanSym(p.kite_instrument) === clean) &&
+    const posList = Array.isArray(positions) ? positions : [];
+    const matching = posList.filter(
+      p => p && (cleanSym(p.symbol) === clean || cleanSym(p.kite_instrument) === clean) &&
            (p.status === 'open' || p.status === 'active')
     );
-    const totalQty = matching.reduce((sum, p) => sum + Number(p.qty_open || 0), 0);
+    const totalQty = matching.reduce((sum, p) => sum + Number(p?.qty_open || 0), 0);
     return `${matching.length}:${totalQty}`;
   }, [positions]);
 
@@ -1207,6 +1210,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       const orderAttemptId = `modify_${modifyOrderId}_${Date.now()}`;
       setPendingOrders(prev => new Set(prev).add(orderAttemptId));
       positionSnapshotRef.current = getSymbolPositionSnapshot(orderSymbol);
+      snapshotSymbolRef.current = orderSymbol;
       
       try {
         const res = await api.put<{ success: boolean; error?: string }>(`/api/orders/${modifyOrderId}`, orderPayload);
@@ -1246,6 +1250,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           return updated;
         });
         positionSnapshotRef.current = null;
+        snapshotSymbolRef.current = null;
       }
       return;
     }
@@ -1259,6 +1264,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     
     // Optimistic UI: Immediately show processing state
     positionSnapshotRef.current = getSymbolPositionSnapshot(orderSymbol);
+    snapshotSymbolRef.current = orderSymbol;
     
     setIsOrderBlockVisible(false);
     setChainContract(null);
@@ -1296,6 +1302,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         return updated;
       });
       positionSnapshotRef.current = null;
+      snapshotSymbolRef.current = null;
     });
   };
 
@@ -1562,6 +1569,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setAddingPosId(pos.id);
       submitStartTimeRef.current = Date.now();
       positionSnapshotRef.current = getSymbolPositionSnapshot(pos.symbol);
+      snapshotSymbolRef.current = pos.symbol;
 
       try {
         const addTimeout = new Promise<{ success: false; error: string }>((resolve) =>
@@ -1600,6 +1608,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         });
         setAddingPosId(null);
         positionSnapshotRef.current = null;
+        snapshotSymbolRef.current = null;
         window.dispatchEvent(new Event('global-loader-end'));
       }
       return;
@@ -1912,13 +1921,15 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   useEffect(() => {
     if (!isSubmitting || positionSnapshotRef.current === null) return;
 
-    const currentSnapshot = getSymbolPositionSnapshot(symbol);
+    const targetSym = snapshotSymbolRef.current || symbol;
+    const currentSnapshot = getSymbolPositionSnapshot(targetSym);
     const changed = currentSnapshot !== positionSnapshotRef.current;
 
     if (changed) {
       setPendingOrders(new Set());
       setAddingPosId(null);
       positionSnapshotRef.current = null;
+      snapshotSymbolRef.current = null;
       quickEntryLock.current = false;
       window.dispatchEvent(new Event('global-loader-end'));
       if (submittingTimeoutRef.current) {
