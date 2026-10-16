@@ -942,20 +942,27 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     }
   }, [lotSize]);
 
-  // Declarative toast auto-dismiss: whenever a toast becomes visible or its message changes,
-  // automatically set a timer to dismiss it after 1s (or 2.5s for errors).
-  useEffect(() => {
-    if (!toast.visible) return;
-    const timer = setTimeout(() => {
-      setToast({ visible: false, msg: '', isError: false });
-    }, toast.isError ? 2500 : 1000);
-
-    return () => clearTimeout(timer);
-  }, [toast.visible, toast.msg, toast.isError]);
-
-  // Toast helper
-  const showToast = useCallback((msg: string, isError = false) => {
+  // Toast auto-dismiss: guaranteed cleanup via active ref timer
+  const showToast = useCallback((msg: string, isError = false, duration?: number) => {
+    if (toastTimerRef.current) {
+      clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = null;
+    }
     setToast({ visible: true, msg, isError });
+    const delay = duration ?? (isError ? 3000 : 1500);
+    toastTimerRef.current = setTimeout(() => {
+      setToast({ visible: false, msg: '', isError: false });
+      toastTimerRef.current = null;
+    }, delay);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) {
+        clearTimeout(toastTimerRef.current);
+        toastTimerRef.current = null;
+      }
+    };
   }, []);
 
   // Convert timeframe to Binance or Kite interval string
@@ -1209,7 +1216,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     };
 
     if (modifyOrderId) {
-      showToast('Modifying order...');
       const orderAttemptId = `modify_${modifyOrderId}_${Date.now()}`;
       setPendingOrders(prev => new Set(prev).add(orderAttemptId));
       positionSnapshotRef.current = getSymbolPositionSnapshot(orderSymbol);
@@ -1258,7 +1264,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       return;
     }
 
-    showToast('Placing order...');
     // Generate unique order ID for parallel execution
     const orderAttemptId = `${orderSymbol}_${orderSide}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     
@@ -1311,7 +1316,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
   // Cancel actual order
   const handleCancelOrder = async (id: string) => {
-    showToast('Cancelling order...');
     const res = await cancelOrder(id);
     if (res.success) {
       showToast('Order cancelled');
@@ -1680,7 +1684,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         return;
       }
 
-      showToast(`Placing quick ${side} order...`);
       // Build proper kite instrument id (with exchange prefix) for server-side quote fetch
       const kiteInst = (() => {
         const s = symbol;
@@ -1775,8 +1778,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         showToast(`Insufficient margin! Need ₹${required.toLocaleString('en-IN')}`, true);
         return;
       }
-
-      showToast(`Adding ${addQty} to ${pos.side} position...`);
 
       const targetSymbol = pos.symbol || symbol;
       const kiteInst = pos.kite_instrument || (() => {
