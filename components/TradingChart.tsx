@@ -1296,6 +1296,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     setExitPositionId(null);
     setOrderBlockTitle(symbol);
     
+    // Optimistic removal DISABLED - causes cumulative view bug (removes all grouped positions)
+    // Let the API success handler do the refresh instead
+    // if (targetIsExit && exitPositionId) {
+    //   removePositionLocally(exitPositionId);
+    // }
+    
     const returnTo = postOrderSegment;
     setPostOrderSegment(null);
     if (returnTo && returnTo !== 'main') {
@@ -1303,22 +1309,14 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setIsPanelExpanded(true);
     }
 
-    // Pass unique ID to placeOrder for tracking with faster timeout
+    // Pass unique ID to placeOrder for tracking with ultra-fast timeout
     Promise.race([
       placeOrder({ ...orderPayload, orderAttemptId, skip_global_loader: true }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)) // 15s timeout instead of 25s
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)) // 10s timeout for speed
     ]).then(res => {
       if (res && (res as any).success) {
         showToast(modifyOrderId ? 'Order Modified Successfully!' : `${orderSide} Order Placed Successfully!`);
         notifyOrderEvent();
-        
-        // Force immediate position refresh for exit orders
-        if (targetIsExit) {
-          setTimeout(() => {
-            (refreshPositions as any)?.({ fresh: true });
-            refreshBalance();
-          }, 500); // Extra refresh after 500ms to catch DB updates
-        }
       } else {
         showToast((res as any)?.error || 'Failed to place order', true);
         // Refresh anyway to show current state
@@ -1328,14 +1326,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       if (err?.message === 'timeout') {
         showToast(`${targetIsExit ? 'Exit' : 'Order'} sent — check ${targetIsExit ? 'positions' : 'orders'}`, false);
         notifyOrderEvent(); // Refresh anyway
-        
-        // Force refresh for exits even on timeout
-        if (targetIsExit) {
-          setTimeout(() => {
-            (refreshPositions as any)?.({ fresh: true });
-            refreshBalance();
-          }, 1000);
-        }
       } else {
         showToast(err?.message || 'Failed to place order', true);
         notifyOrderEvent(); // Refresh to show accurate state
@@ -1517,13 +1507,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setIsExitFlow(false);
       setIsAddMoreFlow(false);
 
-      // Keep lock for 800ms to prevent duplicate clicks (same as buy)
+      // Keep lock for 300ms to prevent duplicate clicks (ultra-fast)
       const exitLockTimer = setTimeout(() => {
         quickExitLock.current = false;
         exitingPosIds.current.delete(pos.id);
         setPendingOrders(new Set());
         setForceRender(prev => prev + 1);
-      }, 800);
+      }, 300);
 
       // Execute close position API call asynchronously with faster timeout
       const exitPromise = (finalQty >= pos.qty_open)
@@ -1552,18 +1542,13 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           linked_position_id: pos.id || ((pos as any)._ids && (pos as any)._ids[0])
         });
 
-      // Race against 15s timeout for faster feedback
+      // Race against 10s timeout for ultra-fast feedback
       Promise.race([
         exitPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
       ]).then(res => {
         if (res && (res as any).success) {
           notifyOrderEvent();
-          // Extra refresh after 500ms to ensure position removed from UI
-          setTimeout(() => {
-            (refreshPositions as any)?.({ fresh: true });
-            refreshBalance();
-          }, 500);
         } else {
           showToast((res as any)?.error || 'Exit failed — check positions', true);
           refreshPositions();
@@ -1573,11 +1558,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         if (err?.message === 'timeout') {
           showToast('Exit sent — check positions', false); // Optimistic on timeout
           refreshPositions();
-          // Force refresh after timeout
-          setTimeout(() => {
-            (refreshPositions as any)?.({ fresh: true });
-            refreshBalance();
-          }, 1000);
         } else {
           showToast(err?.message || 'Exit failed — check positions', true);
           refreshPositions();
@@ -1787,7 +1767,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       snapshotSymbolRef.current = symbol;
       submitStartTimeRef.current = Date.now();
 
-      // Lock for 500ms to prevent accidental double-clicks (reduced from 800ms for faster feel)
+      // Lock for 300ms to prevent accidental double-clicks (ultra-fast for scalping)
       const lockTimer = setTimeout(() => {
         quickEntryLock.current = false;
         setPendingOrders(prev => {
@@ -1795,7 +1775,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           next.delete(orderAttemptId);
           return next;
         });
-      }, 500);
+      }, 300);
 
       // Fire API with optimistic UI (don't wait for server response to show feedback)
       Promise.race([
@@ -1817,14 +1797,10 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           skip_global_loader: true,
           is_exit: false
         }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)) // Faster timeout: 15s instead of 25s
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000)) // Ultra-fast timeout: 10s
       ]).then(res => {
         if (res && (res as any).success) {
           notifyOrderEvent();
-          // Extra refresh after 300ms to ensure new position appears in UI
-          setTimeout(() => {
-            (refreshPositions as any)?.({ fresh: true });
-          }, 300);
         } else {
           showToast((res as any)?.error || 'Order may have failed — check positions', true);
           refreshPositions();
@@ -1834,10 +1810,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         if (err?.message === 'timeout') {
           showToast('Order sent — check positions', false); // Optimistic message on timeout
           refreshPositions();
-          // Force refresh after timeout
-          setTimeout(() => {
-            (refreshPositions as any)?.({ fresh: true });
-          }, 800);
         } else {
           showToast(err?.message || 'Quick order failed — check positions', true);
           refreshPositions();

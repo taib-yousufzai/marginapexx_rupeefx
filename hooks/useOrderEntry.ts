@@ -151,7 +151,7 @@ export function useOrderEntry() {
         message: string;
         order?: any;
         position?: any;
-      }>('/api/orders', submitPayload, { timeout: 15000 }); // Reduced from 25s to 15s for faster execution
+      }>('/api/orders', submitPayload, { timeout: 10000 }); // Ultra-fast: 10s for instant execution
 
       const finalOrderId = result.order_id || result.order?.id;
       const finalStatus = result.status || result.order?.status || (isImmediate ? 'EXECUTED' : 'PENDING');
@@ -387,7 +387,7 @@ export function useOrderEntry() {
         qty,
         entry_price: entryPrice,
         product_type: existingPos?.product_type || 'INTRADAY'
-      }, { timeout: 20000 }); // Reduced from 45s to 20s for faster exit execution
+      }, { timeout: 12000 }); // Ultra-fast: 12s for exit
 
       const finalExitPrice = Number(result?.exit_price || result?.price || resolvedExitPrice);
       const finalPnl = entryPrice > 0 ? (isBuy ? (finalExitPrice - entryPrice) * qty : (entryPrice - finalExitPrice) * qty) : pnl;
@@ -569,8 +569,8 @@ export function useOrderEntry() {
     }
 
     try {
-      // Optimized timeout for faster batch close - 100ms per position, min 30s, max 60s
-      const timeoutMs = Math.min(Math.max(30000, ids.length * 100), 60000);
+      // Ultra-fast timeout for batch close - 80ms per position, min 20s, max 40s
+      const timeoutMs = Math.min(Math.max(20000, ids.length * 80), 40000);
       const result = await api.post<{ success: boolean; results: any[]; message?: string }>('/api/positions/close', { positionIds: ids }, { timeout: timeoutMs });
 
       const confirmedHistoryItems: HistoryItem[] = [];
