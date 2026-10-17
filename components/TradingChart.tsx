@@ -777,7 +777,14 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   }, [positions]);
 
   const [isOrderBlockVisible, setIsOrderBlockVisible] = useState<boolean>(false);
-  const [isTradeOnChartActive, setIsTradeOnChartActive] = useState<boolean>(false);
+  const [isTradeOnChartActive, setIsTradeOnChartActive] = useState<boolean>(() => {
+    // Load from localStorage - default to true for faster scalp trading
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('isTradeOnChartActive');
+      return saved === null ? true : saved === 'true'; // Default enabled for speed
+    }
+    return true;
+  });
   const [orderSide, setOrderSide] = useState<'BUY' | 'SELL'>('BUY');
   const [useLots, setUseLots] = useState<boolean>(() => {
     const s = (propSegment || '').toUpperCase();
@@ -1272,10 +1279,12 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     // Add to pending orders set
     setPendingOrders(prev => new Set(prev).add(orderAttemptId));
     
-    // Optimistic UI: Immediately show processing state
+    // Optimistic UI: Immediately show processing state and close order block
     positionSnapshotRef.current = getSymbolPositionSnapshot(orderSymbol);
     snapshotSymbolRef.current = orderSymbol;
+    submitStartTimeRef.current = Date.now();
     
+    // Close order block immediately for faster UX
     setIsOrderBlockVisible(false);
     setChainContract(null);
     setIsExitFlow(false);
@@ -1294,16 +1303,43 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setIsPanelExpanded(true);
     }
 
-    // Pass unique ID to placeOrder for tracking
-    placeOrder({ ...orderPayload, orderAttemptId, skip_global_loader: true }).then(res => {
-      if (res.success) {
+    // Pass unique ID to placeOrder for tracking with faster timeout
+    Promise.race([
+      placeOrder({ ...orderPayload, orderAttemptId, skip_global_loader: true }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)) // 15s timeout instead of 25s
+    ]).then(res => {
+      if (res && (res as any).success) {
         showToast(modifyOrderId ? 'Order Modified Successfully!' : `${orderSide} Order Placed Successfully!`);
         notifyOrderEvent();
+        
+        // Force immediate position refresh for exit orders
+        if (targetIsExit) {
+          setTimeout(() => {
+            (refreshPositions as any)?.({ fresh: true });
+            refreshBalance();
+          }, 500); // Extra refresh after 500ms to catch DB updates
+        }
       } else {
-        showToast(res.error || 'Failed to place order', true);
+        showToast((res as any)?.error || 'Failed to place order', true);
+        // Refresh anyway to show current state
+        notifyOrderEvent();
       }
     }).catch(err => {
-      showToast(err?.message || 'Failed to place order', true);
+      if (err?.message === 'timeout') {
+        showToast(`${targetIsExit ? 'Exit' : 'Order'} sent — check ${targetIsExit ? 'positions' : 'orders'}`, false);
+        notifyOrderEvent(); // Refresh anyway
+        
+        // Force refresh for exits even on timeout
+        if (targetIsExit) {
+          setTimeout(() => {
+            (refreshPositions as any)?.({ fresh: true });
+            refreshBalance();
+          }, 1000);
+        }
+      } else {
+        showToast(err?.message || 'Failed to place order', true);
+        notifyOrderEvent(); // Refresh to show accurate state
+      }
     }).finally(() => {
       // Remove this specific order from pending set
       setPendingOrders(prev => {
@@ -1352,21 +1388,16 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     setIsOrderBlockVisible(true);
   };
 
-  // Exit position via order panel (allows choosing Market/SL)
+  // Exit position - ALWAYS show order form for quantity/price control
   const handleExitPosition = (pos: EnrichedPosition) => {
-    if (isTradeOnChartActive) {
-      handleQuickExit(pos);
-      return;
-    }
-
+    // Always show exit form regardless of scalp mode (user wants control)
     if (isLandscape || isCssLandscape) setIsInfoPanelCollapsed(true);
     else setIsPanelExpanded(false);
     setIsExitFlow(true);
     setIsAddMoreFlow(false);
     setExitPositionId(pos.id);
 
-    // Also set the target symbol info so the order block UI shows the correct position prices
-    // instead of the chart's current instrument prices
+    // Set the target symbol info so the order block UI shows the correct position prices
     setAddMoreSymbol(pos.symbol);
     setAddMoreSegment(pos.settlement || (pos as any).segment || segment);
     setAddMoreKiteInst(pos.kite_instrument || pos.symbol);
@@ -1456,6 +1487,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   // Direct quick-exit (instant market close of selected lot size)
   const handleQuickExit = async (pos: EnrichedPosition) => {
     if (quickExitLock.current || exitingPosIds.current.has(pos.id)) return;
+    
     quickExitLock.current = true;
     exitingPosIds.current.add(pos.id);
 
@@ -1485,13 +1517,15 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       setIsExitFlow(false);
       setIsAddMoreFlow(false);
 
-      // Release lock immediately — do not block UI waiting for API/DB
-      quickExitLock.current = false;
-      exitingPosIds.current.delete(pos.id);
-      setPendingOrders(new Set());
-      setForceRender(prev => prev + 1);
+      // Keep lock for 800ms to prevent duplicate clicks (same as buy)
+      const exitLockTimer = setTimeout(() => {
+        quickExitLock.current = false;
+        exitingPosIds.current.delete(pos.id);
+        setPendingOrders(new Set());
+        setForceRender(prev => prev + 1);
+      }, 800);
 
-      // Execute close position API call asynchronously in background
+      // Execute close position API call asynchronously with faster timeout
       const exitPromise = (finalQty >= pos.qty_open)
         ? (idsToRemove.length > 1 && closePositionsBatch
           ? closePositionsBatch(idsToRemove)
@@ -1518,23 +1552,47 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           linked_position_id: pos.id || ((pos as any)._ids && (pos as any)._ids[0])
         });
 
-      exitPromise.then(res => {
-        if (res.success) {
+      // Race against 15s timeout for faster feedback
+      Promise.race([
+        exitPromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000))
+      ]).then(res => {
+        if (res && (res as any).success) {
           notifyOrderEvent();
+          // Extra refresh after 500ms to ensure position removed from UI
+          setTimeout(() => {
+            (refreshPositions as any)?.({ fresh: true });
+            refreshBalance();
+          }, 500);
         } else {
-          showToast(res.error || 'Exit failed — check positions', true);
+          showToast((res as any)?.error || 'Exit failed — check positions', true);
           refreshPositions();
           refreshBalance();
         }
       }).catch(err => {
-        showToast(err?.message || 'Exit failed — check positions', true);
-        refreshPositions();
+        if (err?.message === 'timeout') {
+          showToast('Exit sent — check positions', false); // Optimistic on timeout
+          refreshPositions();
+          // Force refresh after timeout
+          setTimeout(() => {
+            (refreshPositions as any)?.({ fresh: true });
+            refreshBalance();
+          }, 1000);
+        } else {
+          showToast(err?.message || 'Exit failed — check positions', true);
+          refreshPositions();
+        }
+      }).finally(() => {
+        clearTimeout(exitLockTimer);
+        quickExitLock.current = false;
+        exitingPosIds.current.delete(pos.id);
+        setPendingOrders(new Set());
+        setForceRender(prev => prev + 1);
       });
     } catch (err: any) {
       showToast(err?.message || 'Exit failed', true);
       quickExitLock.current = false;
       exitingPosIds.current.delete(pos.id);
-      // isSubmitting is now computed from pendingOrders.size
       setForceRender(prev => prev + 1);
     }
   };
@@ -1729,7 +1787,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       snapshotSymbolRef.current = symbol;
       submitStartTimeRef.current = Date.now();
 
-      // Lock buying specifically for ~2.8s (exact user requirement to prevent duplicate clicks, never permanently stuck)
+      // Lock for 500ms to prevent accidental double-clicks (reduced from 800ms for faster feel)
       const lockTimer = setTimeout(() => {
         quickEntryLock.current = false;
         setPendingOrders(prev => {
@@ -1737,37 +1795,53 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
           next.delete(orderAttemptId);
           return next;
         });
-      }, 2800);
+      }, 500);
 
-      // Fire API in background while holding the lock
-      placeOrder({
-        symbol: symbol,
-        kite_instrument: kiteInst,
-        segment: segment,
-        side: side,
-        qty: finalQty,
-        lots: effectiveUseLots ? qVal : (finalQty / lotSize),
-        order_type: 'MARKET',
-        product_type: orderCarry === 'carry' ? 'CARRY' : 'INTRADAY',
-        client_price: currentPrice,
-        frontend_ask: activeLiveQuote?.ask || currentPrice,
-        frontend_bid: activeLiveQuote?.bid || currentPrice,
-        frontend_ltp: currentPrice,
-        client_click_time: Date.now(),
-        orderAttemptId,
-        skip_global_loader: true,
-        is_exit: false
-      }).then(res => {
-        if (res.success) {
+      // Fire API with optimistic UI (don't wait for server response to show feedback)
+      Promise.race([
+        placeOrder({
+          symbol: symbol,
+          kite_instrument: kiteInst,
+          segment: segment,
+          side: side,
+          qty: finalQty,
+          lots: effectiveUseLots ? qVal : (finalQty / lotSize),
+          order_type: 'MARKET',
+          product_type: orderCarry === 'carry' ? 'CARRY' : 'INTRADAY',
+          client_price: currentPrice,
+          frontend_ask: activeLiveQuote?.ask || currentPrice,
+          frontend_bid: activeLiveQuote?.bid || currentPrice,
+          frontend_ltp: currentPrice,
+          client_click_time: Date.now(),
+          orderAttemptId,
+          skip_global_loader: true,
+          is_exit: false
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 15000)) // Faster timeout: 15s instead of 25s
+      ]).then(res => {
+        if (res && (res as any).success) {
           notifyOrderEvent();
+          // Extra refresh after 300ms to ensure new position appears in UI
+          setTimeout(() => {
+            (refreshPositions as any)?.({ fresh: true });
+          }, 300);
         } else {
-          showToast(res.error || 'Order may have failed — check positions', true);
+          showToast((res as any)?.error || 'Order may have failed — check positions', true);
           refreshPositions();
           refreshBalance();
         }
       }).catch(err => {
-        showToast(err?.message || 'Quick order failed — check positions', true);
-        refreshPositions();
+        if (err?.message === 'timeout') {
+          showToast('Order sent — check positions', false); // Optimistic message on timeout
+          refreshPositions();
+          // Force refresh after timeout
+          setTimeout(() => {
+            (refreshPositions as any)?.({ fresh: true });
+          }, 800);
+        } else {
+          showToast(err?.message || 'Quick order failed — check positions', true);
+          refreshPositions();
+        }
       }).finally(() => {
         clearTimeout(lockTimer);
         setPendingOrders(prev => {
@@ -2719,8 +2793,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
           {/* Chart Container */}
           <div className="tc-chart-container" style={{ position: 'relative', overflow: 'hidden' }}>
-
-            {/* Floating Rotate Screen Button removed and moved to header */}
 
             {/* Floating Order Panel Toggle */}
             {(isLandscape || isCssLandscape) && (

@@ -631,6 +631,7 @@
   letter-spacing: 0.0375rem;
   transition: filter .15s, transform .12s, box-shadow .15s;
   box-shadow: var(--shadow-sm);
+  will-change: transform; /* GPU acceleration for instant feedback */
 }
 
 .tc-wrapper .trade-btn:active,
@@ -647,6 +648,7 @@
 
 .tc-wrapper .trade-btn:active:not(:disabled) {
   filter: brightness(.92);
+  transition: none; /* Instant visual feedback on click */
 }
 
 /* The opposite button while the other side is loading — fully grayed out */
@@ -2534,4 +2536,215 @@
   border-radius: 4px;
   color: currentColor;
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   FLOATING ACTION BUTTONS (FABs) - Fast Buy/Sell from Chart
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.tc-fab-container {
+  position: fixed;
+  right: 1.25rem;
+  z-index: 999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  transition: bottom 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Position FABs above bottom panel when it's visible */
+.tc-fab-container.above-panel {
+  bottom: 22rem;
+}
+
+/* Position FABs at bottom when panel is collapsed */
+.tc-fab-container.at-bottom {
+  bottom: 2rem;
+}
+
+.tc-fab {
+  width: 3.75rem;
+  height: 3.75rem;
+  border-radius: 50%;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: #ffffff;
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.15), 
+              0 0.125rem 0.25rem rgba(0, 0, 0, 0.1);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+.tc-fab::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.2s;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.3) 0%, transparent 70%);
+}
+
+.tc-fab:hover::before {
+  opacity: 1;
+}
+
+.tc-fab:hover {
+  transform: translateY(-0.125rem) scale(1.05);
+  box-shadow: 0 0.375rem 1rem rgba(0, 0, 0, 0.2),
+              0 0.25rem 0.5rem rgba(0, 0, 0, 0.15);
+}
+
+.tc-fab:active {
+  transform: scale(0.95);
+  box-shadow: 0 0.125rem 0.375rem rgba(0, 0, 0, 0.15);
+}
+
+.tc-fab:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: 0 0.125rem 0.375rem rgba(0, 0, 0, 0.1);
+}
+
+/* Buy FAB - Green gradient */
+.tc-fab-buy {
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+}
+
+.tc-fab-buy:hover:not(:disabled) {
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+}
+
+.tc-fab-buy:active:not(:disabled) {
+  background: linear-gradient(135deg, #15803d 0%, #14532d 100%);
+}
+
+/* Sell FAB - Red gradient */
+.tc-fab-sell {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+.tc-fab-sell:hover:not(:disabled) {
+  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+}
+
+.tc-fab-sell:active:not(:disabled) {
+  background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
+}
+
+/* Loading spinner inside FAB */
+.tc-fab-spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0.1875rem solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Dark theme adjustments */
+.dark .tc-fab {
+  box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.4),
+              0 0.125rem 0.25rem rgba(0, 0, 0, 0.3);
+}
+
+.dark .tc-fab:hover {
+  box-shadow: 0 0.375rem 1rem rgba(0, 0, 0, 0.5),
+              0 0.25rem 0.5rem rgba(0, 0, 0, 0.4);
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+  .tc-fab-container {
+    right: 1rem;
+  }
+  
+  .tc-fab-container.above-panel {
+    bottom: 20rem;
+  }
+  
+  .tc-fab-container.at-bottom {
+    bottom: 1.5rem;
+  }
+  
+  .tc-fab {
+    width: 3.5rem;
+    height: 3.5rem;
+    font-size: 1rem;
+  }
+  
+  /* Add touch feedback for mobile */
+  .tc-fab:active:not(:disabled) {
+    transform: scale(0.9);
+  }
+}
+
+/* Extra small screens */
+@media (max-width: 480px) {
+  .tc-fab-container {
+    right: 0.75rem;
+  }
+  
+  .tc-fab {
+    width: 3.25rem;
+    height: 3.25rem;
+    font-size: 0.9375rem;
+  }
+  
+  .tc-fab-container.above-panel {
+    bottom: 18rem;
+  }
+}
+
+/* Pulse animation when market is open and buttons are active */
+.tc-fab.market-open {
+  animation: fabPulse 2s ease-in-out infinite;
+}
+
+@keyframes fabPulse {
+  0%, 100% {
+    box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.15),
+                0 0.125rem 0.25rem rgba(0, 0, 0, 0.1);
+  }
+  50% {
+    box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.15),
+                0 0.125rem 0.25rem rgba(0, 0, 0, 0.1),
+                0 0 0 0.375rem rgba(255, 255, 255, 0.15);
+  }
+}
+
+.dark .tc-fab.market-open {
+  animation: fabPulseDark 2s ease-in-out infinite;
+}
+
+@keyframes fabPulseDark {
+  0%, 100% {
+    box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.4),
+                0 0.125rem 0.25rem rgba(0, 0, 0, 0.3);
+  }
+  50% {
+    box-shadow: 0 0.25rem 0.75rem rgba(0, 0, 0, 0.4),
+                0 0.125rem 0.25rem rgba(0, 0, 0, 0.3),
+                0 0 0 0.375rem rgba(255, 255, 255, 0.1);
+  }
+}
+
+/* Hide FABs on very small screens in landscape mode */
+@media (max-height: 500px) and (orientation: landscape) {
+  .tc-fab-container {
+    display: none;
+  }
 }
