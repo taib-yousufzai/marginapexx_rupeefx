@@ -223,9 +223,10 @@ const redisProxyClient = new Proxy({}, {
           if (typeof fn !== 'function') return Promise.resolve(null);
           const res = fn.apply(targetClient, args);
           if (res && typeof res.then === 'function') {
+            const redisCmdTimeout = Number(process.env.REDIS_TIMEOUT_MS) || 1500;
             return Promise.race([
               res,
-              new Promise((_, reject) => setTimeout(() => reject(new Error('Redis command timeout (80ms)')), 80))
+              new Promise((_, reject) => setTimeout(() => reject(new Error(`Redis command timeout (${redisCmdTimeout}ms)`)), redisCmdTimeout))
             ]).catch((err) => {
               if (process.env.NODE_ENV === 'development') {
                 logger.warn({ err: err?.message || err, command: String(propKey) }, 'Redis command timed out/failed, falling back to mock');

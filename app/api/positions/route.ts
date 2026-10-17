@@ -102,9 +102,9 @@ export async function GET(request: NextRequest) {
           .order('created_at', { ascending: false });
       }
 
-      // Fetch positions with a 6s timeout wrapper
+      // Fetch positions with a 4.0s timeout wrapper
       const timeoutPromise = new Promise<any>((resolve) =>
-        setTimeout(() => resolve({ timeout: true }), 6000)
+        setTimeout(() => resolve({ timeout: true }), 4000)
       );
 
       const posResult = await Promise.race([positionsQuery, timeoutPromise]).catch(err => {
@@ -113,17 +113,15 @@ export async function GET(request: NextRequest) {
       });
 
       if (posResult?.timeout || posResult?.error) {
-        console.warn('[Positions API] Query timed out (6s) or failed, returning fallback');
-        if (isClosedQuery) {
-          try {
-            const redis = getRedisClient();
-            const cached = await redis.get(cacheKey);
-            if (cached) {
-              return NextResponse.json(JSON.parse(cached));
-            }
-          } catch (_) {}
-        }
-        return NextResponse.json({ positions: [] }, { status: 200 });
+        console.warn('[Positions API] Query timed out (4s) or failed, checking cache fallback');
+        try {
+          const redis = getRedisClient();
+          const cached = await redis.get(cacheKey);
+          if (cached) {
+            return NextResponse.json(JSON.parse(cached));
+          }
+        } catch (_) {}
+        return NextResponse.json({ error: 'Positions query timed out' }, { status: 504 });
       }
 
       rawRows = posResult.data ?? [];
@@ -185,10 +183,10 @@ export async function GET(request: NextRequest) {
       // Open positions: 3s TTL — ensures exit actions reflect within seconds on refresh
       // Closed positions: 3s TTL
       const ttl = 3;
-      // Always write cache (even empty list) so stale open-position cache is immediately overwritten
-      await redis.setex(cacheKey, ttl, JSON.stringify(responsePayload));
+      // Always write cache (even empty list) in background so stale open-position cache is immediately overwritten
+      redis.setex(cacheKey, ttl, JSON.stringify(responsePayload)).catch(() => {});
       if (isClosedQuery) {
-        await redis.setex(`api:positions:${user.id}:closed_all`, ttl, JSON.stringify(responsePayload));
+        redis.setex(`api:positions:${user.id}:closed_all`, ttl, JSON.stringify(responsePayload)).catch(() => {});
       }
     } catch (_) {}
 

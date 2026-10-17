@@ -762,6 +762,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null); // tracks the active toast auto-dismiss timer
   const submitStartTimeRef = useRef<number>(0);
   const submittingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const quickEntryLock = useRef(false);
 
   const getSymbolPositionSnapshot = useCallback((sym: string) => {
     if (!sym) return '0:0';
@@ -799,28 +800,18 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   
   // Computed state: any order is submitting
   const isSubmitting = pendingOrders.size > 0;
+  const isBuying = (isSubmitting || quickEntryLock.current) && orderSide === 'BUY';
+  const isSelling = (isSubmitting || quickEntryLock.current) && orderSide === 'SELL';
   // Config from the shared TradeConfigProvider — no local fetches needed
   const { tradingMode, getLotSize, getSegment } = useTradeConfig();
   // Balance from the global BalanceDataProvider — no local fetch needed
   const { balance, refresh: refreshBalance } = useBalance();
 
-  const notifyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const notifyOrderEvent = useCallback(() => {
     refreshOrders();
     (refreshPositions as any)?.({ fresh: true });
     refreshBalance();
-    window.dispatchEvent(new Event('order_placed'));
     window.dispatchEvent(new Event('order_executed'));
-    window.dispatchEvent(new Event('position_updated'));
-    window.dispatchEvent(new CustomEvent('position-closed'));
-    window.dispatchEvent(new CustomEvent('position_closed'));
-    if (notifyTimerRef.current) clearTimeout(notifyTimerRef.current);
-    notifyTimerRef.current = setTimeout(() => {
-      refreshOrders();
-      (refreshPositions as any)?.({ fresh: true });
-      refreshBalance();
-    }, 600);
   }, [refreshOrders, refreshPositions, refreshBalance]);
 
   // ── CHARTINH Integration States ──
@@ -1176,13 +1167,24 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       orderKiteInstrument = chainContract.kiteId || `${prefix}:${orderSymbol}`;
       orderSegment = 'INDEX-OPT';
     } else {
-      // For exit/add-more flows on options and futures, ensure kite instrument has prefix
-      if (orderSymbol && (orderSymbol.endsWith('CE') || orderSymbol.endsWith('PE') || orderSymbol.endsWith('FUT') || orderSymbol.includes('FUT')) && !orderKiteInstrument.includes(':')) {
-        let prefix = 'NFO';
-        if (orderSymbol.startsWith('SENSEX') || orderSymbol.startsWith('BANKEX')) prefix = 'BFO';
-        else if (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD'].some(c => orderSymbol.startsWith(c))) prefix = 'MCX';
-        else if (orderSymbol.startsWith('EURINR') || orderSymbol.startsWith('USDINR') || orderSymbol.startsWith('GBPINR') || orderSymbol.startsWith('JPYINR')) prefix = 'CDS';
-        orderKiteInstrument = `${prefix}:${orderSymbol}`;
+      // Ensure kite instrument has prefix matching handleQuickMarketOrder
+      if (!orderKiteInstrument.includes(':')) {
+        const upper = (orderSymbol || '').toUpperCase();
+        if (upper.endsWith('USDT') || upper.endsWith('USD') || upper.includes('BTC') || upper.includes('ETH')) {
+          orderKiteInstrument = `BINANCE:${orderSymbol.replace(/^BINANCE:/i, '')}`;
+        } else if (['GBPUSD', 'EURUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD'].includes(upper)) {
+          orderKiteInstrument = `FOREX:${orderSymbol}`;
+        } else if (upper.endsWith('=F') || upper.includes('=F')) {
+          orderKiteInstrument = `COMEX:${orderSymbol}`;
+        } else if (upper.endsWith('CE') || upper.endsWith('PE') || upper.endsWith('FUT') || upper.includes('FUT')) {
+          let prefix = 'NFO';
+          if (upper.startsWith('SENSEX') || upper.startsWith('BANKEX')) prefix = 'BFO';
+          else if (['GOLD', 'SILVER', 'CRUDE', 'NATGAS', 'NATURALGAS', 'COPPER', 'ZINC', 'ALUMINIUM', 'LEAD'].some(c => upper.startsWith(c))) prefix = 'MCX';
+          else if (upper.startsWith('EURINR') || upper.startsWith('USDINR') || upper.startsWith('GBPINR') || upper.startsWith('JPYINR')) prefix = 'CDS';
+          orderKiteInstrument = `${prefix}:${orderSymbol}`;
+        } else {
+          orderKiteInstrument = `NSE:${orderSymbol}`;
+        }
       }
     }
 
@@ -1390,7 +1392,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
   // All open/active positions (not filtered by symbol)
   const currentSymbolPositions = positions.filter(p => {
     const st = (p.status || '').toLowerCase();
-    return st === 'open' || st === 'active';
+    return (st === 'open' || st === 'active') && Number(p.qty_open || 0) > 0;
   });
   // Sum pre-computed unrealised P&L (uses correct per-symbol LTP from useMyPositions)
   const pnlTotal = currentSymbolPositions.reduce((acc, pos) => acc + safeNum(pos.unrealised_pnl ?? pos.total_pnl ?? 0), 0);
@@ -1400,7 +1402,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     const targetClean = cleanSym(symbol);
     const matchingPositions = positions.filter(p => {
       const st = (p.status || '').toLowerCase();
-      if (st !== 'open' && st !== 'active') return false;
+      if ((st !== 'open' && st !== 'active') || Number(p.qty_open || 0) <= 0) return false;
       const pClean = cleanSym(p.symbol);
       const kiteClean = cleanSym(p.kite_instrument);
       return pClean === targetClean || kiteClean === targetClean;
@@ -1408,7 +1410,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     if (matchingPositions.length === 0) return null;
 
     // Group them like Cumulative view
-    const totalQty = matchingPositions.reduce((sum, p) => sum + p.qty_open, 0);
+    const totalQty = matchingPositions.reduce((sum, p) => sum + Number(p.qty_open || 0), 0);
     const repPos = matchingPositions[0]; // just take first for other metadata
     return { ...repPos, qty_open: totalQty };
   }, [positions, symbol]);
@@ -1633,8 +1635,6 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
     setIsOrderBlockVisible(true);
   };
 
-  const quickEntryLock = useRef(false);
-
   const handleQuickMarketOrder = async (side: 'BUY' | 'SELL') => {
     if (quickEntryLock.current) return;
     const quickDbSeg = mapSegmentWithSymbol(segment, symbol);
@@ -1723,12 +1723,23 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
       setActiveSegment('positions');
 
-      // Release lock immediately — no waiting for API
-      quickEntryLock.current = false;
-      positionSnapshotRef.current = null;
-      window.dispatchEvent(new Event('global-loader-end'));
+      const orderAttemptId = `quick_${symbol}_${side}_${Date.now()}`;
+      setPendingOrders(prev => new Set(prev).add(orderAttemptId));
+      positionSnapshotRef.current = getSymbolPositionSnapshot(symbol);
+      snapshotSymbolRef.current = symbol;
+      submitStartTimeRef.current = Date.now();
 
-      // Fire API in background
+      // Lock buying specifically for ~2.8s (exact user requirement to prevent duplicate clicks, never permanently stuck)
+      const lockTimer = setTimeout(() => {
+        quickEntryLock.current = false;
+        setPendingOrders(prev => {
+          const next = new Set(prev);
+          next.delete(orderAttemptId);
+          return next;
+        });
+      }, 2800);
+
+      // Fire API in background while holding the lock
       placeOrder({
         symbol: symbol,
         kite_instrument: kiteInst,
@@ -1743,6 +1754,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
         frontend_bid: activeLiveQuote?.bid || currentPrice,
         frontend_ltp: currentPrice,
         client_click_time: Date.now(),
+        orderAttemptId,
         skip_global_loader: true,
         is_exit: false
       }).then(res => {
@@ -1756,6 +1768,17 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
       }).catch(err => {
         showToast(err?.message || 'Quick order failed — check positions', true);
         refreshPositions();
+      }).finally(() => {
+        clearTimeout(lockTimer);
+        setPendingOrders(prev => {
+          const next = new Set(prev);
+          next.delete(orderAttemptId);
+          return next;
+        });
+        quickEntryLock.current = false;
+        positionSnapshotRef.current = null;
+        snapshotSymbolRef.current = null;
+        window.dispatchEvent(new Event('global-loader-end'));
       });
     } catch (err: any) {
       showToast(err?.message || 'Quick order failed', true);
@@ -2925,7 +2948,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                           {exitingPosIds.current.has(currentInstrumentPosition.id) ? 'EXITING...' : 'EXIT LONG'}
                         </span>
                       </button>
-                      <button id="buyButton" className="trade-btn buy" onClick={() => {
+                      <button id="buyButton" className={`trade-btn buy${isBuying ? ' submitting-inactive' : ''}`} disabled={isBuying} onClick={() => {
+                        if (isBuying) return;
                         const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
                         const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
                         if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
@@ -2947,13 +2971,14 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                         }
                       }}>
                         <span className="btn-label">
-                          BUY
+                          {isBuying ? 'BUYING...' : 'BUY'}
                         </span>
                       </button>
                     </>
                   ) : (
                     <>
-                      <button id="sellButton" className="trade-btn sell" onClick={() => {
+                      <button id="sellButton" className={`trade-btn sell${isSelling ? ' submitting-inactive' : ''}`} disabled={isSelling} onClick={() => {
+                        if (isSelling) return;
                         const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
                         const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
                         if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
@@ -2975,7 +3000,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                         }
                       }}>
                         <span className="btn-label">
-                          SELL
+                          {isSelling ? 'SELLING...' : 'SELL'}
                         </span>
                       </button>
                       <button
@@ -2996,7 +3021,8 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                 </div>
               ) : (
                 <div className="trade-buttons" id="tradeButtons" style={(isLandscape || isCssLandscape) && !isInfoPanelCollapsed ? { display: 'none' } : {}}>
-                  <button id="sellButton" className="trade-btn sell" onClick={() => {
+                  <button id="sellButton" className={`trade-btn sell${isSelling ? ' submitting-inactive' : ''}`} disabled={isSelling} onClick={() => {
+                    if (isSelling) return;
                     const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
                     const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
                     if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
@@ -3018,10 +3044,11 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     }
                   }}>
                     <span className="btn-label">
-                      SELL
+                      {isSelling ? 'SELLING...' : 'SELL'}
                     </span>
                   </button>
-                  <button id="buyButton" className="trade-btn buy" onClick={() => {
+                  <button id="buyButton" className={`trade-btn buy${isBuying ? ' submitting-inactive' : ''}`} disabled={isBuying} onClick={() => {
+                    if (isBuying) return;
                     const currentDbSeg = mapSegmentWithSymbol(segment, symbol);
                     const currentSegId = RiskValidation.resolveTradingHoursSegmentId(symbol, currentDbSeg);
                     if (!RiskValidation.isMarketOpenForSegment(currentSegId)) {
@@ -3043,7 +3070,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
                     }
                   }}>
                     <span className="btn-label">
-                      BUY
+                      {isBuying ? 'BUYING...' : 'BUY'}
                     </span>
                   </button>
                 </div>
@@ -3332,6 +3359,7 @@ function TradingChartComponent({ symbol: propSymbol, segment: propSegment = '', 
 
                   <button
                     className={`submit-btn ${orderSide === 'BUY' ? 'submit-buy' : 'submit-sell'}`}
+                    disabled={isSubmitting}
                     onClick={handlePlaceOrder}
                   >
                     {modifyOrderId ? 'Update Order' : (isExitFlow ? 'Exit Position' : `${orderSide} ${useLots ? (Number(qtyValue) || 1) + ' Lot' : qtyValue + ' Qty'}`)}

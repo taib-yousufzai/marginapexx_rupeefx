@@ -171,6 +171,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const fetchInProgressRef = useRef<boolean>(false);
+  const pendingFollowupRef = useRef<boolean>(false);
   const fetchDebounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const updatePositionLocally = useCallback((posId: string, updatedFields: Partial<MyPosition>) => {
@@ -433,15 +434,12 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
   }, []);
 
   const fetchPositions = useCallback(async (options?: { fresh?: boolean }) => {
-    // If a fetch is already running: abort stale in-flight fetch on fresh requests so fresh calls are never dropped
+    // If a fetch is already running, register a follow-up fetch instead of aborting the in-flight one
     if (fetchInProgressRef.current) {
-      if (options?.fresh) {
-        if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-        }
-      } else {
-        return;
+      if (options?.fresh !== false) {
+        pendingFollowupRef.current = true;
       }
+      return;
     }
     
     fetchInProgressRef.current = true;
@@ -457,9 +455,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         return;
       }
 
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
       const controller = new AbortController();
       abortControllerRef.current = controller;
 
@@ -510,12 +505,15 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
         const recentLocals = prev.filter(p => {
           if (serverIds.has(p.id)) return false;
           if (recentlyClosedTimesRef.current.has(p.id)) return false;
-          const pClean = cleanSym(p.symbol || p.kite_instrument);
-          const hasServerMatch = basePositions.some(sp =>
-            cleanSym(sp.symbol || sp.kite_instrument) === pClean && sp.side === p.side
-          );
-          if (hasServerMatch) return false;
-          const createdMs = p.created_time_ms || (p.created_at ? new Date(p.created_at).getTime() : 0);
+          const isTempOptimistic = p.id.startsWith('__pos__') || p.id.startsWith('__optimistic__') || p.id.startsWith('opt_');
+          if (isTempOptimistic) {
+            const pClean = cleanSym(p.symbol || p.kite_instrument);
+            const hasServerMatch = basePositions.some(sp =>
+              cleanSym(sp.symbol || sp.kite_instrument) === pClean && sp.side === p.side
+            );
+            if (hasServerMatch) return false;
+          }
+          const createdMs = (p as any).created_time_ms || (p.created_at ? new Date(p.created_at).getTime() : 0);
           return (now - createdMs) < 15000;
         });
 
@@ -558,7 +556,6 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       });
     } catch (err: any) {
       if (err instanceof Error && err.name === 'AbortError') {
-        fetchInProgressRef.current = false;
         return;
       }
       if (!err?.message?.includes('aborted')) {
@@ -568,6 +565,10 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     } finally {
       fetchInProgressRef.current = false;
       setLoading(false);
+      if (pendingFollowupRef.current) {
+        pendingFollowupRef.current = false;
+        fetchPositions({ fresh: true });
+      }
     }
   }, []);
 
@@ -621,22 +622,28 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
       });
     }
 
+    let orderDebounceTimer: NodeJS.Timeout | null = null;
+    const triggerDebouncedOrderFetch = (delay = 60) => {
+      if (orderDebounceTimer) clearTimeout(orderDebounceTimer);
+      orderDebounceTimer = setTimeout(() => {
+        fetchPositions({ fresh: true });
+      }, delay);
+    };
+
     const handleOrderPlacedWithData = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.opt_id) {
         optimisticPositionsRef.current.delete(detail.opt_id);
       }
-      fetchPositions({ fresh: true });
-      debouncedFetch(600, true);
+      triggerDebouncedOrderFetch(50);
     };
 
     const handleOrderPlaced = () => {
-      fetchPositions({ fresh: true });
-      debouncedFetch(800, true);
+      triggerDebouncedOrderFetch(60);
     };
 
     const handleOrderFailed = () => {
-      fetchPositions({ fresh: true });
+      triggerDebouncedOrderFetch(60);
     };
 
     const handlePositionClosedOptimistic = (e: Event) => {
@@ -713,6 +720,7 @@ export const PositionsDataProvider = ({ children, refreshInterval = 2000 }: { ch
     });
 
     return () => {
+      if (orderDebounceTimer) clearTimeout(orderDebounceTimer);
       clearInterval(timer);
       document.removeEventListener('visibilitychange', handleVisibility);
       if (channel) supabase.removeChannel(channel);

@@ -500,7 +500,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ]);
 
       const timeoutPromise = new Promise<any>((resolve) =>
-        setTimeout(() => resolve({ timeout: true }), 6000)
+        setTimeout(() => resolve({ timeout: true }), 4000)
       );
 
       const raceRes = await Promise.race([queryPromise, timeoutPromise]).catch(err => {
@@ -509,12 +509,12 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       });
 
       if (raceRes?.timeout) {
-        console.warn('[GET /api/orders] Supabase Cloud query timed out (6s), returning fallback');
+        console.warn('[GET /api/orders] Supabase Cloud query timed out (4s), checking fallback cache');
         const cachedOrders = await getCachedUserOrders(user.id, isHistoryQuery);
         if (cachedOrders && Array.isArray(cachedOrders)) {
           return NextResponse.json({ orders: cachedOrders.slice(0, limit), page, limit });
         }
-        return NextResponse.json({ orders: [], page, limit });
+        return NextResponse.json({ error: 'Orders query timed out' }, { status: 504 });
       }
 
       let ordersRes: any = { data: [] };
@@ -768,7 +768,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       // Profile (Cached in L1/Redis for instant permissions & trading mode)
       getCachedUserProfile(user.id, () => admin),
 
-      // Fresh balance from profiles (<1ms on Railway, fallback to Supabase)
+      // Fresh balance from profiles (<1ms on Railway / Redis cache, fallback to Supabase)
       (async () => {
         if (useRailway) {
           try {
@@ -776,6 +776,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             if (bal !== null) return { data: { balance: bal } };
           } catch { /* fallback */ }
         }
+        try {
+          const redis = getRedisClient();
+          const cachedBal = await Promise.race([
+            redis.get(`user_balance:${user.id}`),
+            new Promise<null>(r => setTimeout(() => r(null), 50))
+          ]);
+          if (cachedBal) {
+            const parsed = JSON.parse(cachedBal);
+            const balVal = typeof parsed === 'number' ? parsed : (typeof parsed?.balance === 'number' ? parsed.balance : null);
+            if (balVal !== null) {
+              return { data: { balance: balVal } };
+            }
+          }
+        } catch { /* fallback */ }
         return withDbRetry(() => admin.from('profiles')
           .select('balance')
           .eq('id', user.id)
@@ -810,8 +824,33 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           .in('status', ['PENDING', 'pending', 'TRIGGER_PENDING', 'trigger_pending']));
       })(),
 
-      // Fetch quotes — either Kite or Binance depending on segment (with tight timeout guard)
+      // Fetch quotes — either Kite or Binance depending on segment (instant if client price provided)
       (async () => {
+        const hasClientPrice = (client_price && Number(client_price) > 0) || (body.frontend_ltp && Number(body.frontend_ltp) > 0);
+        if (hasClientPrice) {
+          const p = Number(body.frontend_ltp || client_price);
+          const bp = Number(body.frontend_bid || p);
+          const ap = Number(body.frontend_ask || p);
+          const qObj: ServerQuote = { last_price: p, bid: bp, ask: ap };
+          const clean = symbol.replace(/^(CRYPTO:|BINANCE:)/i, '').replace(/[\/\s\_]/g, '').toUpperCase();
+          const isDoge = clean === 'DOGE' || clean === 'DODGE' || clean === 'DOGEUSDT' || clean === 'DODGEUSDT';
+          return {
+            [kiteInst]: qObj,
+            [symbol]: qObj,
+            [clean]: qObj,
+            [`CRYPTO:${clean}`]: qObj,
+            [`${clean}USDT`]: qObj,
+            ...(isDoge ? {
+              'DOGE': qObj,
+              'DODGE': qObj,
+              'DOGEUSDT': qObj,
+              'DODGEUSDT': qObj,
+              'CRYPTO:DOGE': qObj,
+              'CRYPTO:DODGE': qObj,
+            } : {}),
+          };
+        }
+
         const fetchPromise = (async () => {
           if (dbSegment === 'CRYPTO' || symbol.includes('GBPUSD') || symbol.includes('EURUSD') || symbol.includes('USDJPY')) {
             const quote = await fetchBinanceQuote(symbol, body.frontend_ltp || client_price);
@@ -879,10 +918,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           }
         })();
 
-        const hasClientPrice = (client_price && Number(client_price) > 0) || (body.frontend_ltp && Number(body.frontend_ltp) > 0);
-        const maxQuoteWait = hasClientPrice ? 0 : 250;
         const timeoutPromise = new Promise<Record<string, ServerQuote>>((resolve) =>
-          setTimeout(() => resolve({}), maxQuoteWait)
+          setTimeout(() => resolve({}), 200)
         );
 
         return Promise.race([fetchPromise, timeoutPromise]);
@@ -1855,49 +1892,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     if (!confirmedPosition && isImmediate && !resolvedIsExit) {
-      try {
-        const { data: dbPos } = await admin
-          .from('positions')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('symbol', symbol)
-          .in('status', ['open', 'OPEN', 'active', 'ACTIVE'])
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (dbPos) {
-          confirmedPosition = {
-            ...dbPos,
-            status: 'open',
-            kite_instrument: dbPos.kite_instrument || kiteInst || symbol,
-            created_time_ms: Date.now(),
-          };
-        }
-      } catch (_) {}
-
-      if (!confirmedPosition) {
-        confirmedPosition = {
-          id: `pos_${orderId}`,
-          user_id: user.id,
-          symbol: symbol,
-          kite_instrument: kiteInst,
-          segment: dbSegment,
-          settlement: dbSegment,
-          side: side,
-          qty_open: qty,
-          qty_total: qty,
-          entry_price: fillPrice,
-          avg_price: fillPrice,
-          current_ltp: fillPrice,
-          ltp: fillPrice,
-          status: 'open',
-          product_type: product_type || 'INTRADAY',
-          created_at: new Date().toISOString(),
-          entry_time: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          created_time_ms: Date.now(),
-        };
-      }
+      confirmedPosition = {
+        id: `pos_${orderId}`,
+        user_id: user.id,
+        symbol: symbol,
+        kite_instrument: kiteInst,
+        segment: dbSegment,
+        settlement: dbSegment,
+        side: side,
+        qty_open: qty,
+        qty_total: qty,
+        entry_price: fillPrice,
+        avg_price: fillPrice,
+        current_ltp: fillPrice,
+        ltp: fillPrice,
+        status: 'open',
+        product_type: product_type || 'INTRADAY',
+        created_at: new Date().toISOString(),
+        entry_time: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        created_time_ms: Date.now(),
+      };
     }
 
     // ── SLM entry: insert a linked pending SL exit order ─────────────────────
@@ -2062,16 +2077,16 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       } catch { /* ignore */ }
     });
 
-    // Synchronously invalidate open positions and balance cache in Redis so client never fetches stale empty cache
+    // Asynchronously invalidate open positions and balance cache in Redis without blocking HTTP response
     try {
       const redis = getRedisClient();
-      await redis.del(
+      redis.del(
         `api:positions:${user.id}:open:default:`,
         `api:positions:${user.id}:open:all:`,
         `api:positions:${user.id}:active:default:`,
         `api:positions:${user.id}:active:all:`,
         `user_balance:${user.id}`
-      );
+      ).catch(() => {});
     } catch { /* ignore */ }
 
     return NextResponse.json(response, { status: 201 });

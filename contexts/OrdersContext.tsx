@@ -133,6 +133,8 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
   });
   const [error, setError] = useState<string | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const fetchInProgressRef = useRef<boolean>(false);
 
   const saveOrdersToCache = useCallback((newOrders: MyOrder[]) => {
     globalOrdersCache = newOrders;
@@ -144,10 +146,26 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
   }, []);
 
   const fetchOrders = useCallback(async (options?: { fresh?: boolean }) => {
+    if (fetchInProgressRef.current) {
+      if (options?.fresh) {
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
+      } else {
+        return;
+      }
+    }
+    fetchInProgressRef.current = true;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const url = options?.fresh ? '/api/orders?limit=100&fresh=true' : '/api/orders?limit=100';
-      const data = await api.get<{ orders: MyOrder[] }>(url);
-      const fetchedOrders = data.orders ?? [];
+      const data = await api.get<{ orders: MyOrder[] }>(url, { signal: controller.signal });
+      const fetchedOrders = data?.orders ?? [];
 
       setOrders(prev => {
         const fetchedIds = new Set(fetchedOrders.map(o => o.id));
@@ -191,6 +209,9 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       // Retain existing orders cache and suppress UI error banner
       setError(null);
     } finally {
+      if (abortControllerRef.current === controller) {
+        fetchInProgressRef.current = false;
+      }
       setLoading(false);
     }
   }, [saveOrdersToCache]);
@@ -225,11 +246,19 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
       });
     }
 
-    // Refresh whenever any component places an order or closes a position
-    const handleOrderPlaced = () => fetchOrders({ fresh: true });
+    // Refresh whenever any component places an order or closes a position (debounced)
+    let debounceTimer: NodeJS.Timeout | null = null;
+    const triggerDebouncedFetch = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        fetchOrders({ fresh: true });
+      }, 60);
+    };
+
+    const handleOrderPlaced = () => triggerDebouncedFetch();
     const handleOrderExecuted = () => {
       soundEngine.playOrderExecuted();
-      fetchOrders({ fresh: true });
+      triggerDebouncedFetch();
     };
     const handlePositionClosed = (e: any) => {
       const posList = e?.detail?.positions || (e?.detail?.position ? [e.detail.position] : []);
@@ -247,7 +276,7 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
           return filtered;
         });
       }
-      fetchOrders({ fresh: true });
+      triggerDebouncedFetch();
     };
 
     window.addEventListener('order_placed', handleOrderPlaced);
@@ -285,13 +314,16 @@ export const OrdersDataProvider = ({ children, refreshInterval = 5000 }: { child
 
     return () => {
       cancelled = true;
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (abortControllerRef.current) abortControllerRef.current.abort();
       document.removeEventListener('visibilitychange', handleVisibility);
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (channel) supabase.removeChannel(channel);
       window.removeEventListener('order_placed', handleOrderPlaced);
-      window.removeEventListener('position-closed', handleOrderPlaced);
-      window.removeEventListener('position_closed', handleOrderPlaced);
-      window.removeEventListener('order_executed', handleOrderPlaced);
+      window.removeEventListener('position-closed', handlePositionClosed);
+      window.removeEventListener('position_closed', handlePositionClosed);
+      window.removeEventListener('position_closed_optimistic', handlePositionClosed);
+      window.removeEventListener('order_executed', handleOrderExecuted);
     };
   }, [fetchOrders, refreshInterval]);
 
